@@ -84,7 +84,7 @@ v1 には次の機能を含める。
 | Allocation | 毎秒 50 件 |
 
 本番の対象は Linux（amd64 と arm64）とする。
-macOS と Docker Desktop の組み合わせは開発用として動作を保証するが、ノードの資源容量の扱いは簡易にとどめる。
+macOS（Docker Desktop や Colima）は開発用として動作を保証するが、ノードの資源容量の扱いは簡易にとどめる。
 
 各ノードには Docker が必要である。
 ゲームサーバは Docker コンテナとして動く。

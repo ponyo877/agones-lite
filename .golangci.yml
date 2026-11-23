@@ -1,0 +1,39 @@
+version: "2"
+
+linters:
+  enable:
+    - gocognit
+    - funlen
+    - nestif
+    - nolintlint
+    - misspell
+    - unconvert
+  settings:
+    gocognit:
+      min-complexity: 10
+    funlen:
+      lines: 50
+      statements: -1
+      ignore-comments: true
+    nestif:
+      min-complexity: 4
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+  exclusions:
+    paths:
+      - third_party
+    rules:
+      # Table-driven tests are long because the tables are.
+      - path: _test\.go
+        linters:
+          - funlen
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    paths:
+      # The Agones submodule is a reference copy and must never be rewritten.
+      - third_party

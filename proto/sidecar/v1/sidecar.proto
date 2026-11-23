@@ -1,0 +1,52 @@
+// The conversation between a GameServer's sidecar and the agent on its node.
+//
+// The sidecar always dials the agent. Every call carries two gRPC metadata
+// entries: "gameserver" (namespace/name) and "authorization" (Bearer token).
+// The agent gave the sidecar that token when it created the container.
+//
+// Change this file by adding fields only. A running game server keeps its
+// old sidecar across an upgrade of the agent, so both must keep talking.
+syntax = "proto3";
+
+package agoneslite.sidecar.v1;
+
+option go_package = "github.com/ponyo877/agones-lite/proto/sidecar/v1;sidecarv1";
+
+service Agent {
+  // Watch sends the GameServer as the SDK shows it: the current one at once,
+  // then a new one after every change.
+  rpc Watch(WatchRequest) returns (stream WatchResponse);
+
+  // Tell passes on what the game server asked for through the SDK, or what
+  // the sidecar noticed about it.
+  rpc Tell(TellRequest) returns (TellResponse);
+}
+
+message WatchRequest {}
+
+message WatchResponse {
+  // A serialized agones.dev.sdk.GameServer, exactly what GetGameServer returns.
+  bytes game_server = 1;
+}
+
+enum Event {
+  EVENT_UNSPECIFIED = 0;
+  EVENT_READY = 1;
+  EVENT_ALLOCATE = 2;
+  EVENT_SHUTDOWN = 3;
+  EVENT_RESERVE = 4;
+  EVENT_HEALTH_FAILED = 5;
+  EVENT_SET_METADATA = 6;
+}
+
+message TellRequest {
+  Event event = 1;
+  // For EVENT_RESERVE: how long to stay Reserved. Zero means until told otherwise.
+  int64 reserve_seconds = 2;
+  // For EVENT_SET_METADATA: what SetLabel and SetAnnotation asked for.
+  // Keys come without the "agones.dev/sdk-" prefix; the control plane adds it.
+  map<string, string> labels = 3;
+  map<string, string> annotations = 4;
+}
+
+message TellResponse {}
