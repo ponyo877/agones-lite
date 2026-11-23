@@ -139,7 +139,7 @@ func checkCounter(counter *sdk.GameServer_Status_CounterStatus, in *sdkbeta.Coun
 		}
 	}
 	if in.GetCountDiff() != 0 {
-		return checkCount(count+in.GetCountDiff(), capacity)
+		return checkCount(plus(count, in.GetCountDiff()), capacity)
 	}
 	return nil
 }

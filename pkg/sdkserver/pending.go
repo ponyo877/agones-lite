@@ -1,6 +1,7 @@
 package sdkserver
 
 import (
+	"math"
 	"slices"
 
 	"agones.dev/agones/pkg/sdk"
@@ -43,7 +44,22 @@ func applyCounter(status *sdk.GameServer_Status, update *sidecarv1.CounterUpdate
 	if update.Count != nil {
 		counter.Count = update.GetCount()
 	}
-	counter.Count = min(max(counter.GetCount()+update.GetCountDiff(), 0), counter.GetCapacity())
+	counter.Count = min(max(plus(counter.GetCount(), update.GetCountDiff()), 0), counter.GetCapacity())
+}
+
+// plus adds without wrapping around: a sum that an int64 cannot hold is the
+// largest int64, or the smallest. A count is held against its capacity
+// right after, so that is as good as the true sum. The control plane adds
+// the same way: counterAfter in pkg/gameservers.
+func plus(a, b int64) int64 {
+	sum := a + b
+	switch {
+	case a > 0 && b > 0 && sum < 0:
+		return math.MaxInt64
+	case a < 0 && b < 0 && sum >= 0:
+		return math.MinInt64
+	}
+	return sum
 }
 
 // applyList sets the capacity, adds values, removes values, and then cuts

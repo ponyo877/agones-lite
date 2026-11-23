@@ -74,7 +74,6 @@ List の更新と、sidecar の予測がコントロールプレーンの反映�
 見つけたこと：
 
 - `allocated_before_running`：ゲームサーバは、コンテナの起動が報告される前に Allocate を呼べる。そうなると、起動の報告は状態を変えない。以前の実装は「状態が Scheduled か Ready に変わったとき」にアドレスを公開していたので、この順序ではアドレスのない Allocated ができていた。
-
 - `an_expired_reservation_ends_only_a_reservation`：Reserve の期限切れが動かせるのは、Reserved の GameServer だけである。以前は、期限が切れると sidecar が Ready を要求していた。同じ瞬間にゲームサーバが自分を Allocate すると、Allocated から Ready に戻されていた。期限切れを専用の出来事にして、この順序でも対戦が残るようにした。
 
 ### ローリング更新

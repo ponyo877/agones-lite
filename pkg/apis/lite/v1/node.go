@@ -72,9 +72,11 @@ type PortRange struct {
 	Max int32 `json:"max"`
 }
 
-// Schedulable reports whether new game servers may be placed on the node.
+// Schedulable reports whether new game servers may be placed on the node,
+// and new sessions on its game servers. A node that is being drained takes
+// neither, whether or not it is cordoned as well.
 func (n *Node) Schedulable() bool {
-	return n.Status.Phase == NodeReady && !n.Spec.Unschedulable
+	return n.Status.Phase == NodeReady && !n.Spec.Unschedulable && !n.Spec.Drain
 }
 
 // DeepCopy returns a copy that shares nothing with n.

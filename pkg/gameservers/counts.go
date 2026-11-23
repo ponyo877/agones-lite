@@ -1,6 +1,7 @@
 package gameservers
 
 import (
+	"math"
 	"slices"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
@@ -53,8 +54,22 @@ func counterAfter(counter agonesv1.CounterStatus, update CounterUpdate) agonesv1
 	if update.Count != nil {
 		counter.Count = *update.Count
 	}
-	counter.Count = min(max(counter.Count+update.CountDiff, 0), counter.Capacity)
+	counter.Count = min(max(plus(counter.Count, update.CountDiff), 0), counter.Capacity)
 	return counter
+}
+
+// plus adds without wrapping around: a sum that an int64 cannot hold is the
+// largest int64, or the smallest. The count is cut to fit its capacity
+// right after, so that is as good as the true sum.
+func plus(a, b int64) int64 {
+	sum := a + b
+	switch {
+	case a > 0 && b > 0 && sum < 0:
+		return math.MaxInt64
+	case a < 0 && b < 0 && sum >= 0:
+		return math.MinInt64
+	}
+	return sum
 }
 
 // listAfter does not use the GameServer's own methods (UpdateListCapacity,

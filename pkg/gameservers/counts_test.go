@@ -1,6 +1,7 @@
 package gameservers
 
 import (
+	"math"
 	"slices"
 	"testing"
 
@@ -25,6 +26,12 @@ func TestApplyCountsChangesCounters(t *testing.T) {
 			start:   agonesv1.CounterStatus{Count: 10, Capacity: 100},
 			updates: []CounterUpdate{{Name: "players", CountDiff: 9}},
 			want:    agonesv1.CounterStatus{Count: 19, Capacity: 100},
+		},
+		{
+			name:    "a difference too large for an int64 fills the Counter and does not wrap round to nothing",
+			start:   agonesv1.CounterStatus{Count: 5, Capacity: 100},
+			updates: []CounterUpdate{{Name: "players", CountDiff: math.MaxInt64}},
+			want:    agonesv1.CounterStatus{Count: 100, Capacity: 100},
 		},
 		{
 			name:    "a negative difference is taken off the count",
