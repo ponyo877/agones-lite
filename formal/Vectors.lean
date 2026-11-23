@@ -1,6 +1,7 @@
 import Formal.Ports
 import Formal.Counts
 import Formal.StateMachine
+import Formal.Rollout
 
 /-!
 # Test vectors
@@ -8,7 +9,8 @@ import Formal.StateMachine
 The models are only worth something if the Go code behaves like them. This
 program runs the models on many small inputs and writes down what they
 answer, one JSON object per line. Go tests replay the files against the real
-functions (`go test ./pkg/portallocator ./pkg/gameservers ./pkg/sdkserver`).
+functions (`go test ./pkg/portallocator ./pkg/gameservers ./pkg/sdkserver
+./pkg/fleets`).
 
 Run `lake exe vectors` in this directory after changing a model.
 -/
@@ -117,6 +119,49 @@ def transitionVectors : List String :=
       ",\"event\":" ++ jsonString (eventName event) ++
       ",\"next\":" ++ jsonOption (jsonString ∘ stateName) (StateMachine.next state event) ++ "}"
 
+/-! ## Rolling updates -/
+
+def jsonSet (s : Rollout.Set) : String :=
+  "{\"spec\":" ++ jsonInt s.spec ++ ",\"replicas\":" ++ jsonInt s.replicas ++
+  ",\"ready\":" ++ jsonInt s.ready ++ ",\"reserved\":" ++ jsonInt s.reserved ++
+  ",\"allocated\":" ++ jsonInt s.allocated ++ ",\"shutdown\":" ++ jsonInt s.shutdown ++ "}"
+
+/-- One pass over a Fleet: what `grow` and `shrink` answer. `stale` is how
+far the Fleet's own count of Ready GameServers is ahead of its sets'. -/
+def rolloutVector (replicas surge percent stale : Int) (active : Rollout.Set) (rest : List Rollout.Set) : String :=
+  let fleetReady := active.ready + (rest.map (·.ready)).sum + stale
+  "{\"replicas\":" ++ jsonInt replicas ++ ",\"surge\":" ++ jsonInt surge ++
+  ",\"percent\":" ++ jsonInt percent ++ ",\"fleetReady\":" ++ jsonInt fleetReady ++
+  ",\"active\":" ++ jsonSet active ++ ",\"rest\":" ++ jsonList (rest.map jsonSet) ++
+  ",\"grow\":" ++ jsonInt (Rollout.grow replicas surge active rest) ++
+  ",\"shrink\":" ++ jsonList ((Rollout.shrink replicas percent fleetReady active rest).map jsonInt) ++ "}"
+
+/-- Sets in the shapes a rollout meets: full, part of it unhealthy, short
+of its size, in the middle of a step, and holding sessions in various ways. -/
+def rolloutVectors : List String :=
+  let actives : List Rollout.Set := [
+    { spec := 0, replicas := 0 },
+    { spec := 2, replicas := 2, ready := 2 },
+    { spec := 2, replicas := 2 },
+    { spec := 3, replicas := 2, ready := 2 }]
+  let olds : List Rollout.Set := [
+    { spec := 4, replicas := 4, ready := 4 },
+    { spec := 4, replicas := 4, ready := 2 },
+    { spec := 2, replicas := 4, ready := 1, allocated := 3 },
+    { spec := 3, replicas := 3, ready := 1, reserved := 1, allocated := 1 },
+    { spec := 2, replicas := 0 }]
+  [3, 6].flatMap fun replicas => [1, 2].flatMap fun surge =>
+    [25, 100].flatMap fun percent => [0, 2].flatMap fun stale =>
+      actives.flatMap fun active =>
+        (wordsUpTo olds 2).map fun rest => rolloutVector replicas surge percent stale active rest
+
+/-- The rollout of `a_version_that_never_gets_ready_takes_most_of_the_fleet`:
+how many Ready GameServers the old set has after each pass. -/
+def stuckVectors : List String :=
+  let passes := Rollout.Stuck.passes 100 25 1 8 { old := 100, new := 0 }
+  ["{\"replicas\":100,\"percent\":25,\"surge\":1,\"old\":" ++ jsonList (passes.map (jsonInt ·.old)) ++
+   ",\"new\":" ++ jsonList (passes.map (jsonInt ·.new)) ++ "}"]
+
 def write (file : String) (lines : List String) : IO Unit := do
   IO.FS.writeFile file ("\n".intercalate lines ++ "\n")
   IO.println s!"{file}: {lines.length} vectors"
@@ -125,3 +170,5 @@ def main : IO Unit := do
   write "vectors/ports.jsonl" portVectors
   write "vectors/counters.jsonl" counterVectors
   write "vectors/transitions.jsonl" transitionVectors
+  write "vectors/rollout.jsonl" rolloutVectors
+  write "vectors/stuck.jsonl" stuckVectors

@@ -26,36 +26,59 @@ structure Set where
 
 /-! ## Growing the active set -/
 
-/-- Go: `grow`. The size of the active set after one more step up.
-`allocated` is what the rest has Allocated, `running` what it has in all. -/
-def grow (replicas surge : Int) (active : Set) (allocated running : Int) : Int :=
+/-- Go: `running`. How many GameServers a set has, or will have once it has
+made the ones it is short of. -/
+def running (set : Set) : Int :=
+  max set.spec set.replicas
+
+/-- Go: `grow`, given what the rest adds up to: `allocated` is what it has
+Allocated, `inAll` the sum of `running` over its sets. -/
+def growBy (replicas surge : Int) (active : Set) (allocated inAll : Int) : Int :=
   let room := max (replicas - allocated) 0
   if active.spec ≠ active.replicas then active.spec
   else if active.spec ≥ room then room
   else
     let asked := min (active.spec + surge) replicas
-    let over := running + asked - (replicas + surge)
-    min (if over > 0 then max (asked - over) 0 else asked) room
+    let over := inAll + asked - (replicas + surge)
+    min (if over > 0 then max (asked - over) active.spec else asked) room
+
+/-- Go: `grow`. The size of the active set after one more step up. -/
+def grow (replicas surge : Int) (active : Set) (rest : List Set) : Int :=
+  growBy replicas surge active (rest.map (·.allocated)).sum (rest.map running).sum
 
 /-- When the active set grows, the Fleet as a whole is over its size by the
 surge at most. -/
-theorem grow_stays_within_the_surge (replicas surge : Int) (active : Set) (allocated running : Int)
-    (sized : 0 ≤ active.spec)
-    (grew : active.spec < grow replicas surge active allocated running) :
-    running + grow replicas surge active allocated running ≤ replicas + surge := by
-  simp only [grow] at grew ⊢
+theorem grow_stays_within_the_surge (replicas surge : Int) (active : Set) (allocated inAll : Int)
+    (grew : active.spec < growBy replicas surge active allocated inAll) :
+    inAll + growBy replicas surge active allocated inAll ≤ replicas + surge := by
+  simp only [growBy] at grew ⊢
   split at grew
   · omega
   · split at grew
     · omega
     · split at grew <;> omega
 
+/-- Being over its size never takes from the active set what it has, as long
+as the sessions in the rest leave it room. A Fleet that is made smaller in
+the middle of a rollout keeps its new GameServers. -/
+theorem grow_keeps_what_the_active_set_has (replicas surge : Int) (active : Set) (allocated inAll : Int)
+    (settled : active.spec = active.replicas)
+    (surges : 0 ≤ surge) (sessions : 0 ≤ allocated)
+    (room : active.spec < replicas - allocated) :
+    active.spec ≤ growBy replicas surge active allocated inAll := by
+  simp only [growBy]
+  split
+  · omega
+  · split
+    · omega
+    · split <;> omega
+
 /-- The active set never takes the place of an Allocated GameServer in the
 rest: once its last step is done, it fits into what they leave. -/
-theorem grow_leaves_room_for_sessions (replicas surge : Int) (active : Set) (allocated running : Int)
+theorem grow_leaves_room_for_sessions (replicas surge : Int) (active : Set) (allocated inAll : Int)
     (settled : active.spec = active.replicas) (fits : allocated ≤ replicas) :
-    grow replicas surge active allocated running + allocated ≤ replicas := by
-  simp only [grow]
+    growBy replicas surge active allocated inAll + allocated ≤ replicas := by
+  simp only [growBy]
   split
   · omega
   · split
@@ -63,13 +86,13 @@ theorem grow_leaves_room_for_sessions (replicas surge : Int) (active : Set) (all
     · split <;> omega
 
 /-- While there is room under the surge, a step makes progress. -/
-theorem grow_makes_progress (replicas surge : Int) (active : Set) (allocated running : Int)
-    (settled : active.spec = active.replicas) (sized : 0 ≤ active.spec)
+theorem grow_makes_progress (replicas surge : Int) (active : Set) (allocated inAll : Int)
+    (settled : active.spec = active.replicas)
     (surges : 1 ≤ surge) (sessions : 0 ≤ allocated)
     (room : active.spec < replicas - allocated)
-    (under : running + active.spec < replicas + surge) :
-    active.spec < grow replicas surge active allocated running := by
-  simp only [grow]
+    (under : inAll + active.spec < replicas + surge) :
+    active.spec < growBy replicas surge active allocated inAll := by
+  simp only [growBy]
   split
   · omega
   · split
@@ -77,6 +100,11 @@ theorem grow_makes_progress (replicas surge : Int) (active : Set) (allocated run
     · split <;> omega
 
 /-! ## Shrinking the rest -/
+
+/-- Go: `inUse`. The GameServers of a set that have, or are held for, a
+session. No scaling down removes them. -/
+def inUse (set : Set) : Int :=
+  set.reserved + set.allocated
 
 /-- Go: `dropUnhealthy`. The sizes of the rest once the GameServers nobody
 can play on are taken off, `limit` at most in all. -/
@@ -94,17 +122,16 @@ def scaleDown : List (Set × Int) → Int → List Int
   | (set, size) :: rest, limit =>
     if limit ≤ 0 then size :: rest.map (·.2)
     else if size ≤ 0 then size :: scaleDown rest limit
+    else if inUse set ≥ size then 0 :: scaleDown rest limit
     else if size ≠ set.replicas then size :: rest.map (·.2)
     else if set.shutdown ≠ 0 then size :: scaleDown rest limit
-    else
-      let cut := min size limit
-      (if set.replicas = set.allocated then 0 else size - cut) :: scaleDown rest (limit - cut)
+    else (size - min size limit) :: scaleDown rest (limit - min size limit)
 
-/-- How many GameServers a set gives up when its size changes. A set with
-nothing but Allocated GameServers gives up none, whatever its size says:
-that is `scaling_down_spares_sessions` in the state machine. -/
+/-- How many GameServers a set gives up when its size is lowered. The ones
+in use stay whatever the size says: that is `scaling_down_spares_sessions`
+in the state machine. So a set gives up no more than it has idle. -/
 def givenUp (set : Set) (size new : Int) : Int :=
-  if set.replicas = set.allocated then 0 else size - new
+  min (size - new) (max (size - inUse set) 0)
 
 def totalGivenUp : List (Set × Int) → List Int → Int
   | (set, size) :: rest, new :: news => givenUp set size new + totalGivenUp rest news
@@ -117,9 +144,10 @@ theorem nothing_is_given_up_by_staying (sets : List (Set × Int)) :
   | cons head rest ih =>
     obtain ⟨set, size⟩ := head
     simp only [List.map, totalGivenUp, givenUp, ih]
-    split <;> omega
+    omega
 
-/-- `scaleDown` takes away `limit` GameServers at most. -/
+/-- `scaleDown` takes away `limit` GameServers at most. Calling a set done
+that holds nothing but sessions takes away none. -/
 theorem scaleDown_gives_up_the_limit_at_most (sets : List (Set × Int)) (limit : Int) :
     totalGivenUp sets (scaleDown sets limit) ≤ max limit 0 := by
   induction sets generalizing limit with
@@ -127,20 +155,20 @@ theorem scaleDown_gives_up_the_limit_at_most (sets : List (Set × Int)) (limit :
   | cons head rest ih =>
     obtain ⟨set, size⟩ := head
     have stay := nothing_is_given_up_by_staying rest
+    have same := ih limit
+    have less := ih (limit - min size limit)
     simp only [scaleDown]
     split
-    · simp only [totalGivenUp, givenUp, stay]; split <;> omega
+    · simp only [totalGivenUp, givenUp, stay]; omega
     · split
-      · have := ih limit
-        simp only [totalGivenUp, givenUp]; split <;> omega
+      · simp only [totalGivenUp, givenUp]; omega
       · split
-        · simp only [totalGivenUp, givenUp, stay]; split <;> omega
+        · simp only [totalGivenUp, givenUp]; omega
         · split
-          · have := ih limit
-            simp only [totalGivenUp, givenUp]; split <;> omega
-          · have := ih (limit - min size limit)
-            simp only [totalGivenUp, givenUp]
-            split <;> omega
+          · simp only [totalGivenUp, givenUp, stay]; omega
+          · split
+            · simp only [totalGivenUp, givenUp]; omega
+            · simp only [totalGivenUp, givenUp]; omega
 
 /-! ## The floor under the Ready GameServers -/
 
@@ -186,7 +214,7 @@ structure Stuck where
 def Stuck.pass (replicas percent surge : Int) (s : Stuck) : Stuck :=
   let active : Set := { spec := s.new, replicas := s.new }
   let rest : Set := { spec := s.old, replicas := s.old, ready := s.old }
-  { new := grow replicas surge active 0 s.old
+  { new := grow replicas surge active [rest]
     old := (shrink replicas percent s.old active [rest]).headD s.old }
 
 /-- The state after each of the next passes. -/
