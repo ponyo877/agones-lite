@@ -1,15 +1,22 @@
 package auth
 
 import (
+	"context"
 	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 func TestSecretsAreCreatedOnceAndKept(t *testing.T) {
@@ -150,4 +157,63 @@ func TestParseRole(t *testing.T) {
 
 	_, err = ParseRole("root")
 	assert.Error(t, err)
+}
+
+// flip is a Checker whose answer can be changed, like a token being rotated.
+type flip struct{ allow atomic.Bool }
+
+func (f *flip) Allows(Role, string) bool { return f.allow.Load() }
+
+// openStream is the server's side of a stream that carries a token.
+type openStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (s openStream) Context() context.Context { return s.ctx }
+
+func TestAnOpenStreamEndsWhenItsTokenStopsBeingValid(t *testing.T) {
+	recheckEvery = 10 * time.Millisecond
+	t.Cleanup(func() { recheckEvery = 5 * time.Second })
+	check := &flip{}
+	check.allow.Store(true)
+	guard := guardStream(func(ctx context.Context) error { return allowedGRPC(ctx, check, Node) })
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer old-token"))
+	started := make(chan struct{})
+	// The handler is a stream that stays open, as an agent's Watch does.
+	handler := func(_ any, ss grpc.ServerStream) error {
+		close(started)
+		<-ss.Context().Done()
+		return nil
+	}
+	ended := make(chan error, 1)
+	go func() { ended <- guard(nil, openStream{ctx: ctx}, nil, handler) }()
+	<-started
+
+	// While the token is good, the stream stays open.
+	select {
+	case err := <-ended:
+		require.Fail(t, "the stream ended early", "%v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// The token is rotated: the stream ends, and the caller is told why.
+	check.allow.Store(false)
+	select {
+	case err := <-ended:
+		assert.Equal(t, codes.Unauthenticated, status.Code(err))
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "the stream outlived its token")
+	}
+}
+
+func TestAStreamWithoutAValidTokenNeverStarts(t *testing.T) {
+	guard := guardStream(func(ctx context.Context) error { return allowedGRPC(ctx, &flip{}, Node) })
+	called := false
+	handler := func(any, grpc.ServerStream) error { called = true; return nil }
+
+	err := guard(nil, openStream{ctx: context.Background()}, nil, handler)
+
+	assert.Equal(t, codes.Unauthenticated, status.Code(err))
+	assert.False(t, called)
 }

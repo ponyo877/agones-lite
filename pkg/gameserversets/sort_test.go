@@ -1,12 +1,14 @@
 package gameserversets
 
 import (
+	"math/rand"
 	"testing"
 	"time"
 
 	"agones.dev/agones/pkg/apis"
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/ponyo877/agones-lite/pkg/gameservers"
 )
@@ -121,4 +123,55 @@ func TestSortForRemovalLeavesItsArgumentAlone(t *testing.T) {
 
 	assert.Equal(t, []string{"old", "young"}, names(sorted))
 	assert.Equal(t, []string{"young", "old"}, names(servers))
+}
+
+// Upstream leaves each of these to the order its cache lists them in.
+func TestRemovalOrderWhereUpstreamHasNone(t *testing.T) {
+	counts := map[string]gameservers.NodeCount{"n1": {Ready: 2}}
+	tests := map[string]struct {
+		strategy apis.SchedulingStrategy
+		servers  []*agonesv1.GameServer
+		want     []string
+	}{
+		"Distributed: GameServers of the same age go by name": {
+			strategy: apis.Distributed,
+			servers:  []*agonesv1.GameServer{server("b", ready, created(noon)), server("a", ready, created(noon))},
+			want:     []string{"a", "b"},
+		},
+		"Packed: GameServers on no node, or on one that is gone, go by name": {
+			strategy: apis.Packed,
+			servers:  []*agonesv1.GameServer{server("c", ready, on("n1")), server("b", ready), server("a", ready, on("gone"))},
+			want:     []string{"a", "b", "c"},
+		},
+		// By name alone, "ready" would go before "stuck", "stuck" before
+		// "unready", and "unready", not being Ready yet, before "ready".
+		"Packed: one that is not Ready yet goes before every other state on its node": {
+			strategy: apis.Packed,
+			servers:  []*agonesv1.GameServer{server("stuck", failed, on("n1")), server("ready", ready, on("n1")), server("unready", creating, on("n1"))},
+			want:     []string{"unready", "ready", "stuck"},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			sorted := SortForRemoval(tc.strategy, tc.servers, counts, nil)
+
+			assert.Equal(t, tc.want, names(sorted))
+		})
+	}
+}
+
+// The store hands GameServers over in no particular order, so which of them
+// go first must not depend on it.
+func TestSortForRemovalDoesNotDependOnTheOrderOfItsInput(t *testing.T) {
+	random := rand.New(rand.NewSource(20))
+	for range 500 {
+		servers, priorities := crowd(random), anyPriorities(random)
+		for _, strategy := range []apis.SchedulingStrategy{apis.Packed, apis.Distributed} {
+			want := names(SortForRemoval(strategy, servers, crowdedNodes, priorities))
+
+			got := names(SortForRemoval(strategy, shuffled(random, servers), crowdedNodes, priorities))
+
+			require.Equal(t, want, got, "%s, with priorities %v", strategy, priorities)
+		}
+	}
 }

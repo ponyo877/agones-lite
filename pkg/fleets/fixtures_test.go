@@ -1,6 +1,9 @@
 package fleets
 
 import (
+	"fmt"
+	"math/rand"
+	"slices"
 	"testing"
 	"time"
 
@@ -87,4 +90,40 @@ func list(sets ...*agonesv1.GameServerSet) []*agonesv1.GameServerSet {
 // previous pass would have.
 func seenReady(fleet *agonesv1.Fleet, sets ...*agonesv1.GameServerSet) {
 	fleet.Status.ReadyReplicas = agonesv1.SumGameServerSets(sets, readyReplicas)
+}
+
+// family returns the sets of a Fleet that has been updated a few times in
+// a row: some are made from its template as it is now, some from an
+// earlier one, and several were created in the same minute. Only the names
+// all differ.
+func family(random *rand.Rand, fleet *agonesv1.Fleet) []*agonesv1.GameServerSet {
+	sets := make([]*agonesv1.GameServerSet, 1+random.Intn(5))
+	for i := range sets {
+		from := current
+		if random.Intn(3) > 0 {
+			from = old
+		}
+		sets[i] = born(from(fleet, fmt.Sprintf("set-%d", i), anyShape(random)), random.Intn(3))
+	}
+	return sets
+}
+
+// anyShape is a small set in any state between full and empty.
+func anyShape(random *rand.Rand) shape {
+	replicas := int32(random.Intn(6))
+	ready := int32(random.Intn(int(replicas) + 1))
+	return shape{
+		spec:      int32(random.Intn(6)),
+		replicas:  replicas,
+		ready:     ready,
+		allocated: int32(random.Intn(int(replicas-ready) + 1)),
+		shutdown:  int32(random.Intn(2)),
+	}
+}
+
+// shuffled returns the sets in another order.
+func shuffled(random *rand.Rand, sets []*agonesv1.GameServerSet) []*agonesv1.GameServerSet {
+	out := slices.Clone(sets)
+	random.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
+	return out
 }

@@ -8,7 +8,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
+	"maps"
+	"net/http"
 	"sync"
 	"time"
 
@@ -78,8 +79,9 @@ type Config struct {
 	Capacity       litev1.Resources
 
 	SidecarImage string
-	// SidecarListen is where the agent waits for sidecars to connect, and
-	// SidecarDial is how a container reaches that same listener.
+	// SidecarListen is where the agent waits for sidecars to connect:
+	// "unix:///dir/agent.sock" or "host:port". SidecarDial is how a
+	// container reaches a TCP listener; a socket needs none, it is mounted.
 	SidecarListen string
 	SidecarDial   string
 }
@@ -102,7 +104,7 @@ func New(cfg Config, cp ControlPlane, d Docker) *Agent {
 
 // Run announces the node and reconciles until ctx is done.
 func (a *Agent) Run(ctx context.Context) error {
-	listener, err := net.Listen("tcp", a.cfg.SidecarListen)
+	listener, err := listen(a.cfg.SidecarListen)
 	if err != nil {
 		return fmt.Errorf("listen for sidecars: %w", err)
 	}
@@ -159,6 +161,7 @@ func (a *Agent) node() *litev1.Node {
 // Without a current answer from the control plane nothing is touched: the
 // containers may be exactly what is wanted, and we just cannot know yet.
 func (a *Agent) reconcile(ctx context.Context) {
+	changing := a.inProgress() // noted before looking, or one could end unseen
 	desired, current := a.cp.Assigned(a.cfg.NodeName)
 	if !current {
 		return
@@ -170,8 +173,20 @@ func (a *Agent) reconcile(ctx context.Context) {
 	}
 	a.sidecars.update(desired, actual)
 	for _, action := range Plan(desired, actual) {
-		a.start(ctx, action)
+		// A GameServer that was being worked on while we looked may have
+		// been seen half done. What to do about it is left to the next pass.
+		if !changing[action.Key] {
+			a.start(ctx, action)
+		}
 	}
+}
+
+// inProgress returns the GameServers that have an action running right now.
+// Actions are only started by reconcile, so none is added behind its back.
+func (a *Agent) inProgress() map[Key]bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return maps.Clone(a.busy)
 }
 
 // start runs an action in the background, unless its GameServer already has
@@ -208,7 +223,9 @@ func (a *Agent) release(key Key) {
 func (a *Agent) execute(ctx context.Context, action Action) error {
 	switch action.Kind {
 	case Create:
-		return a.create(ctx, action.Key, action.GameServer)
+		return a.orCreateFailed(ctx, action.Key, a.bringUp(ctx, action.Key, action.GameServer))
+	case Start:
+		return a.orCreateFailed(ctx, action.Key, a.startAll(ctx, action.Key, ids(action.Containers)))
 	case Remove:
 		prefix := podspec.Prefix(action.Key.Namespace, action.Key.Name)
 		if err := a.takeDown(ctx, action.Containers, podspec.GracePeriod(action.GameServer), prefix); err != nil {
@@ -228,13 +245,28 @@ func (a *Agent) tell(key Key, event gameservers.Event) error {
 	return a.cp.Report(gameservers.Report{Namespace: key.Namespace, Name: key.Name, Event: event})
 }
 
-// create brings the containers up, and reports CreateFailed when it cannot.
-func (a *Agent) create(ctx context.Context, key Key, gs *agonesv1.GameServer) error {
-	err := a.bringUp(ctx, key, gs)
-	if err == nil {
-		return nil
+// orCreateFailed reports CreateFailed when the containers could not be
+// brought up, which is what err says. Two things are not that. An agent
+// that is stopping was only interrupted, and one that found its containers
+// there already came too late. The next pass carries on from what it finds.
+func (a *Agent) orCreateFailed(ctx context.Context, key Key, err error) error {
+	if err == nil || ctx.Err() != nil || a.alreadyThere(ctx, key, err) {
+		return err
 	}
 	return errors.Join(err, a.tell(key, gameservers.CreateFailed))
+}
+
+// alreadyThere reports whether err is Docker refusing a name while the
+// GameServer has containers. reconcile does not plan a create then, so this
+// should not happen. If it does all the same, the GameServer may be coming
+// up fine and must not be failed for it.
+func (a *Agent) alreadyThere(ctx context.Context, key Key, err error) bool {
+	var refused *docker.Error
+	if !errors.As(err, &refused) || refused.Status != http.StatusConflict {
+		return false
+	}
+	actual, err := a.docker.List(ctx, podspec.LabelNode+"="+a.cfg.NodeName)
+	return err == nil && len(group(actual)[key]) > 0
 }
 
 func (a *Agent) bringUp(ctx context.Context, key Key, gs *agonesv1.GameServer) error {
@@ -242,7 +274,8 @@ func (a *Agent) bringUp(ctx context.Context, key Key, gs *agonesv1.GameServer) e
 	if err != nil {
 		return err
 	}
-	specs := podspec.Containers(gs, podspec.Sidecar{Image: a.cfg.SidecarImage, AgentAddress: a.cfg.SidecarDial, Token: token})
+	address, binds := a.cfg.sidecarAccess()
+	specs := podspec.Containers(gs, podspec.Sidecar{Image: a.cfg.SidecarImage, AgentAddress: address, Binds: binds, Token: token})
 	if err := a.pullImages(ctx, gs, specs); err != nil {
 		return err
 	}
@@ -254,12 +287,7 @@ func (a *Agent) bringUp(ctx context.Context, key Key, gs *agonesv1.GameServer) e
 	if err := a.tell(key, gameservers.ContainersCreated); err != nil {
 		return err
 	}
-	for _, id := range ids {
-		if err := a.docker.Start(ctx, id); err != nil {
-			return err
-		}
-	}
-	return a.tell(key, gameservers.ContainersRunning)
+	return a.startAll(ctx, key, ids)
 }
 
 func (a *Agent) createAll(ctx context.Context, specs []docker.Spec) ([]string, error) {
@@ -272,6 +300,26 @@ func (a *Agent) createAll(ctx context.Context, specs []docker.Spec) ([]string, e
 		ids = append(ids, id)
 	}
 	return ids, nil
+}
+
+// startAll starts the containers in the order given, which must have the
+// sidecar first, and reports that they run. An agent that stops half way
+// leaves containers that Plan hands to the next one as a Start.
+func (a *Agent) startAll(ctx context.Context, key Key, ids []string) error {
+	for _, id := range ids {
+		if err := a.docker.Start(ctx, id); err != nil {
+			return err
+		}
+	}
+	return a.tell(key, gameservers.ContainersRunning)
+}
+
+func ids(containers []docker.Container) []string {
+	out := make([]string, 0, len(containers))
+	for _, c := range containers {
+		out = append(out, c.ID)
+	}
+	return out
 }
 
 func (a *Agent) pullImages(ctx context.Context, gs *agonesv1.GameServer, specs []docker.Spec) error {

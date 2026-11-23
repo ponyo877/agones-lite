@@ -2,6 +2,8 @@ package fleetautoscalers
 
 import (
 	"fmt"
+	"math/rand"
+	"slices"
 	"testing"
 	"time"
 
@@ -94,6 +96,19 @@ func server(name string, state agonesv1.GameServerState, opts ...option) *agones
 
 func on(node string) option {
 	return func(gs *agonesv1.GameServer) { gs.Status.NodeName = node }
+}
+
+// goingAway marks the GameServer as being deleted.
+func goingAway() option {
+	return func(gs *agonesv1.GameServer) {
+		since := metav1.NewTime(noon)
+		gs.DeletionTimestamp = &since
+	}
+}
+
+// createdAt sets when the GameServer was created.
+func createdAt(at time.Time) option {
+	return func(gs *agonesv1.GameServer) { gs.CreationTimestamp = metav1.NewTime(at) }
 }
 
 // counting gives the GameServer the rooms Counter.
@@ -192,4 +207,36 @@ func neverCalled(t *testing.T) Webhook {
 		require.FailNow(t, "the webhook must not be called")
 		return nil, nil
 	}
+}
+
+// crowd returns Ready GameServers that tie in every way scaling down looks
+// at: they share two nodes, a few moments of creation and a few amounts of
+// room in the rooms Counter. Only the names all differ.
+func crowd(random *rand.Rand) []*agonesv1.GameServer {
+	servers := make([]*agonesv1.GameServer, 2+random.Intn(9))
+	for i := range servers {
+		count := int64(random.Intn(3))
+		servers[i] = server(fmt.Sprintf("gs-%d", i), ready,
+			on([]string{"n1", "n2"}[random.Intn(2)]),
+			createdAt(noon.Add(time.Duration(random.Intn(3))*time.Second)),
+			counting(count, count+int64(random.Intn(4))))
+	}
+	return servers
+}
+
+// roomsIn adds up the rooms Counter over servers, as a Fleet's status does.
+func roomsIn(servers []*agonesv1.GameServer) usage {
+	var total usage
+	for _, gs := range servers {
+		total.count += gs.Status.Counters[rooms].Count
+		total.capacity += gs.Status.Counters[rooms].Capacity
+	}
+	return total
+}
+
+// shuffled returns the GameServers in another order.
+func shuffled(random *rand.Rand, servers []*agonesv1.GameServer) []*agonesv1.GameServer {
+	out := slices.Clone(servers)
+	random.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
+	return out
 }

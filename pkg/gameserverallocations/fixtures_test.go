@@ -1,6 +1,9 @@
 package gameserverallocations
 
 import (
+	"fmt"
+	"math/rand"
+	"slices"
 	"testing"
 	"time"
 
@@ -110,5 +113,26 @@ func names(servers []*agonesv1.GameServer) []string {
 	for i, gs := range servers {
 		out[i] = gs.Name
 	}
+	return out
+}
+
+// crowd returns Ready and Allocated GameServers that tie in every way an
+// allocation looks at: they share two nodes and a few amounts of room in
+// the rooms Counter. Only the names all differ.
+func crowd(random *rand.Rand) []*agonesv1.GameServer {
+	servers := make([]*agonesv1.GameServer, 2+random.Intn(9))
+	for i := range servers {
+		servers[i] = server(fmt.Sprintf("gs-%d", i),
+			[]agonesv1.GameServerState{ready, ready, allocated}[random.Intn(3)],
+			on([]string{"node1", "node2"}[random.Intn(2)]),
+			counter("rooms", int64(random.Intn(3)), 3))
+	}
+	return servers
+}
+
+// shuffled returns the GameServers in another order.
+func shuffled(random *rand.Rand, servers []*agonesv1.GameServer) []*agonesv1.GameServer {
+	out := slices.Clone(servers)
+	random.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
 	return out
 }

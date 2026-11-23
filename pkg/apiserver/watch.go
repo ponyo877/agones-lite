@@ -1,6 +1,7 @@
 package apiserver
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,8 +18,9 @@ const Synced = "Synced"
 // named after what happened (Added, Modified, Deleted) and carrying the
 // object as JSON.
 //
-// A client that falls too far behind loses changes, as any watcher of the
-// store does, and should then watch again from the start.
+// The store gives up on a watcher that falls too far behind, and the stream
+// then simply ends. A client that still wants to know watches again, which
+// starts with the full list: it never works from a copy with a hole in it.
 func (r resource[T]) watch(w http.ResponseWriter, req *http.Request) {
 	namespace := req.PathValue("namespace")
 	objects, changes, cancel := r.typed.ListAndWatch(namespace)
@@ -29,16 +31,7 @@ func (r resource[T]) watch(w http.ResponseWriter, req *http.Request) {
 		stream.send(string(store.Added), obj)
 	}
 	stream.send(Synced, struct{}{})
-	for stream.err == nil {
-		select {
-		case <-req.Context().Done():
-			return
-		case change := <-changes:
-			if namespace == "" || change.Key.Namespace == namespace {
-				stream.send(string(change.Type), change.Object)
-			}
-		}
-	}
+	stream.relay(req.Context(), changes, namespace)
 }
 
 // eventStream writes Server-Sent Events. After a write that failed it
@@ -53,6 +46,24 @@ func newEventStream(w http.ResponseWriter) *eventStream {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	return &eventStream{w: w, flush: http.NewResponseController(w)}
+}
+
+// relay sends the changes in namespace, or in all when it is empty, until
+// the client leaves or the store closes the watch.
+func (s *eventStream) relay(ctx context.Context, changes <-chan store.Event, namespace string) {
+	for s.err == nil {
+		select {
+		case <-ctx.Done():
+			return
+		case change, open := <-changes:
+			if !open {
+				return // too far behind: see store.Watch
+			}
+			if namespace == "" || change.Key.Namespace == namespace {
+				s.send(string(change.Type), change.Object)
+			}
+		}
+	}
 }
 
 // send writes one event and pushes it out at once: the reader is waiting.

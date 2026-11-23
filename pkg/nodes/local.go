@@ -42,7 +42,9 @@ func NewLocal(s *store.Store, controller *gameservers.Controller) *Local {
 	}
 }
 
-// Register records the node, or refreshes it when it is already known.
+// Register records the node, or refreshes it when it is already known. The
+// phase is the caller's to decide: an agent in this process is Ready by
+// calling, one on another machine is judged by Server.
 func (l *Local) Register(node *litev1.Node) error {
 	node = node.DeepCopy()
 	node.Status.LastHeartbeatTime = metav1.NewTime(time.Now())
@@ -74,6 +76,10 @@ func (l *Local) Assigned(node string) ([]*agonesv1.GameServer, bool) {
 
 // Changes signals after any GameServer changed. Signals that pile up while
 // the agent is busy collapse into one.
+//
+// Should the store ever end this subscription for falling behind, the
+// signals stop. The agent still looks at regular intervals, and Assigned
+// reads the store itself, so it is slower then but misses nothing.
 func (l *Local) Changes() (<-chan struct{}, func()) {
 	events, cancel := l.servers.Watch()
 	signal := make(chan struct{}, 1)

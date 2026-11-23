@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/yaml"
 
@@ -89,6 +90,91 @@ func TestCheck(t *testing.T) {
 				}
 			},
 			errors: []string{"spec.template.spec.containers[0].resources.limits[nvidia.com/gpu]"},
+		},
+		"an empty list or map asks for nothing": {
+			change: func(p *corev1.PodSpec) {
+				p.InitContainers = []corev1.Container{}
+				p.ImagePullSecrets = []corev1.LocalObjectReference{}
+				p.NodeSelector = map[string]string{}
+				p.Containers[0].EnvFrom = []corev1.EnvFromSource{}
+			},
+		},
+		"a negative grace period is rejected": {
+			change: func(p *corev1.PodSpec) { p.TerminationGracePeriodSeconds = new(int64(-1)) },
+			errors: []string{"spec.template.spec.terminationGracePeriodSeconds"},
+		},
+		"limits must fit in what Docker takes": {
+			change: func(p *corev1.PodSpec) {
+				p.Containers[0].Resources.Limits = corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("10000000000"),
+					corev1.ResourceMemory: resource.MustParse("1e19"),
+				}
+			},
+			errors: []string{
+				"spec.template.spec.containers[0].resources.limits[cpu]",
+				"spec.template.spec.containers[0].resources.limits[memory]",
+			},
+		},
+		"the largest limits Docker takes are fine": {
+			change: func(p *corev1.PodSpec) {
+				p.Containers[0].Resources.Limits = corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("9223372036854m"),
+					corev1.ResourceMemory: resource.MustParse("9223372036854775807"),
+				}
+			},
+		},
+		"a mount needs a volume and a path": {
+			change: func(p *corev1.PodSpec) {
+				p.Volumes = []corev1.Volume{{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}
+				p.Containers[0].VolumeMounts = []corev1.VolumeMount{{Name: "nope", MountPath: "/data"}, {Name: "tmp"}}
+			},
+			errors: []string{
+				"spec.template.spec.containers[0].volumeMounts[0].name",
+				"spec.template.spec.containers[0].volumeMounts[1].mountPath",
+			},
+		},
+		"a volume needs a source, and a name of its own": {
+			change: func(p *corev1.PodSpec) {
+				tmp := corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}
+				p.Volumes = []corev1.Volume{
+					{Name: "nothing"},
+					{Name: "nowhere", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{}}},
+					{Name: "tmp", VolumeSource: tmp},
+					{Name: "tmp", VolumeSource: tmp},
+					{Name: "Not A Name", VolumeSource: tmp},
+				}
+			},
+			errors: []string{
+				"spec.template.spec.volumes[0]",
+				"spec.template.spec.volumes[1].hostPath.path",
+				"spec.template.spec.volumes[3].name",
+				"spec.template.spec.volumes[4].name",
+			},
+		},
+		"a container needs a name of its own, and not the sidecar's": {
+			change: func(p *corev1.PodSpec) {
+				p.Containers = append(p.Containers,
+					corev1.Container{Name: SidecarName, Image: "example/logs:1"},
+					corev1.Container{Name: "game", Image: "example/logs:1"},
+					corev1.Container{Name: "Not A Name", Image: "example/logs:1"},
+				)
+			},
+			errors: []string{
+				"spec.template.spec.containers[1].name",
+				"spec.template.spec.containers[2].name",
+				"spec.template.spec.containers[3].name",
+			},
+		},
+		"an image Docker cannot parse is rejected": {
+			change: func(p *corev1.PodSpec) {
+				p.Containers[0].Image = "alpine:"
+				p.Containers = append(p.Containers, corev1.Container{Name: "none"}, corev1.Container{Name: "caps", Image: "Example/Game"})
+			},
+			errors: []string{
+				"spec.template.spec.containers[0].image",
+				"spec.template.spec.containers[1].image",
+				"spec.template.spec.containers[2].image",
+			},
 		},
 	}
 	for name, tc := range tests {
@@ -170,6 +256,19 @@ func TestContainers(t *testing.T) {
 
 	assert.Equal(t, RoleOther, logs.Labels[LabelRole])
 	assert.Equal(t, "uid-1", logs.Labels[LabelUID])
+}
+
+// The agent removes a GameServer's volumes by the start of their names, so
+// the prefix of one GameServer must never start the names of another's.
+// The separator sees to that: no name the management API admits holds it.
+func TestAPrefixBelongsToOneGameServer(t *testing.T) {
+	assert.Equal(t, "agones-lite_default_gs_", Prefix("default", "gs"))
+
+	assert.NotEmpty(t, validation.IsDNS1123Label("default"+separator+"gs"), "a namespace cannot hold the separator")
+	assert.NotEmpty(t, validation.IsDNS1123Subdomain("gs"+separator+"x"), "a name cannot hold the separator")
+	for _, neighbour := range []string{"gs-x", "gs.x", "gsx"} {
+		assert.NotContains(t, Prefix("default", neighbour), Prefix("default", "gs"), neighbour)
+	}
 }
 
 func TestGracePeriod(t *testing.T) {

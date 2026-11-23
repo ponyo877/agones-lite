@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"log/slog"
+	"math"
 	"net"
 	"strings"
 	"sync"
@@ -204,8 +205,17 @@ func (s *sidecarServer) pass(key Key, req *sidecarv1.TellRequest) error {
 		Namespace: key.Namespace,
 		Name:      key.Name,
 		Event:     event,
-		Reserve:   time.Duration(req.GetReserveSeconds()) * time.Second,
+		Reserve:   reserveFor(req.GetReserveSeconds()),
 	})
+}
+
+// reserveFor turns the seconds of a Reserve into a Duration. More of them
+// than a Duration holds (292 years) would wrap around into a short or a
+// negative time, so they count as the longest one. Zero or less means
+// "until told otherwise".
+func reserveFor(seconds int64) time.Duration {
+	const longest = int64(math.MaxInt64 / time.Second)
+	return time.Duration(min(max(seconds, 0), longest)) * time.Second
 }
 
 // authenticate works out which GameServer is calling and checks its token.

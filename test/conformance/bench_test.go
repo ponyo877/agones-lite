@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -68,7 +69,26 @@ type bench struct {
 	servers store.Typed[*agonesv1.GameServer]
 }
 
+// newBench is a node whose sidecars reach the agent through a unix socket,
+// as they do on Linux.
 func newBench(t *testing.T) bench {
+	t.Helper()
+	// Not t.TempDir(): a socket's path has to be short.
+	dir, err := os.MkdirTemp("", "al")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return startBench(t, "unix://"+filepath.Join(dir, "agent.sock"), "")
+}
+
+// newBenchOverTCP is a node whose sidecars reach the agent over TCP, as
+// they do where Docker runs in a virtual machine.
+func newBenchOverTCP(t *testing.T) bench {
+	t.Helper()
+	address := "127.0.0.1:" + strconv.Itoa(freePort(t))
+	return startBench(t, address, address)
+}
+
+func startBench(t *testing.T, listen, dial string) bench {
 	t.Helper()
 	require.NoError(t, agones.Setup())
 	state, err := store.Open(filepath.Join(t.TempDir(), "state.db"), store.Kinds())
@@ -78,14 +98,13 @@ func newBench(t *testing.T) bench {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	containers := &containers{ctx: ctx, byID: map[string]*container{}}
-	address := "127.0.0.1:" + strconv.Itoa(freePort(t))
 	node := agent.New(agent.Config{
 		NodeName:      "node-1",
 		Address:       "203.0.113.10",
 		PortRange:     litev1.PortRange{Min: 7000, Max: 7100},
 		SidecarImage:  "sidecar:test",
-		SidecarListen: address,
-		SidecarDial:   address,
+		SidecarListen: listen,
+		SidecarDial:   dial,
 	}, cp.Agents, containers)
 
 	var running sync.WaitGroup
@@ -149,8 +168,9 @@ type containers struct {
 
 type container struct {
 	docker.Container
-	env  map[string]string
-	stop context.CancelFunc // set while a sidecar's SDK server runs
+	env   map[string]string
+	binds []string           // "host directory:directory in the container"
+	stop  context.CancelFunc // set while a sidecar's SDK server runs
 }
 
 func (c *containers) List(_ context.Context, label string) ([]docker.Container, error) {
@@ -178,6 +198,7 @@ func (c *containers) Create(_ context.Context, spec docker.Spec) (string, error)
 	c.byID[id] = &container{
 		Container: docker.Container{ID: id, Name: spec.Name, Labels: spec.Labels, State: "created"},
 		env:       env,
+		binds:     spec.Binds,
 	}
 	return id, nil
 }
@@ -197,8 +218,27 @@ func (c *containers) Start(_ context.Context, id string) error {
 	creds := sdkserver.Credentials{GameServer: held.env[podspec.EnvGameServer], Token: held.env[podspec.EnvToken]}
 	ctx, stop := context.WithCancel(c.ctx)
 	held.stop = stop
-	go func() { _ = sdkserver.Serve(ctx, held.env[podspec.EnvAgent], creds, grpcPort, httpPort) }()
+	agentAddress := held.onHost(held.env[podspec.EnvAgent])
+	go func() { _ = sdkserver.Serve(ctx, agentAddress, creds, grpcPort, httpPort) }()
 	return nil
+}
+
+// onHost turns an address as the container sees it into the one this test
+// can dial. A unix socket lies in a directory that was mounted into the
+// container, so its path is followed back through the mount, which is what
+// makes the test fail if the agent forgets to ask for the mount.
+func (held *container) onHost(address string) string {
+	path, isSocket := strings.CutPrefix(address, "unix://")
+	if !isSocket {
+		return address
+	}
+	for _, bind := range held.binds {
+		host, inside, _ := strings.Cut(bind, ":")
+		if rest, ok := strings.CutPrefix(path, inside); ok {
+			return "unix://" + host + rest
+		}
+	}
+	return address // not mounted: dialling this fails, as it would for real
 }
 
 func (c *containers) Stop(_ context.Context, id string, _ time.Duration) error {

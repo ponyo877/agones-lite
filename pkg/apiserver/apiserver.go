@@ -1,13 +1,16 @@
 // Package apiserver is the management API: plain REST, with resources in the
 // same JSON and YAML shape Agones uses.
 //
-// It also does what the Kubernetes admission webhooks do for Agones. A new
-// resource gets its defaults, is validated by upstream's own rules, and is
-// checked against what Docker can run, before it is stored.
+// It also does what the Kubernetes API server and the admission webhooks do
+// for Agones. A new resource gets its defaults, is held against the limits
+// of its CRD schema, is validated by upstream's own rules, and is checked
+// against what Docker can run, before it is stored.
 //
 //   - apiserver.go: the routes and the helpers every handler shares
 //   - resource.go: list, get, create, update and delete, written once for all kinds
 //   - admission.go: defaulting and validation, one function per kind
+//   - schema.go: the limits of Agones' CRD schemas, which nothing else checks here
+//   - watch.go: a list that goes on, as Server-Sent Events
 //
 // Upstream counterpart: the Kubernetes API server, plus the webhooks that the
 // controllers in pkg/gameservers, pkg/fleets and others register.
@@ -70,6 +73,7 @@ func New(s *store.Store, recorder *events.Recorder, nodeOps NodeOperator, logs L
 		servers: resource[*agonesv1.GameServer]{
 			typed: store.GameServersOf(s),
 			blank: func() *agonesv1.GameServer { return &agonesv1.GameServer{} },
+			fill:  fillGameServer,
 			admit: admitGameServer,
 		},
 		// GameServerSets belong to their Fleet's controller, so they are read-only here.
@@ -79,6 +83,7 @@ func New(s *store.Store, recorder *events.Recorder, nodeOps NodeOperator, logs L
 		fleets: resource[*agonesv1.Fleet]{
 			typed: store.FleetsOf(s),
 			blank: func() *agonesv1.Fleet { return &agonesv1.Fleet{} },
+			fill:  fillFleet,
 			admit: admitFleet,
 			carry: carryFleet,
 		},
@@ -215,7 +220,7 @@ func (s *Server) scaleFleet(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Replicas *int32 `json:"replicas"`
 	}
-	if err := decode(r, &body); err != nil || body.Replicas == nil || *body.Replicas < 0 {
+	if _, err := decode(r, &body); err != nil || body.Replicas == nil || *body.Replicas < 0 {
 		fail(w, invalid{errors.New(`the body must be {"replicas": N} with N of 0 or more`)})
 		return
 	}
@@ -242,12 +247,19 @@ type items[T any] struct {
 
 // decode reads a JSON or YAML body. Unknown fields are errors, so a typo in
 // a manifest is caught instead of silently ignored.
-func decode(r *http.Request, into any) error {
+//
+// It also returns the body as it was written. The Go types cannot tell a
+// field that was left out from one set to its zero value, and the defaults
+// of the CRD schema hang on that difference.
+func decode(r *http.Request, into any) (written map[string]any, err error) {
 	body, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, maxBody))
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return yaml.UnmarshalStrict(body, into)
+	if err := yaml.UnmarshalStrict(body, into); err != nil {
+		return nil, err
+	}
+	return written, yaml.Unmarshal(body, &written)
 }
 
 // invalid marks an error as the caller's mistake.

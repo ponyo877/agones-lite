@@ -1,6 +1,7 @@
 package fleets
 
 import (
+	"cmp"
 	"slices"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
@@ -72,22 +73,34 @@ func Plan(fleet *agonesv1.Fleet, sets []*agonesv1.GameServerSet) (Changes, error
 // oldest is active and the others join the rest, to be scaled down and
 // removed like any old set.
 //
-// Upstream: filterGameServerSetByActive in pkg/fleets/controller.go.
+// The rest comes oldest first, which is the order it gives up GameServers
+// in. Neither answer depends on the order of sets: the store hands them
+// over in no particular order.
+//
+// Upstream: filterGameServerSetByActive in pkg/fleets/controller.go, which
+// keeps the rest in the order it was listed in, and of two equally old
+// matches takes the one listed first.
 func Active(fleet *agonesv1.Fleet, sets []*agonesv1.GameServerSet) (active *agonesv1.GameServerSet, rest []*agonesv1.GameServerSet) {
-	for _, set := range sets {
-		switch {
-		case !apiequality.Semantic.DeepEqual(set.Spec.Template, fleet.Spec.Template):
-			rest = append(rest, set)
-		case active == nil:
+	for _, set := range oldestFirst(sets) {
+		if active == nil && apiequality.Semantic.DeepEqual(set.Spec.Template, fleet.Spec.Template) {
 			active = set
-		case set.CreationTimestamp.Before(&active.CreationTimestamp):
-			rest = append(rest, active)
-			active = set
-		default:
-			rest = append(rest, set)
+			continue
 		}
+		rest = append(rest, set)
 	}
 	return active, rest
+}
+
+// oldestFirst returns sets by age. Sets of the same age go by name.
+func oldestFirst(sets []*agonesv1.GameServerSet) []*agonesv1.GameServerSet {
+	sorted := slices.Clone(sets)
+	slices.SortFunc(sorted, func(a, b *agonesv1.GameServerSet) int {
+		return cmp.Or(
+			a.CreationTimestamp.Compare(b.CreationTimestamp.Time),
+			cmp.Compare(a.Name, b.Name),
+		)
+	})
+	return sorted
 }
 
 // upToDate reports whether the active set has the Fleet's scheduling and

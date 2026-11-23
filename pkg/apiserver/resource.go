@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/validation/field"
+
 	"github.com/ponyo877/agones-lite/pkg/store"
 )
 
@@ -12,9 +14,13 @@ import (
 type resource[T store.Object] struct {
 	typed store.Typed[T]
 	blank func() T
+	// fill gives a new or changed object the defaults of its CRD schema.
+	// written is the manifest, which shows what was left out. A kind
+	// without fill has no such defaults.
+	fill func(obj T, written map[string]any)
 	// admit gives a new or changed object its defaults and validates it.
 	// A kind without admit is read-only.
-	admit func(T) (warnings []string, err error)
+	admit func(T) (warnings []string, errs field.ErrorList)
 	// carry copies into incoming what a client may not change. A kind
 	// without carry can be created and deleted, but not updated.
 	carry func(stored, incoming T)
@@ -104,23 +110,35 @@ func (r resource[T]) remove(w http.ResponseWriter, req *http.Request) {
 // read decodes the body, names the object after the URL, and admits it.
 func (r resource[T]) read(req *http.Request) (T, []string, error) {
 	obj := r.blank()
-	if err := decode(req, obj); err != nil {
+	written, err := decode(req, obj)
+	if err != nil {
 		return obj, nil, err
+	}
+	if r.fill != nil {
+		r.fill(obj, written)
 	}
 	obj.SetNamespace(req.PathValue("namespace"))
 	if name := req.PathValue("name"); name != "" {
 		obj.SetName(name)
 	}
-	warnings, err := r.admit(obj)
-	return obj, warnings, err
+	// Only a DELETE marks an object for deletion; a manifest cannot.
+	obj.SetDeletionTimestamp(nil)
+	obj.SetDeletionGracePeriodSeconds(nil)
+	warnings, errs := r.admit(obj)
+	return obj, warnings, append(identity(obj), errs...).ToAggregate()
 }
 
 // keepIdentity carries over the metadata only the store may set. A client
 // that sends no resourceVersion means "replace whatever is there".
+//
+// The deletion mark is part of it: an update never takes it back, or
+// applying a manifest again would revive what is being deleted.
 func keepIdentity(stored, incoming store.Object) {
 	incoming.SetUID(stored.GetUID())
 	incoming.SetCreationTimestamp(stored.GetCreationTimestamp())
 	incoming.SetGeneration(stored.GetGeneration())
+	incoming.SetDeletionTimestamp(stored.GetDeletionTimestamp())
+	incoming.SetDeletionGracePeriodSeconds(stored.GetDeletionGracePeriodSeconds())
 	if incoming.GetResourceVersion() == "" {
 		incoming.SetResourceVersion(stored.GetResourceVersion())
 	}

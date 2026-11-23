@@ -183,7 +183,7 @@ func TestCountersAndListsThroughTheOfficialSDK(t *testing.T) {
 }
 
 func TestAGameServerThatGoesQuietBecomesUnhealthy(t *testing.T) {
-	b := newBench(t)
+	b := newBenchOverTCP(t)
 	grpcPort, _ := b.create("quiet")
 	game := connect(t, grpcPort)
 	stop := beat(t, game)

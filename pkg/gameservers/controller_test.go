@@ -120,6 +120,35 @@ func TestReadyBeforeTheAgentReportsRunning(t *testing.T) {
 	assert.Equal(t, "203.0.113.10", gs.Status.Address, "Ready publishes the address when Scheduled never happened")
 }
 
+// A game server may call Allocate or Reserve as soon as it starts, before
+// its agent reports it running. Upstream has an answer for Ready only.
+func TestAllocatedOrReservedBeforeTheAgentReportsRunning(t *testing.T) {
+	tests := map[string]struct {
+		event Event
+		want  agonesv1.GameServerState
+	}{
+		"Allocate": {event: SDKAllocate, want: allocated},
+		"Reserve":  {event: SDKReserve, want: reserved},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			f.addNode()
+			f.addServer()
+			f.sync()
+			f.report(ContainersCreated)
+
+			f.report(tc.event)
+			f.report(ContainersRunning) // arrives late and must change nothing
+
+			gs := f.server()
+			assert.Equal(t, tc.want, gs.Status.State)
+			assert.Equal(t, "203.0.113.10", gs.Status.Address, "players are sent here, so they must be told where it is")
+			assert.Equal(t, []agonesv1.GameServerStatusPort{{Name: "game", Port: 7000}}, gs.Status.Ports)
+		})
+	}
+}
+
 func TestWaitsForANodeWithRoom(t *testing.T) {
 	f := newFixture(t)
 	f.addServer()

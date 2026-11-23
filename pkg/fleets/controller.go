@@ -24,19 +24,21 @@ const (
 // Controller carries out what Plan decides. It is the thin half of this
 // package: everything that needs thought is in plan.go.
 type Controller struct {
-	fleets store.Typed[*agonesv1.Fleet]
-	sets   store.Typed[*agonesv1.GameServerSet]
-	events *events.Recorder
-	now    func() time.Time
+	fleets  store.Typed[*agonesv1.Fleet]
+	sets    store.Typed[*agonesv1.GameServerSet]
+	servers store.Typed[*agonesv1.GameServer]
+	events  *events.Recorder
+	now     func() time.Time
 }
 
 // NewController returns a Controller working on s.
 func NewController(s *store.Store, recorder *events.Recorder) *Controller {
 	return &Controller{
-		fleets: store.FleetsOf(s),
-		sets:   store.GameServerSetsOf(s),
-		events: recorder,
-		now:    time.Now,
+		fleets:  store.FleetsOf(s),
+		sets:    store.GameServerSetsOf(s),
+		servers: store.GameServersOf(s),
+		events:  recorder,
+		now:     time.Now,
 	}
 }
 
@@ -139,12 +141,41 @@ func (c *Controller) carryOut(fleet *agonesv1.Fleet, changes Changes) error {
 		}
 	}
 	for _, name := range changes.Delete {
-		if err := c.sets.MarkDeleted(fleet.Namespace, name, c.now()); err != nil {
+		if err := c.discard(fleet, name); err != nil {
 			return err
 		}
-		c.events.Record(Kind, fleet.Namespace, fleet.Name, events.Normal, "DeletingGameServerSet", "%s is empty", name)
 	}
 	return nil
+}
+
+// discard deletes an old set that Plan found empty, once it really is.
+//
+// Plan goes by the set's status, which is a pass behind its GameServers: a
+// set writes it from what was there before the pass created any. Deleting
+// the set takes its GameServers along, sessions and all, so a set that
+// still has some is left for the pass that sees them in its status.
+//
+// Upstream: deleteEmptyGameServerSets, which goes by the status alone.
+func (c *Controller) discard(fleet *agonesv1.Fleet, name string) error {
+	set, ok := c.sets.Get(fleet.Namespace, name)
+	if !ok || c.hasGameServers(set) {
+		return nil
+	}
+	if err := c.sets.MarkDeleted(set.Namespace, set.Name, c.now()); err != nil {
+		return err
+	}
+	c.events.Record(Kind, fleet.Namespace, fleet.Name, events.Normal, "DeletingGameServerSet", "%s is empty", name)
+	return nil
+}
+
+// hasGameServers reports whether any GameServer belongs to set.
+func (c *Controller) hasGameServers(set *agonesv1.GameServerSet) bool {
+	for _, gs := range c.servers.View(set.Namespace) {
+		if metav1.IsControlledBy(gs, set) {
+			return true
+		}
+	}
+	return false
 }
 
 // replaceActive creates the set for a new template, or brings the current

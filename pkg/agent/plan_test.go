@@ -39,6 +39,15 @@ func running(gs string) []docker.Container {
 	}
 }
 
+// created is what a creation leaves behind when it is cut off before any
+// container was started. Docker lists the newest container first.
+func created(gs string) []docker.Container {
+	return []docker.Container{
+		container(gs, podspec.RoleGame, "created", 0),
+		container(gs, podspec.RoleSidecar, "created", 0),
+	}
+}
+
 func TestPlanForOneGameServer(t *testing.T) {
 	gameExited := func(code int) []docker.Container {
 		return []docker.Container{
@@ -56,6 +65,8 @@ func TestPlanForOneGameServer(t *testing.T) {
 		"placed, nothing exists yet":         {state: agonesv1.GameServerStateCreating, kind: Create},
 		"placed, leftovers from a crash":     {state: agonesv1.GameServerStateCreating, containers: running("gs"), kind: Discard},
 		"starting and the game runs":         {state: agonesv1.GameServerStateStarting, containers: running("gs"), kind: Tell, event: gameservers.ContainersRunning},
+		"starting but nothing was started":   {state: agonesv1.GameServerStateStarting, containers: created("gs"), kind: Start},
+		"starting and a container is gone":   {state: agonesv1.GameServerStateStarting, containers: created("gs")[:1], kind: Tell, event: gameservers.ContainersMissing},
 		"ready and running":                  {state: agonesv1.GameServerStateReady, containers: running("gs"), nothing: true},
 		"ready but the containers are gone":  {state: agonesv1.GameServerStateReady, kind: Tell, event: gameservers.ContainersMissing},
 		"the game exited cleanly":            {state: agonesv1.GameServerStateAllocated, containers: gameExited(0), kind: Tell, event: gameservers.ExitedCleanly},
@@ -84,6 +95,25 @@ func TestPlanForOneGameServer(t *testing.T) {
 			assert.Equal(t, Key{Namespace: "default", Name: "gs"}, actions[0].Key)
 		})
 	}
+}
+
+func TestPlanStartsWhatWasOnlyCreatedSidecarFirst(t *testing.T) {
+	starting := []*agonesv1.GameServer{server("gs", agonesv1.GameServerStateStarting)}
+
+	actions := Plan(starting, created("gs"))
+	require.Len(t, actions, 1)
+	assert.Equal(t, []string{"gs-sidecar", "gs-game"}, ids(actions[0].Containers), "the others join the sidecar's network")
+
+	// The agent stopped between starting the sidecar and starting the rest.
+	halfway := []docker.Container{
+		container("gs", podspec.RoleOther, "created", 0),
+		container("gs", podspec.RoleGame, "running", 0),
+		container("gs", podspec.RoleSidecar, "running", 0),
+	}
+	actions = Plan(starting, halfway)
+	require.Len(t, actions, 1)
+	assert.Equal(t, Start, actions[0].Kind, "the game runs, but not yet everything")
+	assert.Equal(t, []string{"gs-other"}, ids(actions[0].Containers))
 }
 
 func TestPlanRemovesWhatIsBeingDeleted(t *testing.T) {

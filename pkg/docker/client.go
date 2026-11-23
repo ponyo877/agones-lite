@@ -4,6 +4,11 @@
 // Docker socket directly instead of pulling in Docker's own client library.
 // Each exported method is one API call.
 //
+//   - client.go: the connection, and how a request is sent
+//   - version.go: which version of the API to speak with this daemon
+//   - containers.go, images.go, logs.go: the calls
+//   - registry.go: credentials for pulling from private registries
+//
 // Upstream counterpart: none. In Agones this is the kubelet's job.
 package docker
 
@@ -19,14 +24,22 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 )
-
-// apiVersion is old enough for Docker 20.10 and understood by every newer one.
-const apiVersion = "v1.41"
 
 // Client talks to one Docker daemon.
 type Client struct {
+	// ConfigFile is the Docker configuration file whose registry credentials
+	// Pull sends along, usually ~/.docker/config.json. Empty, or a file that
+	// is not there, means pulling without credentials.
+	ConfigFile string
+
 	http *http.Client
+
+	// api is the API version agreed with the daemon, "" until the daemon
+	// was asked: see version.go. asking guards it.
+	asking sync.Mutex
+	api    string
 }
 
 // DefaultHost returns $DOCKER_HOST, or the standard socket when it is unset.
@@ -83,23 +96,46 @@ func (c *Client) call(ctx context.Context, method, path string, query url.Values
 
 // send returns the response of a successful request. The caller closes the body.
 func (c *Client) send(ctx context.Context, method, path string, query url.Values, in any) (*http.Response, error) {
-	var body io.Reader
-	if in != nil {
-		data, err := json.Marshal(in)
-		if err != nil {
-			return nil, err
-		}
-		body = bytes.NewReader(data)
+	req, err := c.newRequest(ctx, method, path, query, in)
+	if err != nil {
+		return nil, err
 	}
-	target := "http://docker/" + apiVersion + path
-	if len(query) > 0 {
-		target += "?" + query.Encode()
+	return c.do(req)
+}
+
+// newRequest builds a request to the daemon, in the API version agreed with
+// it. in is the body, as JSON, when not nil.
+func (c *Client) newRequest(ctx context.Context, method, path string, query url.Values, in any) (*http.Request, error) {
+	version, err := c.version(ctx)
+	if err != nil {
+		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, method, target, body)
+	body, err := jsonBody(in)
+	if err != nil {
+		return nil, err
+	}
+	// Built from its parts, so that a "?" or "#" in the path, which an image
+	// name may bring, is escaped instead of ending the path.
+	target := url.URL{Scheme: "http", Host: "docker", Path: "/v" + version + path, RawQuery: query.Encode()}
+	req, err := http.NewRequestWithContext(ctx, method, target.String(), body)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	return req, nil
+}
+
+// jsonBody returns in as the body of a request: none at all when in is nil.
+func jsonBody(in any) (io.Reader, error) {
+	if in == nil {
+		return nil, nil
+	}
+	data, err := json.Marshal(in)
+	return bytes.NewReader(data), err
+}
+
+// do sends req and returns the response, or the daemon's error as an *Error.
+func (c *Client) do(req *http.Request) (*http.Response, error) {
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("docker: %w", err)

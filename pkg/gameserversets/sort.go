@@ -18,6 +18,11 @@ import (
 // does. Every other strategy is treated as Distributed, which removes the
 // oldest GameServers first.
 //
+// The result does not depend on the order of servers: the store hands them
+// over in no particular order, and what goes must not follow from that.
+// Where nothing else tells two GameServers apart, the name does. Upstream
+// leaves such pairs as the sort finds them.
+//
 // Upstream: SortGameServersByStrategy in pkg/gameserversets/gameserversets.go.
 func SortForRemoval(strategy apis.SchedulingStrategy, servers []*agonesv1.GameServer, counts map[string]gameservers.NodeCount, priorities []agonesv1.Priority) []*agonesv1.GameServer {
 	before := oldestFirst(priorities)
@@ -25,7 +30,6 @@ func SortForRemoval(strategy apis.SchedulingStrategy, servers []*agonesv1.GameSe
 		before = emptiestNodeFirst(counts, priorities)
 	}
 	sorted := slices.Clone(servers)
-	// sort.Slice, as upstream, so that ties fall the same way.
 	sort.Slice(sorted, func(i, j int) bool { return before(sorted[i], sorted[j]) })
 	return sorted
 }
@@ -39,21 +43,19 @@ type order func(a, b *agonesv1.GameServer) bool
 // Upstream: sortGameServersByPackedStrategy.
 func emptiestNodeFirst(counts map[string]gameservers.NodeCount, priorities []agonesv1.Priority) order {
 	return func(a, b *agonesv1.GameServer) bool {
-		// A GameServer that is on no node yet, or whose node is gone, goes
-		// first. Upstream says so even when b is such a GameServer too, so
-		// their order among themselves is left to the sort.
-		countA, known := counts[a.Status.NodeName]
-		if !known {
-			return true
-		}
-		countB, known := counts[b.Status.NodeName]
-		if !known {
-			return false
-		}
-		if a.Status.NodeName == b.Status.NodeName {
+		countA, knownA := counts[a.Status.NodeName]
+		countB, knownB := counts[b.Status.NodeName]
+		fullA, fullB := countA.Ready+countA.Allocated, countB.Ready+countB.Allocated
+		switch {
+		case knownA != knownB:
+			// A GameServer that is on no node yet, or whose node is gone,
+			// goes first.
+			return !knownA
+		case !knownA, a.Status.NodeName == b.Status.NodeName:
+			// Two such GameServers are ordered like two that share a node.
+			// Upstream puts each of them before the other.
 			return beforeOnSameNode(a, b, priorities)
-		}
-		if fullA, fullB := countA.Ready+countA.Allocated, countB.Ready+countB.Allocated; fullA != fullB {
+		case fullA != fullB:
 			return fullA < fullB
 		}
 		// Equally full nodes go by name, so that one is emptied before the
@@ -62,15 +64,17 @@ func emptiestNodeFirst(counts map[string]gameservers.NodeCount, priorities []ago
 	}
 }
 
-// beforeOnSameNode orders two GameServers that share a node. One that is
-// not Ready yet goes before one that is; then the priorities decide, then
-// the name.
+// beforeOnSameNode orders two GameServers that their nodes do not tell
+// apart. One that is not Ready yet goes first; then the priorities decide,
+// then the name.
+//
+// Upstream puts one that is not Ready yet before a Ready one only, and
+// leaves it to priorities and name against any other state. That can go
+// round in a circle: Starting before Ready, Ready before Error, Error
+// before Starting.
 func beforeOnSameNode(a, b *agonesv1.GameServer, priorities []agonesv1.Priority) bool {
-	if a.IsBeforeReady() && b.Status.State == agonesv1.GameServerStateReady {
-		return true
-	}
-	if b.IsBeforeReady() && a.Status.State == agonesv1.GameServerStateReady {
-		return false
+	if a.IsBeforeReady() != b.IsBeforeReady() {
+		return a.IsBeforeReady()
 	}
 	if first := a.CompareCountAndListPriorities(priorities, b); first != nil {
 		return *first
@@ -78,7 +82,8 @@ func beforeOnSameNode(a, b *agonesv1.GameServer, priorities []agonesv1.Priority)
 	return a.Name < b.Name
 }
 
-// oldestFirst is the order for Distributed: the priorities decide, then age.
+// oldestFirst is the order for Distributed: the priorities decide, then age,
+// then the name.
 //
 // Upstream: sortGameServersByDistributedStrategy. Its comment says newest
 // first, but its code puts the oldest first, and this follows the code.
@@ -87,6 +92,9 @@ func oldestFirst(priorities []agonesv1.Priority) order {
 		if first := a.CompareCountAndListPriorities(priorities, b); first != nil {
 			return *first
 		}
-		return a.CreationTimestamp.Before(&b.CreationTimestamp)
+		if !a.CreationTimestamp.Equal(&b.CreationTimestamp) {
+			return a.CreationTimestamp.Before(&b.CreationTimestamp)
+		}
+		return a.Name < b.Name
 	}
 }

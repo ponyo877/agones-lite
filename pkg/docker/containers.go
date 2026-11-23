@@ -121,7 +121,9 @@ func newCreateRequest(spec Spec) createRequest {
 	for _, p := range spec.Ports {
 		key := fmt.Sprintf("%d/%s", p.Container, p.Protocol)
 		req.ExposedPorts[key] = struct{}{}
-		req.HostConfig.PortBindings[key] = []portBinding{{HostPort: strconv.Itoa(int(p.Host))}}
+		// Appended, because several host ports may lead to one container port.
+		bound := portBinding{HostPort: strconv.Itoa(int(p.Host))}
+		req.HostConfig.PortBindings[key] = append(req.HostConfig.PortBindings[key], bound)
 	}
 	return req
 }

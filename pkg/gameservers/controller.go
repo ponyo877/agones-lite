@@ -247,10 +247,19 @@ func reservedUntil(next agonesv1.GameServerState, d time.Duration, now time.Time
 }
 
 // reachable reports whether players can connect in this state, which is when
-// the address must be published. Ready is included for a game server that
-// called Ready before its agent reported it running.
+// the address must be published. Scheduled alone would not do: a game server
+// that calls Ready, Reserve or Allocate before its agent reports it running
+// never is Scheduled.
+//
+// Upstream: syncGameServerStartingState, and for Ready the second chance in
+// syncGameServerRequestReadyState. Reserve and Allocate have none there.
 func reachable(s agonesv1.GameServerState) bool {
-	return s == agonesv1.GameServerStateScheduled || s == agonesv1.GameServerStateReady
+	switch s {
+	case agonesv1.GameServerStateScheduled, agonesv1.GameServerStateReady,
+		agonesv1.GameServerStateReserved, agonesv1.GameServerStateAllocated:
+		return true
+	}
+	return false
 }
 
 // publishAddress fills in where players connect.

@@ -1,6 +1,7 @@
 package gameserverallocations
 
 import (
+	"math/rand"
 	"slices"
 	"testing"
 
@@ -304,5 +305,33 @@ func TestPrioritiesDecideWhichGameServerGoesFirst(t *testing.T) {
 
 			assert.Equal(t, tc.want, useUp(gsa, servers, neverPick(t)))
 		})
+	}
+}
+
+// The store hands GameServers over in no particular order. With the same
+// pick, the same request must get the same GameServer all the same.
+func TestFindDoesNotDependOnTheOrderOfTheGameServers(t *testing.T) {
+	random := rand.New(rand.NewSource(20))
+	middle := func(n int) int { return n / 2 }
+	var requests []*allocationv1.GameServerAllocation
+	for _, scheduling := range []apis.SchedulingStrategy{apis.Packed, apis.Distributed} {
+		for _, priorities := range [][]agonesv1.Priority{nil, byCounter("rooms", ascending), byCounter("rooms", descending)} {
+			requests = append(requests, request(t, allocationv1.GameServerAllocationSpec{
+				Selectors:  []allocationv1.GameServerSelector{inState(allocated), inState(ready)},
+				Scheduling: scheduling,
+				Priorities: priorities,
+			}))
+		}
+	}
+	for range 500 {
+		servers := crowd(random)
+		counts := gameservers.CountByNode(servers)
+		gsa := requests[random.Intn(len(requests))]
+		want, found := Find(gsa, servers, counts, middle)
+
+		gs, ok := Find(gsa, shuffled(random, servers), counts, middle)
+
+		require.Equal(t, found, ok)
+		require.Same(t, want, gs, "%s, with priorities %v", gsa.Spec.Scheduling, gsa.Spec.Priorities)
 	}
 }

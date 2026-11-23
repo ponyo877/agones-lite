@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -38,32 +39,77 @@ func hasVerifiedCertificate(r *http.Request) bool {
 	return r.TLS != nil && len(r.TLS.VerifiedChains) > 0
 }
 
+// recheckEvery is how often the token of an open stream is looked at again.
+var recheckEvery = 5 * time.Second
+
 // RequireGRPC returns the server options that do for gRPC what RequireHTTP
 // does for HTTP, on single calls and on streams alike.
 func RequireGRPC(check Checker, role Role) []grpc.ServerOption {
-	allowed := func(ctx context.Context) error {
-		md, _ := metadata.FromIncomingContext(ctx)
-		for _, header := range md.Get("authorization") {
-			if token, ok := strings.CutPrefix(header, bearer); ok && check.Allows(role, token) {
-				return nil
-			}
-		}
-		return status.Error(codes.Unauthenticated, "a valid token is required")
-	}
+	allowed := func(ctx context.Context) error { return allowedGRPC(ctx, check, role) }
 	unary := func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if err := allowed(ctx); err != nil {
 			return nil, err
 		}
 		return handler(ctx, req)
 	}
-	stream := func(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	return []grpc.ServerOption{grpc.UnaryInterceptor(unary), grpc.StreamInterceptor(guardStream(allowed))}
+}
+
+func allowedGRPC(ctx context.Context, check Checker, role Role) error {
+	md, _ := metadata.FromIncomingContext(ctx)
+	for _, header := range md.Get("authorization") {
+		if token, ok := strings.CutPrefix(header, bearer); ok && check.Allows(role, token) {
+			return nil
+		}
+	}
+	return status.Error(codes.Unauthenticated, "a valid token is required")
+}
+
+// guardStream lets a stream start only with a valid token, and ends it once
+// the token stops being valid, for example because it was rotated. Without
+// the second half, a caller that could no longer make a single call would
+// keep its open stream, and look connected while nothing it says is heard.
+func guardStream(allowed func(context.Context) error) grpc.StreamServerInterceptor {
+	return func(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		if err := allowed(ss.Context()); err != nil {
 			return err
 		}
-		return handler(srv, ss)
+		ctx, end := context.WithCancelCause(ss.Context())
+		defer end(nil)
+		go endWhenRefused(ctx, end, func() error { return allowed(ss.Context()) })
+		err := handler(srv, &guarded{ServerStream: ss, ctx: ctx})
+		if refused := context.Cause(ctx); status.Code(refused) == codes.Unauthenticated {
+			return refused
+		}
+		return err
 	}
-	return []grpc.ServerOption{grpc.UnaryInterceptor(unary), grpc.StreamInterceptor(stream)}
 }
+
+// endWhenRefused checks again every recheckEvery and ends the stream with
+// the refusal as its cause.
+func endWhenRefused(ctx context.Context, end context.CancelCauseFunc, allowed func() error) {
+	tick := time.NewTicker(recheckEvery)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			if err := allowed(); err != nil {
+				end(err)
+				return
+			}
+		}
+	}
+}
+
+// guarded is a stream whose context ends when its token is refused.
+type guarded struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (g *guarded) Context() context.Context { return g.ctx }
 
 // Token attaches a token to every gRPC call of a client.
 // It implements credentials.PerRPCCredentials.

@@ -18,7 +18,7 @@ type Event struct {
 	Object Object
 }
 
-// watchBuffer is how far a watcher may fall behind before it loses events.
+// watchBuffer is how far a watcher may fall behind before it is closed.
 const watchBuffer = 1024
 
 type watcher struct {
@@ -28,8 +28,11 @@ type watcher struct {
 
 // Watch delivers every change to kind until cancel is called.
 //
-// A slow watcher loses events rather than blocking writers. Controllers cope
-// with that by also listing everything from time to time.
+// Writers never wait for a watcher. One that falls watchBuffer changes
+// behind is closed instead: it can still read what it was sent, and then
+// its channel ends. Skipping changes would leave it with a copy that looks
+// whole and is not, so it has to notice, and start again from a fresh list.
+// Calling cancel afterwards is harmless.
 func (s *Store) Watch(kind Kind) (events <-chan Event, cancel func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -52,10 +55,15 @@ func (s *Store) subscribe(kind Kind) (events <-chan Event, cancel func()) {
 	return w.events, func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		if _, ok := s.watchers[w]; ok {
-			delete(s.watchers, w)
-			close(w.events)
-		}
+		s.drop(w)
+	}
+}
+
+// drop ends a watcher, unless that was done before. Called with the lock held.
+func (s *Store) drop(w *watcher) {
+	if _, ok := s.watchers[w]; ok {
+		delete(s.watchers, w)
+		close(w.events)
 	}
 }
 
@@ -68,7 +76,8 @@ func (s *Store) notify(e Event) {
 		// Like View, an event carries the stored object itself: read only.
 		select {
 		case w.events <- e:
-		default: // the watcher is too far behind
+		default:
+			s.drop(w) // too far behind: see Watch
 		}
 	}
 }

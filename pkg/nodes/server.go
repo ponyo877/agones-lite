@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"slices"
 	"sync"
 	"time"
@@ -29,6 +30,11 @@ var reportable = []gameservers.Event{
 	gameservers.SDKReady, gameservers.SDKAllocate, gameservers.SDKReserve,
 	gameservers.SDKShutdown, gameservers.HealthFailed,
 }
+
+// errFellBehind ends the Watch call of an agent that the store stopped
+// waiting for. Changes were lost on the way to it, so its copy cannot be
+// mended: the error makes the agent call again and receive everything anew.
+var errFellBehind = status.Error(codes.Aborted, "fell too far behind the changes; watch again")
 
 // Server answers the agents on other machines. The protocol is described in
 // proto/node/v1/node.proto; the work is done by a Local.
@@ -57,11 +63,19 @@ func NewServer(s *store.Store, local *Local) *Server {
 }
 
 // Register implements the Register call of the protocol.
+//
+// Whatever the agent says of itself, its node is only as connected as its
+// Watch calls: the end of the last one is how we learn that the agent is
+// gone. Were a Register to make the node Ready with no call open, nothing
+// would ever make it Disconnected again.
 func (s *Server) Register(_ context.Context, req *nodev1.RegisterRequest) (*nodev1.RegisterResponse, error) {
 	node := &litev1.Node{}
 	if err := json.Unmarshal(req.GetNode(), node); err != nil || node.Name == "" {
 		return nil, status.Error(codes.InvalidArgument, "the request must carry a Node with a name")
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock() // held to the end, so no Watch call opens or ends meanwhile
+	node.Status.Phase = s.phase(node.Name)
 	if err := s.local.Register(node); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -78,9 +92,9 @@ func (s *Server) Watch(req *nodev1.WatchRequest, stream grpc.ServerStreamingServ
 	defer cancel()
 	s.connected(node, +1)
 	defer s.connected(node, -1)
-	logRequests := make(chan *nodev1.LogRequest)
-	s.local.Attach(node, &remoteLogs{server: s, requests: logRequests})
-	defer s.local.Detach(node)
+	logs := &remoteLogs{server: s, requests: make(chan *nodev1.LogRequest)}
+	s.local.Attach(node, logs)
+	defer s.local.Detach(node, logs)
 
 	if err := s.sendPlaced(stream, node); err != nil {
 		return err
@@ -90,9 +104,12 @@ func (s *Server) Watch(req *nodev1.WatchRequest, stream grpc.ServerStreamingServ
 		select {
 		case <-stream.Context().Done():
 			return nil
-		case change := <-changes:
+		case change, open := <-changes:
+			if !open {
+				return errFellBehind
+			}
 			err = forward(stream, node, change)
-		case request := <-logRequests:
+		case request := <-logs.requests:
 			err = stream.Send(&nodev1.WatchResponse{Change: &nodev1.WatchResponse_LogRequest{LogRequest: request}})
 		}
 		if err != nil {
@@ -138,14 +155,9 @@ func sendGameServer(stream grpc.ServerStreamingServer[nodev1.WatchResponse], gs 
 // agent may briefly hold two.
 func (s *Server) connected(node string, delta int) {
 	s.mu.Lock()
+	defer s.mu.Unlock() // held to the end, like Register
 	s.streams[node] += delta
-	open := s.streams[node]
-	s.mu.Unlock()
-
-	phase := litev1.NodeReady
-	if open == 0 {
-		phase = litev1.NodeDisconnected
-	}
+	phase := s.phase(node)
 	_ = s.nodes.Change("", node, func(n *litev1.Node) bool {
 		if n.Status.Phase == phase {
 			return false
@@ -155,6 +167,14 @@ func (s *Server) connected(node string, delta int) {
 		n.Status.LastHeartbeatTime = metav1.NewTime(s.now())
 		return true
 	})
+}
+
+// phase is what a node's open Watch calls say about it. Called with the lock held.
+func (s *Server) phase(node string) litev1.NodePhase {
+	if s.streams[node] > 0 {
+		return litev1.NodeReady
+	}
+	return litev1.NodeDisconnected
 }
 
 // Report implements the Report call of the protocol.
@@ -167,12 +187,21 @@ func (s *Server) Report(_ context.Context, req *nodev1.ReportRequest) (*nodev1.R
 		Namespace: req.GetNamespace(),
 		Name:      req.GetName(),
 		Event:     event,
-		Reserve:   time.Duration(req.GetReserveSeconds()) * time.Second,
+		Reserve:   reserveFor(req.GetReserveSeconds()),
 	})
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return &nodev1.ReportResponse{}, nil
+}
+
+// reserveFor turns the seconds of a Reserve into a Duration. More of them
+// than a Duration holds (292 years) would wrap around into a short or a
+// negative time, so they count as the longest one. Zero or less means
+// "until told otherwise".
+func reserveFor(seconds int64) time.Duration {
+	const longest = int64(math.MaxInt64 / time.Second)
+	return time.Duration(min(max(seconds, 0), longest)) * time.Second
 }
 
 // UpdateCounts implements the UpdateCounts call of the protocol.

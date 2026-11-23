@@ -47,15 +47,27 @@ type Loop struct {
 func (l Loop) Run(ctx context.Context, watches ...Watch) {
 	q := queue.New[store.Key]()
 	for _, w := range watches {
-		events, cancel := w.Subscribe()
-		defer cancel()
-		go l.feed(ctx, q, events, w.Keys)
+		go l.follow(ctx, q, w)
 	}
 	go l.resync(ctx, q)
 	q.Run(ctx, l.Sync)
 }
 
-// feed turns the changes of one kind into queue entries.
+// follow keeps one Watch feeding the queue until ctx is done. The store
+// ends a subscription that falls too far behind, and the changes lost with
+// it may concern anything. So every subscription, the first included,
+// begins by queueing everything.
+func (l Loop) follow(ctx context.Context, q *queue.Queue[store.Key], w Watch) {
+	for ctx.Err() == nil {
+		events, cancel := w.Subscribe()
+		l.addAll(q)
+		l.feed(ctx, q, events, w.Keys)
+		cancel()
+	}
+}
+
+// feed turns the changes of one kind into queue entries, for as long as
+// the subscription lasts.
 func (l Loop) feed(ctx context.Context, q *queue.Queue[store.Key], events <-chan store.Event, keys func(store.Event) []store.Key) {
 	for {
 		select {

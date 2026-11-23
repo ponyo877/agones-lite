@@ -1,6 +1,7 @@
 package gameserversets
 
 import (
+	"math/rand"
 	"slices"
 	"testing"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"agones.dev/agones/pkg/apis"
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/ponyo877/agones-lite/pkg/gameservers"
@@ -200,7 +202,7 @@ func TestEveryBrokenGameServerKeepsOneSurplusGameServerForNow(t *testing.T) {
 		},
 		"three broken: still both stay": {
 			broken: []*agonesv1.GameServer{server("sick", unhealthy), server("stuck", failed), server("lost", unhealthy)},
-			remove: []string{"sick", "stuck", "lost"},
+			remove: []string{"lost", "sick", "stuck"}, // the broken ones go by name
 		},
 	}
 	for name, tc := range tests {
@@ -224,4 +226,20 @@ func TestPlanLeavesItsArgumentsAlone(t *testing.T) {
 
 	assert.Equal(t, []string{"oldest", "middle"}, names(actions.Delete))
 	assert.Equal(t, []string{"newest", "oldest", "middle"}, names(servers), "sorting for removal works on a copy")
+}
+
+func TestPlanDoesNotDependOnTheOrderOfItsInput(t *testing.T) {
+	random := rand.New(rand.NewSource(20))
+	for range 500 {
+		servers := crowd(random)
+		set := setOf(int32(random.Intn(len(servers))))
+		set.Spec.Scheduling = oneOf(random, []apis.SchedulingStrategy{apis.Packed, apis.Distributed})
+		set.Spec.Priorities = anyPriorities(random)
+		want := Plan(set, servers, crowdedNodes, noon)
+
+		got := Plan(set, shuffled(random, servers), crowdedNodes, noon)
+
+		require.Equal(t, want.Create, got.Create)
+		require.Equal(t, names(want.Delete), names(got.Delete), "%s, with priorities %v", set.Spec.Scheduling, set.Spec.Priorities)
+	}
 }

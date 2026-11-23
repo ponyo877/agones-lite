@@ -2,6 +2,7 @@ package fleetautoscalers
 
 import (
 	"errors"
+	"fmt"
 	"net/url"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
@@ -43,6 +44,11 @@ func (p pass) webhook(config *autoscalingv1.URLConfiguration) (int32, bool, erro
 	}
 	if !answer.Response.Scale {
 		return p.fleet.Spec.Replicas, false, nil
+	}
+	if answer.Response.Replicas < 0 {
+		// Upstream passes any answer on and has the API server refuse the
+		// Fleet. Nothing stands between this answer and the Fleet here.
+		return 0, false, fmt.Errorf("webhook response asks for %d replicas, which is fewer than none", answer.Response.Replicas)
 	}
 	return answer.Response.Replicas, false, nil
 }

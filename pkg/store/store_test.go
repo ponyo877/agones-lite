@@ -112,6 +112,36 @@ func TestWatchSeesEveryChange(t *testing.T) {
 	assert.False(t, open, "cancel closes the channel")
 }
 
+func TestAWatcherThatFallsBehindIsClosed(t *testing.T) {
+	servers := GameServersOf(open(t, filepath.Join(t.TempDir(), "state.db")))
+	slow, cancelSlow := servers.Watch()
+	quick, cancelQuick := servers.Watch()
+	defer cancelQuick()
+
+	gs, err := servers.Create(gameServer("a"))
+	require.NoError(t, err)
+	for range watchBuffer { // one change more than a watcher may have waiting
+		<-quick
+		gs, err = servers.Update(gs)
+		require.NoError(t, err)
+	}
+
+	for range watchBuffer {
+		_, open := <-slow
+		require.True(t, open, "what it was told before falling behind is still there to read")
+	}
+	select {
+	case _, open := <-slow:
+		assert.False(t, open)
+	default:
+		assert.Fail(t, "the watcher is still open, with a hole in what it was told")
+	}
+	cancelSlow() // must cope with a channel that is closed already
+
+	_, open := <-quick
+	assert.True(t, open, "a watcher that keeps up is not disturbed")
+}
+
 func TestStateSurvivesReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
 	s, err := Open(path, Kinds())

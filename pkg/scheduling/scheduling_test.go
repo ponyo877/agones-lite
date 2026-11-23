@@ -103,6 +103,37 @@ func TestPlaceSkipsNodesThatCannotTakeIt(t *testing.T) {
 	}
 }
 
+// Kubernetes does not put two Pods that ask for the same host port on one node.
+func TestPlaceSkipsANodeWhereTheStaticPortIsTaken(t *testing.T) {
+	static := func(name, nodeName string) *agonesv1.GameServer {
+		gs := server(name, nodeName, "")
+		gs.Spec.Ports = []agonesv1.GameServerPort{{Name: "game", PortPolicy: agonesv1.Static, HostPort: 7777, ContainerPort: 7654}}
+		return gs
+	}
+	resident := static("a", "n1")
+
+	placed, ok := Place(static("new", ""), []*litev1.Node{node("n1"), node("n2")}, []*agonesv1.GameServer{resident})
+	require.True(t, ok)
+	assert.Equal(t, "n2", placed.Status.NodeName, "n1 is fuller, which Packed prefers, but its port 7777 is taken")
+
+	_, ok = Place(static("new", ""), []*litev1.Node{node("n1")}, []*agonesv1.GameServer{resident})
+	assert.False(t, ok, "it waits for a node where the port is free")
+}
+
+// A Static port may lie in the node's range, and is then not handed out again.
+func TestPlaceKeepsDynamicPortsOffStaticOnes(t *testing.T) {
+	resident := server("a", "n1", "")
+	resident.Spec.Ports = []agonesv1.GameServerPort{{Name: "game", PortPolicy: agonesv1.Static, HostPort: 7000, ContainerPort: 7654}}
+	both := server("new", "", "")
+	both.Spec.Ports = append(both.Spec.Ports, agonesv1.GameServerPort{Name: "admin", PortPolicy: agonesv1.Static, HostPort: 7001, ContainerPort: 8080})
+
+	placed, ok := Place(both, []*litev1.Node{node("n1")}, []*agonesv1.GameServer{resident})
+
+	require.True(t, ok)
+	assert.Equal(t, int32(7002), placed.Spec.Ports[0].HostPort, "7000 is a neighbour's and 7001 its own")
+	assert.Equal(t, int32(7001), placed.Spec.Ports[1].HostPort)
+}
+
 func TestPlaceTreatsZeroCapacityAsUnlimited(t *testing.T) {
 	_, ok := Place(server("new", "", "64"), []*litev1.Node{node("n1")}, nil)
 	assert.True(t, ok)

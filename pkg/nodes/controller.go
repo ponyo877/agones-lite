@@ -96,9 +96,15 @@ func NewController(s *store.Store, gameServers *gameservers.Controller, recorder
 // started has not heard from any agent yet, whatever the store remembers:
 // it may have been down for a while, and a machine may have died meanwhile.
 // Agents that are still there say so within seconds. The others are waited
-// for like any node that went quiet, counting from this moment.
+// for like any node that went quiet. For a node recorded as Ready the wait
+// begins now. One that was Disconnected already keeps the time it was last
+// heard from: were it to begin again with every start, a control plane
+// restarting more often than the grace lasts would never give a node up.
 func (c *Controller) StartOver() error {
 	for _, node := range c.nodes.List("") {
+		if node.Status.Phase == litev1.NodeDisconnected {
+			continue
+		}
 		node.Status.Phase = litev1.NodeDisconnected
 		node.Status.LastHeartbeatTime = metav1.NewTime(c.now())
 		if _, err := c.nodes.Update(node); err != nil {

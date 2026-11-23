@@ -2,6 +2,8 @@ package fleetautoscalers
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
@@ -77,11 +79,25 @@ func (c *Controller) sync(_ context.Context, key store.Key) error {
 		delete(c.passed, key)
 		return nil
 	}
+	if fas.DeletionTimestamp != nil {
+		return c.remove(key)
+	}
 	if !due(fas, c.passed[key], c.now()) {
 		return nil
 	}
 	c.passed[key] = visit{at: c.now(), generation: fas.Generation}
 	return c.publish(fas, c.apply(fas))
+}
+
+// remove finishes the deletion of a FleetAutoscaler. It owns nothing that
+// would have to go first, and its Fleet stays at the size it has.
+func (c *Controller) remove(key store.Key) error {
+	delete(c.passed, key)
+	err := c.scalers.Delete(key.Namespace, key.Name)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
+	return err
 }
 
 // due reports whether it is time for another pass: the interval is over, or
@@ -105,10 +121,12 @@ func (c *Controller) apply(fas *autoscalingv1.FleetAutoscaler) autoscalingv1.Fle
 		return StatusUnableToScale(fas)
 	}
 	scaled := desired != fleet.Spec.Replicas
-	if scaled && c.scale(fleet, desired) != nil {
-		return StatusUnableToScale(fas)
-	}
 	if scaled {
+		if err := c.scale(fleet, desired); err != nil {
+			c.events.Record(Kind, fas.Namespace, fas.Name, events.Warning, "AutoScalingFleetError",
+				"Error on scaling fleet %s from %d to %d. Error: %v", fleet.Name, fleet.Spec.Replicas, desired, err)
+			return StatusUnableToScale(fas)
+		}
 		c.events.Record(Kind, fas.Namespace, fas.Name, events.Normal, "AutoScalingFleet",
 			"Scaling fleet %s from %d to %d", fleet.Name, fleet.Spec.Replicas, desired)
 	}
@@ -126,7 +144,12 @@ func ofFleet(all []*agonesv1.GameServer, fleet *agonesv1.Fleet) []*agonesv1.Game
 	return out
 }
 
+// scale writes the Fleet's new size. It goes past admission, so it refuses
+// for itself what admission would: the size no policy may ask for.
 func (c *Controller) scale(fleet *agonesv1.Fleet, replicas int32) error {
+	if replicas < 0 {
+		return fmt.Errorf("a Fleet cannot have %d replicas", replicas)
+	}
 	return c.fleets.Change(fleet.Namespace, fleet.Name, func(current *agonesv1.Fleet) bool {
 		current.Spec.Replicas = replicas
 		current.Generation++

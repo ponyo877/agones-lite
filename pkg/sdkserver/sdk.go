@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"strings"
 	"time"
 
@@ -33,14 +34,22 @@ func (s *Server) Shutdown(context.Context, *sdk.Empty) (*sdk.Empty, error) {
 	return s.tell(&sidecarv1.TellRequest{Event: sidecarv1.Event_EVENT_SHUTDOWN})
 }
 
+// longestReserve is as many seconds as a time.Duration holds: 292 years.
+const longestReserve = int64(math.MaxInt64 / time.Second)
+
 // Reserve marks the game server Reserved. After d it asks for Ready again;
-// zero seconds means Reserved until the game server says otherwise.
+// zero seconds means Reserved until the game server says otherwise, and so
+// does a negative number, as upstream has it.
+//
+// More seconds than a Duration holds are cut down to the longest one.
+// Upstream lets them wrap around, to a time that is up at once.
 func (s *Server) Reserve(_ context.Context, d *sdk.Duration) (*sdk.Empty, error) {
 	s.stopReserveTimer()
-	if seconds := d.GetSeconds(); seconds > 0 {
+	seconds := min(max(d.GetSeconds(), 0), longestReserve)
+	if seconds > 0 {
 		s.startReserveTimer(time.Duration(seconds) * time.Second)
 	}
-	return s.tell(&sidecarv1.TellRequest{Event: sidecarv1.Event_EVENT_RESERVE, ReserveSeconds: d.GetSeconds()})
+	return s.tell(&sidecarv1.TellRequest{Event: sidecarv1.Event_EVENT_RESERVE, ReserveSeconds: seconds})
 }
 
 func (s *Server) startReserveTimer(d time.Duration) {

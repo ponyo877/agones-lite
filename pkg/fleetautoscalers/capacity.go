@@ -3,6 +3,7 @@ package fleetautoscalers
 import (
 	"errors"
 	"fmt"
+	"math"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	autoscalingv1 "agones.dev/agones/pkg/apis/autoscaling/v1"
@@ -93,13 +94,17 @@ func (p pass) list(l *autoscalingv1.ListPolicy) (int32, bool, error) {
 }
 
 // removalOrder lists the GameServers that scaling down may take, the first
-// to go first. Allocated and Reserved GameServers are not among them.
+// to go first. Allocated and Reserved GameServers are not among them. Nor
+// are the ones that are going already: the Fleet's status has stopped
+// counting those, so neither a replica nor any capacity is left to take off
+// for them.
 //
-// Upstream: getSortedDeletableGameServers.
+// Upstream: getSortedDeletableGameServers, which keeps the ones that are
+// going, and so takes them off a second time.
 func (p pass) removalOrder() []*agonesv1.GameServer {
 	var deletable []*agonesv1.GameServer
 	for _, gs := range p.servers {
-		if gs.IsDeletable() {
+		if gs.IsDeletable() && !gs.IsBeingDeleted() {
 			deletable = append(deletable, gs)
 		}
 	}
@@ -137,8 +142,16 @@ func (c capacityPolicy) replicas(current int32, removable []*agonesv1.GameServer
 	return current, false, nil
 }
 
-// withinLimits reports whether the policy allows a total capacity.
-func (c capacityPolicy) withinLimits(capacity int64) bool {
+// allows reports whether the total capacity stays within the policy's limits
+// with extra more replicas.
+func (c capacityPolicy) allows(extra int64) bool {
+	room := c.max - c.total.capacity
+	if c.perReplica.capacity > 0 && extra > room/c.perReplica.capacity {
+		// Over the maximum. Dividing says so without working out the
+		// capacity, which may be more than an int64 holds.
+		return false
+	}
+	capacity := c.total.capacity + extra*c.perReplica.capacity
 	return capacity >= c.min && capacity <= c.max
 }
 
@@ -152,7 +165,7 @@ func (c capacityPolicy) growToMin(replicas int32) (int32, bool, error) {
 		return 0, false, errors.New("cannot scale up as Capacity is equal to 0")
 	}
 	missing := c.min - c.total.capacity
-	return replicas + int32(divideUp(missing, c.perReplica.capacity)), true, nil
+	return plus(replicas, divideUp(missing, c.perReplica.capacity)), true, nil
 }
 
 // grow adds the replicas that make up for the missing free capacity, or as
@@ -165,11 +178,11 @@ func (c capacityPolicy) grow(replicas int32, missing int64) (int32, bool, error)
 		return 0, false, errors.New("cannot scale up as adding additional replicas does not increase available Capacity")
 	}
 	extra := divideUp(missing, gain)
-	if c.withinLimits(c.total.capacity + extra*c.perReplica.capacity) {
-		return replicas + int32(extra), false, nil
+	if c.allows(extra) {
+		return plus(replicas, extra), false, nil
 	}
 	fit := (c.max - c.total.capacity) / c.perReplica.capacity
-	return replicas + int32(fit), true, nil
+	return plus(replicas, fit), true, nil
 }
 
 // shrinkToMax removes GameServers until the total capacity is down to the
@@ -190,33 +203,57 @@ func (c capacityPolicy) shrinkToMax(replicas int32, removable []*agonesv1.GameSe
 }
 
 // shrink removes GameServers for as long as the buffer stays free and the
-// total capacity stays at or above the minimum. Every GameServer may hold a
-// different amount, so they are taken one at a time.
+// total capacity stays at or above the minimum, down to one replica.
 //
-// Upstream: scaleDown. A GameServer without the Counter or List is removed
-// too, there as here.
+// Upstream: scaleDown. It holds on to one replica only when it runs out of
+// GameServers, and can stop earlier with none, or with fewer than none when
+// the Fleet's status is behind its GameServers.
 func (c capacityPolicy) shrink(replicas int32, removable []*agonesv1.GameServer, buffer int64) (int32, bool, error) {
 	if c.total.capacity == c.min {
 		return replicas, true, nil
 	}
-	left := c.total
+	replicas, limited := c.without(replicas, removable, buffer)
+	return max(replicas, fewest), limited, nil
+}
+
+// without takes GameServers off replicas until one more would cut into the
+// buffer or into the minimum capacity. Every GameServer may hold a different
+// amount, so they are taken one at a time. limited says that the minimum is
+// what stopped it.
+//
+// Upstream: the loop of scaleDown. A GameServer without the Counter or List
+// is removed too, there as here.
+func (c capacityPolicy) without(replicas int32, removable []*agonesv1.GameServer, buffer int64) (left int32, limited bool) {
+	rest := c.total
 	for _, gs := range removable {
 		replicas--
 		own, ok := c.of(gs)
 		if !ok {
 			continue
 		}
-		left = usage{count: left.count - own.count, capacity: left.capacity - own.capacity}
-		switch free := left.free(); {
+		rest = usage{count: rest.count - own.count, capacity: rest.capacity - own.capacity}
+		switch free := rest.free(); {
 		case free < buffer:
-			return replicas + 1, false, nil // this one stays, for the buffer
-		case left.capacity < c.min:
-			return replicas + 1, true, nil // this one stays, for the minimum
+			return replicas + 1, false // this one stays, for the buffer
+		case rest.capacity < c.min:
+			return replicas + 1, true // this one stays, for the minimum
 		case free == buffer:
-			return replicas, false, nil
-		case left.capacity == c.min:
-			return replicas, true, nil
+			return replicas, false
+		case rest.capacity == c.min:
+			return replicas, true
 		}
 	}
-	return max(replicas, fewest), false, nil
+	return replicas, false
+}
+
+// plus is replicas and extra more, as the size of a Fleet.
+func plus(replicas int32, extra int64) int32 {
+	return sizeOf(int64(replicas) + int64(sizeOf(extra)))
+}
+
+// sizeOf is n as the size of a Fleet. A number too large for one is the
+// largest size there is: converted as it is, it would wrap around, and could
+// come out below zero.
+func sizeOf(n int64) int32 {
+	return int32(min(max(n, math.MinInt32), math.MaxInt32))
 }

@@ -46,6 +46,30 @@ func TestAllocate(t *testing.T) {
 			used: map[int32]bool{7000: true, 7001: true, 7002: true},
 			ok:   false, host: []int32{0}, contain: []int32{7654},
 		},
+		"dynamic keeps off the game server's own static port": {
+			gs: server(
+				agonesv1.GameServerPort{Name: "admin", PortPolicy: agonesv1.Static, HostPort: 7000, ContainerPort: 8080},
+				port(agonesv1.Dynamic, corev1.ProtocolUDP),
+				port(agonesv1.Passthrough, corev1.ProtocolUDP),
+			),
+			ok: true, host: []int32{7000, 7001, 7002}, contain: []int32{8080, 7654, 7002},
+		},
+		"a static port next to a dynamic one, in a range of two": {
+			gs: server(
+				agonesv1.GameServerPort{PortPolicy: agonesv1.Static, HostPort: 7000},
+				port(agonesv1.Dynamic, corev1.ProtocolUDP),
+			),
+			ok: true, host: []int32{7000, 7001}, contain: []int32{0, 7654},
+		},
+		"its own static ports count against the range": {
+			gs: server(
+				agonesv1.GameServerPort{PortPolicy: agonesv1.Static, HostPort: 7000},
+				agonesv1.GameServerPort{PortPolicy: agonesv1.Static, HostPort: 7001},
+				agonesv1.GameServerPort{PortPolicy: agonesv1.Static, HostPort: 7002},
+				port(agonesv1.Dynamic, corev1.ProtocolUDP),
+			),
+			ok: false, host: []int32{7000, 7001, 7002, 0}, contain: []int32{0, 0, 0, 7654},
+		},
 		"a taken static port fails": {
 			gs:   server(agonesv1.GameServerPort{PortPolicy: agonesv1.Static, HostPort: 9000}),
 			used: map[int32]bool{9000: true},

@@ -47,11 +47,18 @@ const (
 
 const defaultGracePeriod = 30 * time.Second
 
+// nanoPerMilli turns thousandths of a core, the finest Kubernetes counts
+// CPU in, into the billionths Docker takes.
+const nanoPerMilli = 1_000_000
+
 // Sidecar is what the agent decides about a GameServer's sidecar.
 type Sidecar struct {
 	Image string
 	// AgentAddress is where the sidecar reaches the agent from inside a container.
 	AgentAddress string
+	// Binds are host directories the sidecar needs to see, in Docker's
+	// "host:container" form: the agent's socket, when it has one.
+	Binds []string
 	// Token is the secret the sidecar shows the agent.
 	Token string
 }
@@ -79,9 +86,15 @@ func VolumePrefix(gs *agonesv1.GameServer) string {
 	return Prefix(gs.Namespace, gs.Name)
 }
 
+// separator stands between the parts of a Docker name. It is a character
+// that no namespace and no name can hold: the management API admits only
+// DNS names. So a prefix belongs to exactly one GameServer, and removing
+// "everything that starts with it" never takes a neighbour's volumes.
+const separator = "_"
+
 // Prefix is VolumePrefix for when only the GameServer's name is known.
 func Prefix(namespace, name string) string {
-	return "agones-lite_" + namespace + "_" + name + "_"
+	return "agones-lite" + separator + namespace + separator + name + separator
 }
 
 // GracePeriod is how long the containers get to exit before being killed.
@@ -105,6 +118,7 @@ func sidecarSpec(gs *agonesv1.GameServer, sidecar Sidecar) docker.Spec {
 		),
 		Labels: labels,
 		Ports:  published(gs),
+		Binds:  sidecar.Binds,
 		// Resolves to the host on Linux, Docker Desktop and Colima alike.
 		ExtraHosts: []string{"host.docker.internal:host-gateway"},
 	}
@@ -124,7 +138,7 @@ func gameSpec(gs *agonesv1.GameServer, c corev1.Container) docker.Spec {
 		WorkingDir:       c.WorkingDir,
 		Labels:           labels(gs, role),
 		ShareNetworkWith: Name(gs, SidecarName),
-		NanoCPUs:         c.Resources.Limits.Cpu().MilliValue() * 1_000_000,
+		NanoCPUs:         c.Resources.Limits.Cpu().MilliValue() * nanoPerMilli,
 		MemoryBytes:      c.Resources.Limits.Memory().Value(),
 		Binds:            binds(gs, c),
 	}

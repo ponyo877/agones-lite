@@ -1,11 +1,16 @@
 package gameserversets
 
 import (
+	"fmt"
+	"math/rand"
+	"slices"
 	"time"
 
 	"agones.dev/agones/pkg/apis"
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/ponyo877/agones-lite/pkg/gameservers"
 )
 
 const (
@@ -102,5 +107,53 @@ func names(servers []*agonesv1.GameServer) []string {
 	for i, gs := range servers {
 		out[i] = gs.Name
 	}
+	return out
+}
+
+// crowdedNodes says how full the nodes of a crowd are. Two are equally full.
+var crowdedNodes = map[string]gameservers.NodeCount{"n1": {Ready: 2}, "n2": {Ready: 1, Allocated: 1}, "n3": {Ready: 5}}
+
+// crowd returns GameServers that tie in every way a removal looks at: they
+// share a few nodes, a few moments of creation and a few amounts of room.
+// Some are on no node, or on one that is gone. Only the names all differ.
+func crowd(random *rand.Rand) []*agonesv1.GameServer {
+	states := []agonesv1.GameServerState{portAllocation, creating, requestReady, ready, ready, reserved, allocated, unhealthy, failed}
+	nodes := []string{"", "gone", "n1", "n2", "n3"}
+	servers := make([]*agonesv1.GameServer, 2+random.Intn(9))
+	for i := range servers {
+		gs := server(fmt.Sprintf("gs-%d", i), oneOf(random, states), on(oneOf(random, nodes)),
+			created(noon.Add(time.Duration(random.Intn(3))*time.Second)))
+		sometimes(random, gs, counter("rooms", int64(random.Intn(3)), 3))
+		sometimes(random, gs, erroredAt(noon.Format(time.RFC3339)))
+		sometimes(random, gs, beingDeleted)
+		servers[i] = gs
+	}
+	return servers
+}
+
+// sometimes applies opt to gs half of the time.
+func sometimes(random *rand.Rand, gs *agonesv1.GameServer, opt option) {
+	if random.Intn(2) == 0 {
+		opt(gs)
+	}
+}
+
+func oneOf[T any](random *rand.Rand, choices []T) T {
+	return choices[random.Intn(len(choices))]
+}
+
+// anyPriorities is no priorities, or the room in the Counter of a crowd.
+func anyPriorities(random *rand.Rand) []agonesv1.Priority {
+	return oneOf(random, [][]agonesv1.Priority{
+		nil,
+		byCounter("rooms", agonesv1.GameServerPriorityAscending),
+		byCounter("rooms", agonesv1.GameServerPriorityDescending),
+	})
+}
+
+// shuffled returns the GameServers in another order.
+func shuffled(random *rand.Rand, servers []*agonesv1.GameServer) []*agonesv1.GameServer {
+	out := slices.Clone(servers)
+	random.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
 	return out
 }

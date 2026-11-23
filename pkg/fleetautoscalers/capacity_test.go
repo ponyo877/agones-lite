@@ -1,9 +1,12 @@
 package fleetautoscalers
 
 import (
+	"math"
+	"math/rand"
 	"slices"
 	"testing"
 
+	"agones.dev/agones/pkg/apis"
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	autoscalingv1 "agones.dev/agones/pkg/apis/autoscaling/v1"
 	"github.com/stretchr/testify/assert"
@@ -311,6 +314,159 @@ func TestScalingDownTakesOnlyWhatMayBeRemoved(t *testing.T) {
 			assert.Equal(t, tc.want, replicas)
 			assert.Equal(t, tc.limited, limited)
 		})
+	}
+}
+
+// The Fleet's status does not count a GameServer that is being deleted or
+// has shut down, so its replicas and its capacity are not there to be taken
+// off. Upstream takes them off all the same.
+func TestScalingDownLeavesOutGameServersThatAreGoingAnyway(t *testing.T) {
+	counts := map[string]gameservers.NodeCount{"n1": {Ready: 3}}
+	last := server("last", ready, on("n1"), counting(0, 10))
+	tests := map[string]capacityCase{
+		"one that is being deleted": {
+			replicas: 1, total: usage{0, 10},
+			policy: counterPolicy(amount(5), 0, 100),
+			servers: []*agonesv1.GameServer{
+				server("gone", ready, on("n1"), counting(2, 7), goingAway()),
+				last,
+			},
+			want: 1,
+		},
+		"one that has shut down": {
+			replicas: 1, total: usage{0, 10},
+			policy: counterPolicy(amount(5), 0, 100),
+			servers: []*agonesv1.GameServer{
+				server("gone", agonesv1.GameServerStateShutdown, on("n1"), counting(2, 7)),
+				last,
+			},
+			want: 1,
+		},
+		"several of them, which used to take the size below zero": {
+			replicas: 1, total: usage{0, 10},
+			policy: counterPolicy(amount(5), 0, 100),
+			servers: []*agonesv1.GameServer{
+				server("gone-1", ready, on("n1"), counting(0, 1), goingAway()),
+				server("gone-2", ready, on("n1"), counting(0, 1), goingAway()),
+				server("gone-3", ready, on("n1"), counting(0, 1), goingAway()),
+				last,
+			},
+			want: 1,
+		},
+		"an Allocated one that is being deleted": {
+			replicas: 1, total: usage{0, 10},
+			policy: counterPolicy(amount(5), 0, 100),
+			servers: []*agonesv1.GameServer{
+				server("gone", allocated, on("n1"), counting(2, 7), goingAway()),
+				last,
+			},
+			want: 1,
+		},
+		"capacity above the maximum comes down by GameServers that are still there": {
+			replicas: 3, total: usage{25, 30},
+			policy: counterPolicy(amount(5), 0, 20),
+			servers: slices.Concat(
+				[]*agonesv1.GameServer{server("gone", ready, on("n1"), counting(0, 4), goingAway())},
+				readyOn("n1", counting, usage{10, 10}, usage{10, 10}, usage{5, 10}),
+			),
+			want: 2, limited: true,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			tc.perReplica = usage{0, 10}
+
+			replicas, limited, _, err := Desired(tc.policy, counterFleet(tc), tc.servers, counts, noon, neverCalled(t))
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, replicas)
+			assert.Equal(t, tc.limited, limited)
+		})
+	}
+}
+
+// Upstream holds the size at one replica only when it runs out of
+// GameServers to remove, not when it stops earlier.
+func TestScalingDownStopsAtOneReplicaWhateverTheStatusSays(t *testing.T) {
+	counts := map[string]gameservers.NodeCount{"n1": {Ready: 3}}
+	behind := capacityCase{
+		// Three GameServers are there, and the status has counted one.
+		perReplica: usage{0, 10}, replicas: 1, total: usage{0, 30},
+		servers: readyOn("n1", counting, usage{0, 10}, usage{0, 10}, usage{0, 10}),
+	}
+
+	replicas, limited, _, err := Desired(counterPolicy(amount(10), 0, 100), counterFleet(behind), behind.servers, counts, noon, neverCalled(t))
+
+	require.NoError(t, err)
+	assert.Equal(t, fewest, replicas)
+	assert.False(t, limited)
+}
+
+// Upstream converts what it works out to int32 without looking, and
+// multiplies as int64 without looking either.
+func TestNumbersTooLargeForAFleetDoNotWrapAround(t *testing.T) {
+	const billion = 1_000_000_000
+	tests := map[string]capacityCase{
+		"a minimum capacity that takes more replicas than a Fleet can have": {
+			perReplica: usage{0, 1}, replicas: 5, total: usage{0, 5},
+			policy: counterPolicy(amount(1), 3*billion, math.MaxInt64),
+			want:   math.MaxInt32, limited: true,
+		},
+		"a buffer that takes more replicas than a Fleet can have": {
+			perReplica: usage{0, 1}, replicas: 5, total: usage{30 * billion, 30 * billion}, allocated: 30 * billion,
+			policy: counterPolicy(share("50%"), 1, math.MaxInt64),
+			want:   math.MaxInt32,
+		},
+		"a maximum capacity with room for more replicas than a Fleet can have": {
+			perReplica: usage{0, 1}, replicas: 5, total: usage{30 * billion, 30 * billion}, allocated: 30 * billion,
+			policy: counterPolicy(share("50%"), 1, 40*billion),
+			want:   math.MaxInt32, limited: true,
+		},
+		"a capacity of which a few replicas more are beyond int64": {
+			perReplica: usage{1<<62 - 1, 1 << 62}, replicas: 1, total: usage{1 << 62, 1 << 62},
+			policy: counterPolicy(amount(4), 0, math.MaxInt64),
+			want:   1, limited: true,
+		},
+		"an Allocated count of which a hundred times is beyond int64": {
+			// Half of the capacity to come has to be free: 10 replicas more.
+			perReplica: usage{0, 1e16}, replicas: 10, total: usage{1e17, 1e17}, allocated: 1e17,
+			policy: counterPolicy(share("50%"), 1, math.MaxInt64),
+			want:   20,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			replicas, limited, _, err := Desired(tc.policy, counterFleet(tc), nil, nil, noon, neverCalled(t))
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, replicas)
+			assert.Equal(t, tc.limited, limited)
+		})
+	}
+}
+
+// The store hands GameServers over in no particular order. How many of them
+// scaling down takes depends on which go first, so that must not follow
+// from the order they came in.
+func TestDesiredDoesNotDependOnTheOrderOfTheGameServers(t *testing.T) {
+	random := rand.New(rand.NewSource(20))
+	counts := map[string]gameservers.NodeCount{"n1": {Ready: 3}, "n2": {Ready: 3}}
+	for range 500 {
+		servers := crowd(random)
+		fleet := counterFleet(capacityCase{
+			perReplica: usage{0, 3}, replicas: int32(len(servers)), total: roomsIn(servers),
+			order: []string{"", mostRoomFirst, leastRoomFirst}[random.Intn(3)],
+		})
+		fleet.Spec.Scheduling = []apis.SchedulingStrategy{apis.Packed, apis.Distributed}[random.Intn(2)]
+		policy := counterPolicy(amount(int32(1+random.Intn(6))), 0, 100)
+		want, wantLimited, _, err := Desired(policy, fleet, servers, counts, noon, neverCalled(t))
+		require.NoError(t, err)
+
+		replicas, limited, _, err := Desired(policy, fleet, shuffled(random, servers), counts, noon, neverCalled(t))
+
+		require.NoError(t, err)
+		require.Equal(t, want, replicas, "%s, removing %v", fleet.Spec.Scheduling, fleet.Spec.Priorities)
+		require.Equal(t, wantLimited, limited)
 	}
 }
 

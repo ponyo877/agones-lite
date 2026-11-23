@@ -1,6 +1,8 @@
 package gameserversets
 
 import (
+	"cmp"
+	"slices"
 	"time"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
@@ -132,7 +134,10 @@ func creations(set *agonesv1.GameServerSet, missing, pending int) int {
 // removals lists the GameServers to remove in this pass: the broken ones,
 // then as many of the removable ones as the set has too many.
 func removals(set *agonesv1.GameServerSet, g groups, surplus int, counts map[string]gameservers.NodeCount) []*agonesv1.GameServer {
+	// By name, so that a pass with more to remove than it may takes the
+	// same ones whatever order the store handed them over in.
 	out := g.broken
+	slices.SortFunc(out, func(a, b *agonesv1.GameServer) int { return cmp.Compare(a.Name, b.Name) })
 	// Upstream takes one off the surplus for every broken GameServer
 	// (deleteCount-- in scheduleDeletion), so that much of the surplus
 	// stays until a later pass.

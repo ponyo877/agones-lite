@@ -1,6 +1,7 @@
 package fleetautoscalers
 
 import (
+	"math"
 	"testing"
 
 	autoscalingv1 "agones.dev/agones/pkg/apis/autoscaling/v1"
@@ -48,6 +49,11 @@ func TestBufferKeepsReplicasFreeOfPlayers(t *testing.T) {
 		"a minimum above the maximum loses to it": {
 			allocated: 40, policy: bufferPolicy(amount(20), 80, 70),
 			want: 70, limited: true,
+		},
+		// Upstream adds the two as int32, and the sum comes out negative.
+		"a size too large for a Fleet is the maximum, not a number that wrapped around": {
+			allocated: 40, policy: bufferPolicy(amount(math.MaxInt32), 0, math.MaxInt32),
+			want: math.MaxInt32, limited: true,
 		},
 	}
 	for name, tc := range tests {

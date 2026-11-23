@@ -52,6 +52,86 @@ func TestAConfigFileWithAnUnknownKeyIsAnError(t *testing.T) {
 	assert.ErrorContains(t, err, "data-directory")
 }
 
+// serverFlagsFrom reads the server's flags from a config file with this
+// content and nothing else.
+func serverFlagsFrom(t *testing.T, content string) (*serverOptions, error) {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "server.yaml")
+	require.NoError(t, os.WriteFile(file, []byte(content), 0o600))
+	return serverFlags([]string{"--config", file})
+}
+
+func TestAConfigFileValueIsReadTheWayItWouldBeTyped(t *testing.T) {
+	tests := map[string]struct {
+		content string
+		check   func(t *testing.T, o *serverOptions)
+	}{
+		"a key without a value leaves the flag as it was": {
+			content: "listen:\n",
+			check:   func(t *testing.T, o *serverOptions) { assert.Equal(t, "127.0.0.1:9443", o.listen) },
+		},
+		"a list is joined with commas": {
+			content: "tls-san: [cp.example.com, 192.0.2.1]\n",
+			check:   func(t *testing.T, o *serverOptions) { assert.Equal(t, "cp.example.com,192.0.2.1", o.tlsNames) },
+		},
+		"a list may be written one item to a line": {
+			content: "tls-san:\n- cp.example.com\n- 192.0.2.1\n",
+			check:   func(t *testing.T, o *serverOptions) { assert.Equal(t, "cp.example.com,192.0.2.1", o.tlsNames) },
+		},
+		"a large number stays a whole number": {
+			content: "max-gameservers: 1000000\n",
+			check:   func(t *testing.T, o *serverOptions) { assert.Equal(t, int32(1000000), o.node.agent.MaxGameServers) },
+		},
+		"an empty text is a value like any other": {
+			content: "listen: \"\"\n",
+			check:   func(t *testing.T, o *serverOptions) { assert.Empty(t, o.listen) },
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			o, err := serverFlagsFrom(t, tc.content)
+
+			require.NoError(t, err)
+			tc.check(t, o)
+		})
+	}
+}
+
+func TestAConfigFileValueThatNoFlagCanTakeIsAnError(t *testing.T) {
+	tests := map[string]struct {
+		content string
+		want    string
+	}{
+		"a map": {
+			content: "tls-san:\n  name: cp.example.com\n",
+			want:    "tls-san: a flag takes one value or a list of them, not a map",
+		},
+		"a list within a list": {
+			content: "tls-san: [[cp.example.com]]\n",
+			want:    "tls-san: every item of a list must be a single value",
+		},
+		"a list with an empty item": {
+			content: "tls-san:\n- cp.example.com\n-\n",
+			want:    "tls-san: every item of a list must be a single value",
+		},
+		"a number with a fraction for a flag that counts": {
+			content: "max-gameservers: 1.5\n",
+			want:    `max-gameservers: parse error`,
+		},
+		"an unknown key, even without a value": {
+			content: "data-directory:\n",
+			want:    "data-directory: there is no such flag",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := serverFlagsFrom(t, tc.content)
+
+			assert.ErrorContains(t, err, tc.want)
+		})
+	}
+}
+
 func TestKindsAreFoundByAnyOfTheirNames(t *testing.T) {
 	for _, word := range []string{"Fleet", "fleet", "fleets", "flt"} {
 		k, err := findKind(word)

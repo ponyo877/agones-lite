@@ -16,13 +16,39 @@ func TestSplitTag(t *testing.T) {
 	tests := map[string][2]string{
 		"alpine":                         {"alpine", "latest"},
 		"alpine:3.20":                    {"alpine", "3.20"},
+		"alpine:":                        {"alpine", "latest"},
 		"localhost:5000/game":            {"localhost:5000/game", "latest"},
 		"localhost:5000/game:v1":         {"localhost:5000/game", "v1"},
 		"example.com/game@sha256:abc123": {"example.com/game@sha256:abc123", ""},
+		"":                               {"", "latest"},
 	}
 	for image, want := range tests {
 		name, tag := SplitTag(image)
 		assert.Equal(t, want, [2]string{name, tag}, image)
+	}
+}
+
+func TestValidImage(t *testing.T) {
+	sha := "sha256:" + strings.Repeat("ab", 32)
+	valid := []string{
+		"alpine", "alpine:3.20", "library/alpine", "example/game:1",
+		"us-docker.pkg.dev/agones-images/examples/simple-game-server:0.44",
+		"localhost:5000/game", "localhost:5000/game:v1", "registry.example.com:443/a/b/c:tag_1.2-3",
+		"192.168.1.10:5000/game", "[::1]:5000/game:v1",
+		"example.com/game@" + sha, "example.com/game:v1@" + sha,
+		"a__b/c-d.e", "Registry/game",
+	}
+	for _, image := range valid {
+		assert.True(t, ValidImage(image), image)
+	}
+	invalid := []string{
+		"", "alpine:", ":latest", "Alpine", "example/Game", "alpine:la test", "alpine:.tag",
+		"alpine@sha256:abc", "alpine@" + sha + "x", "a//b", "/alpine", "alpine/", "-alpine", "a..b",
+		"example.com/game?tag=1", "example.com/game#1", "alpine:" + strings.Repeat("t", 129),
+		"example.com/" + strings.Repeat("a", 250),
+	}
+	for _, image := range invalid {
+		assert.False(t, ValidImage(image), image)
 	}
 }
 
@@ -32,6 +58,10 @@ func TestPullErrorFindsFailuresInTheStream(t *testing.T) {
 
 	failed := `{"status":"Pulling"}` + "\n" + `{"error":"manifest unknown"}`
 	assert.EqualError(t, pullError(strings.NewReader(failed)), "manifest unknown")
+
+	// "error" is deprecated since API 1.48, to be left out one day.
+	detailed := `{"status":"Pulling"}` + "\n" + `{"errorDetail":{"message":"manifest unknown"}}`
+	assert.EqualError(t, pullError(strings.NewReader(detailed)), "manifest unknown")
 }
 
 func TestCreateRequest(t *testing.T) {
@@ -55,6 +85,21 @@ func TestCreateRequest(t *testing.T) {
 		"Entrypoint": ["/game"],
 		"HostConfig": {"NetworkMode": "container:owner"}
 	}`, string(body), "a container that joins a network publishes nothing itself")
+}
+
+// Two game server ports may lead to one port of the container.
+func TestTwoHostPortsCanLeadToOneContainerPort(t *testing.T) {
+	req := newCreateRequest(Spec{Image: "sidecar", Ports: []Port{
+		{Container: 7654, Host: 7000, Protocol: "udp"},
+		{Container: 7654, Host: 7001, Protocol: "udp"},
+		{Container: 7654, Host: 7000, Protocol: "tcp"},
+	}})
+
+	assert.Equal(t, map[string][]portBinding{
+		"7654/udp": {{HostPort: "7000"}, {HostPort: "7001"}},
+		"7654/tcp": {{HostPort: "7000"}},
+	}, req.HostConfig.PortBindings)
+	assert.Len(t, req.ExposedPorts, 2)
 }
 
 func TestFramesAreUnwrappedIntoOneStream(t *testing.T) {

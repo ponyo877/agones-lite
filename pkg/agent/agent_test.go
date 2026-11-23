@@ -5,7 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"net/http"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,10 +30,17 @@ type fakeDocker struct {
 	calls      []string
 	containers []docker.Container
 	images     map[string]bool
+	taken      []string // container names in use
 	failCreate bool
+	failStart  bool
+	onList     func() // runs while the agent waits for the list
+	onCreate   func() // runs while the agent waits for a container to be created
 }
 
 func (f *fakeDocker) List(context.Context, string) ([]docker.Container, error) {
+	if f.onList != nil {
+		f.onList()
+	}
 	return f.containers, nil
 }
 
@@ -42,15 +53,29 @@ func (f *fakeDocker) Pull(_ context.Context, image string) error {
 	return nil
 }
 
-func (f *fakeDocker) Create(_ context.Context, spec docker.Spec) (string, error) {
+func (f *fakeDocker) Create(ctx context.Context, spec docker.Spec) (string, error) {
 	if f.failCreate {
 		return "", errors.New("no such image")
 	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if f.onCreate != nil {
+		f.onCreate()
+	}
 	f.calls = append(f.calls, "create "+spec.Name)
+	if slices.Contains(f.taken, spec.Name) {
+		inUse := &docker.Error{Status: http.StatusConflict, Message: "Conflict. The container name is already in use"}
+		return "", fmt.Errorf("create %s: %w", spec.Name, inUse)
+	}
+	f.taken = append(f.taken, spec.Name)
 	return spec.Name, nil
 }
 
 func (f *fakeDocker) Start(_ context.Context, id string) error {
+	if f.failStart {
+		return errors.New("no such file or directory")
+	}
 	f.calls = append(f.calls, "start "+id)
 	return nil
 }
@@ -76,11 +101,13 @@ func (f *fakeDocker) RemoveVolumes(_ context.Context, prefix string) error {
 
 // fakeControlPlane records what the agent reports.
 type fakeControlPlane struct {
-	events []gameservers.Event
+	placed  []*agonesv1.GameServer
+	events  []gameservers.Event
+	reserve time.Duration // of the last report
 }
 
 func (f *fakeControlPlane) Register(*litev1.Node) error                    { return nil }
-func (f *fakeControlPlane) Assigned(string) ([]*agonesv1.GameServer, bool) { return nil, true }
+func (f *fakeControlPlane) Assigned(string) ([]*agonesv1.GameServer, bool) { return f.placed, true }
 func (f *fakeControlPlane) Changes() (<-chan struct{}, func())             { return nil, func() {} }
 func (f *fakeControlPlane) SetMetadata(string, string, map[string]string, map[string]string) error {
 	return nil
@@ -92,6 +119,7 @@ func (f *fakeControlPlane) UpdateCounts(string, string, string, []*sidecarv1.Cou
 
 func (f *fakeControlPlane) Report(r gameservers.Report) error {
 	f.events = append(f.events, r.Event)
+	f.reserve = r.Reserve
 	return nil
 }
 
@@ -133,6 +161,40 @@ func TestCreateReportsFailure(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Equal(t, []gameservers.Event{gameservers.CreateFailed}, cp.events)
+}
+
+func TestStartFinishesWhatACreateLeftUnstarted(t *testing.T) {
+	d := &fakeDocker{}
+	a, cp := newAgent(d)
+	unstarted := []docker.Container{
+		container("gs", podspec.RoleSidecar, "created", 0),
+		container("gs", podspec.RoleGame, "created", 0),
+	}
+
+	require.NoError(t, a.execute(context.Background(), Action{Kind: Start, Key: key, Containers: unstarted}))
+
+	assert.Equal(t, []string{"start gs-sidecar", "start gs-game"}, d.calls)
+	assert.Equal(t, []gameservers.Event{gameservers.ContainersRunning}, cp.events)
+}
+
+func TestStartReportsFailure(t *testing.T) {
+	a, cp := newAgent(&fakeDocker{failStart: true})
+
+	err := a.execute(context.Background(), Action{Kind: Start, Key: key, Containers: running("gs")})
+
+	assert.Error(t, err)
+	assert.Equal(t, []gameservers.Event{gameservers.CreateFailed}, cp.events, "or it would be tried again for ever")
+}
+
+func TestACreateCutShortByShutdownIsNotReportedAsFailed(t *testing.T) {
+	a, cp := newAgent(&fakeDocker{images: map[string]bool{"sidecar:dev": true, "example/game:1": true}})
+	stopping, stop := context.WithCancel(context.Background())
+	stop()
+
+	err := a.execute(stopping, Action{Kind: Create, Key: key, GameServer: placed()})
+
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Empty(t, cp.events, "Error is final, and the next agent can still bring the GameServer up")
 }
 
 func TestRemoveStopsTheGameBeforeItsSidecar(t *testing.T) {
@@ -194,6 +256,107 @@ func TestClaimKeepsOneActionPerGameServer(t *testing.T) {
 	assert.False(t, a.claim(key), "a second action must wait for the first")
 	a.release(key)
 	assert.True(t, a.claim(key))
+}
+
+// settle waits until the actions the agent started have finished.
+func settle(t *testing.T, a *Agent) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return len(a.busy) == 0
+	}, 5*time.Second, time.Millisecond)
+}
+
+func TestAPassThatListedBeforeACreateWasDoneDoesNotCreateAgain(t *testing.T) {
+	d := &fakeDocker{images: map[string]bool{"sidecar:dev": true, "example/game:1": true}}
+	a, cp := newAgent(d)
+	cp.placed = []*agonesv1.GameServer{placed()}
+	begun, finish := make(chan struct{}), make(chan struct{})
+	d.onCreate = sync.OnceFunc(func() { close(begun); <-finish })
+
+	a.reconcile(context.Background()) // starts the create, and Docker takes its time
+	<-begun
+	// The next pass asks Docker for its list. The answer is put together
+	// before any container exists and arrives when the create is done.
+	d.onList = sync.OnceFunc(func() { close(finish); settle(t, a) })
+	a.reconcile(context.Background())
+	settle(t, a)
+
+	assert.Equal(t, []string{
+		"create agones-lite_default_gs_agones-gameserver-sidecar",
+		"create agones-lite_default_gs_game",
+		"start agones-lite_default_gs_agones-gameserver-sidecar",
+		"start agones-lite_default_gs_game",
+	}, d.calls, "the list said there was nothing, but it was too old to say")
+	assert.Equal(t, []gameservers.Event{gameservers.ContainersCreated, gameservers.ContainersRunning}, cp.events)
+}
+
+func TestACreateThatFindsItsContainersThereAlreadyFailsNothing(t *testing.T) {
+	sidecar := "agones-lite_default_gs_agones-gameserver-sidecar"
+	images := map[string]bool{"sidecar:dev": true, "example/game:1": true}
+	create := Action{Kind: Create, Key: key, GameServer: placed()}
+
+	// Whatever led to a second create, the first one's containers are there.
+	a, cp := newAgent(&fakeDocker{images: images, taken: []string{sidecar}, containers: running("gs")})
+	err := a.execute(context.Background(), create)
+	assert.ErrorContains(t, err, "already in use")
+	assert.Empty(t, cp.events, "a GameServer that is coming up fine must not be made to fail")
+
+	// A name held by a container that is not ours will not come free.
+	a, cp = newAgent(&fakeDocker{images: images, taken: []string{sidecar}})
+	err = a.execute(context.Background(), create)
+	assert.ErrorContains(t, err, "already in use")
+	assert.Equal(t, []gameservers.Event{gameservers.CreateFailed}, cp.events)
+}
+
+func TestAPlanMadeWhileAnActionRanWaitsForTheNextPass(t *testing.T) {
+	// What a pass saw: the GameServer still Creating, and containers.
+	// Taken alone that means leftovers of a crash, to be cleared away.
+	d := &fakeDocker{containers: running("gs")}
+	a, cp := newAgent(d)
+	cp.placed = []*agonesv1.GameServer{placed()}
+	// But a create was under way, and it finished while Docker was asked.
+	require.True(t, a.claim(key))
+	d.onList = func() { a.release(key) }
+
+	a.reconcile(context.Background())
+	settle(t, a)
+	assert.Empty(t, d.calls, "the containers the create has just started must not be taken down")
+
+	// A pass that looks with nothing else going on can trust what it sees.
+	d.onList = nil
+	a.reconcile(context.Background())
+	settle(t, a)
+	assert.Contains(t, d.calls, "remove gs-game")
+}
+
+func TestAReserveTooLongForADurationIsPassedOnAsTheLongest(t *testing.T) {
+	const longest = time.Duration(math.MaxInt64/int64(time.Second)) * time.Second // 292 years
+	tests := map[string]struct {
+		seconds int64
+		want    time.Duration
+	}{
+		"a minute":                    {seconds: 60, want: time.Minute},
+		"until told otherwise":        {seconds: 0, want: 0},
+		"negative counts as zero":     {seconds: -5, want: 0},
+		"the last second that fits":   {seconds: 9_223_372_036, want: longest},
+		"one more wraps to minus":     {seconds: 9_223_372_037, want: longest},
+		"enough more wraps to 0.3s":   {seconds: 18_446_744_074, want: longest},
+		"far enough below wraps too":  {seconds: -10_000_000_000, want: 0},
+		"as many as an int64 can say": {seconds: math.MaxInt64, want: longest},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			a, cp := newAgent(&fakeDocker{})
+
+			err := a.sidecars.pass(key, &sidecarv1.TellRequest{Event: sidecarv1.Event_EVENT_RESERVE, ReserveSeconds: tc.seconds})
+
+			require.NoError(t, err)
+			assert.Equal(t, []gameservers.Event{gameservers.SDKReserve}, cp.events)
+			assert.Equal(t, tc.want, cp.reserve)
+		})
+	}
 }
 
 func TestSidecarTokensComeBackFromLabels(t *testing.T) {

@@ -33,6 +33,7 @@ import (
 type controlPlane struct {
 	store   *store.Store
 	local   *Local
+	server  *Server
 	secrets *auth.Secrets
 	address string
 }
@@ -51,10 +52,11 @@ func newControlPlane(t *testing.T) controlPlane {
 	options := append(auth.RequireGRPC(secrets, auth.Node), grpc.Creds(credentials.NewTLS(secrets.ServerTLS())))
 	server := grpc.NewServer(options...)
 	local := NewLocal(s, gameservers.NewController(s, nil))
-	nodev1.RegisterNodesServer(server, NewServer(s, local))
+	agents := NewServer(s, local)
+	nodev1.RegisterNodesServer(server, agents)
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(server.Stop)
-	return controlPlane{store: s, local: local, secrets: secrets, address: listener.Addr().String()}
+	return controlPlane{store: s, local: local, server: agents, secrets: secrets, address: listener.Addr().String()}
 }
 
 func node(name string) *litev1.Node {
@@ -137,6 +139,24 @@ func TestReportsFromAnAgentChangeTheGameServer(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, status.Code(err), "granting Ready is the control plane's decision")
 }
 
+func TestAReserveTooLongForADurationLastsAsLongAsOneCan(t *testing.T) {
+	cp := newControlPlane(t)
+	servers := store.GameServersOf(cp.store)
+	_, err := servers.Create(inState("gs", agonesv1.GameServerStateReady))
+	require.NoError(t, err)
+
+	// So many seconds that, as nanoseconds, they wrap around to 0.3s.
+	_, err = cp.server.Report(context.Background(), &nodev1.ReportRequest{
+		Namespace: "default", Name: "gs", Event: string(gameservers.SDKReserve), ReserveSeconds: 18_446_744_074,
+	})
+
+	require.NoError(t, err)
+	gs, _ := servers.Get("default", "gs")
+	assert.Equal(t, agonesv1.GameServerStateReserved, gs.Status.State)
+	require.NotNil(t, gs.Status.ReservedUntil)
+	assert.Greater(t, time.Until(gs.Status.ReservedUntil.Time), 200*365*24*time.Hour)
+}
+
 func TestTheNodeIsDisconnectedOnceItsAgentIsGone(t *testing.T) {
 	cp := newControlPlane(t)
 	nodes := store.NodesOf(cp.store)
@@ -156,6 +176,117 @@ func TestTheNodeIsDisconnectedOnceItsAgentIsGone(t *testing.T) {
 		n, _ := nodes.Get("", "node-1")
 		return n.Status.Phase == litev1.NodeDisconnected
 	}, "the control plane notices the agent is gone")
+}
+
+func TestARemoteNodeIsOnlyReadyWhileItWatches(t *testing.T) {
+	cp := newControlPlane(t)
+	remote, err := Dial(cp.address, cp.secrets.Token(auth.Node))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = remote.Close() })
+	phase := func() litev1.NodePhase {
+		n, _ := store.NodesOf(cp.store).Get("", "node-1")
+		return n.Status.Phase
+	}
+
+	// An agent that registers and dies before it watches leaves no call
+	// whose end would tell us so.
+	require.NoError(t, remote.Register(node("node-1")))
+	assert.Equal(t, litev1.NodeDisconnected, phase())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go remote.Run(ctx, "node-1")
+	soon(t, func() bool { return phase() == litev1.NodeReady }, "watching is what connects the node")
+	require.NoError(t, remote.Register(node("node-1")))
+	assert.Equal(t, litev1.NodeReady, phase(), "a heartbeat changes nothing about that")
+
+	cancel()
+	soon(t, func() bool { return phase() == litev1.NodeDisconnected }, "the control plane notices the agent is gone")
+	// The agent's last heartbeat was still on its way.
+	require.NoError(t, remote.Register(node("node-1")))
+	assert.Equal(t, litev1.NodeDisconnected, phase(), "or the node would be Ready for ever")
+}
+
+func TestARemoteNodeThatWatchesBeforeItRegistersIsReady(t *testing.T) {
+	cp := newControlPlane(t)
+	remote, err := Dial(cp.address, cp.secrets.Token(auth.Node))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = remote.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go remote.Run(ctx, "node-1")
+	soon(t, func() bool { _, current := remote.Assigned("node-1"); return current }, "the agent connects")
+
+	// A new agent does both at once, and this may well be the order.
+	require.NoError(t, remote.Register(node("node-1")))
+
+	n, _ := store.NodesOf(cp.store).Get("", "node-1")
+	assert.Equal(t, litev1.NodeReady, n.Status.Phase)
+}
+
+func TestAnAgentInTheSameProcessIsReadyByRegistering(t *testing.T) {
+	cp := newControlPlane(t)
+	nodes := store.NodesOf(cp.store)
+	n := node("node-1")
+	n.Status.Phase = litev1.NodeDisconnected // as StartOver leaves every node
+	_, err := nodes.Create(n)
+	require.NoError(t, err)
+
+	require.NoError(t, cp.local.Register(node("node-1")))
+
+	n, _ = nodes.Get("", "node-1")
+	assert.Equal(t, litev1.NodeReady, n.Status.Phase, "it has no Watch call to be judged by")
+}
+
+// stalledStream is the control plane's end of a Watch call whose agent has
+// stopped reading: nothing can be sent until the agent reads again.
+type stalledStream struct {
+	grpc.ServerStream
+	ctx     context.Context
+	stalled chan struct{} // closed once something waits to be sent
+	resumed chan struct{} // closed when the agent reads again
+}
+
+func (s *stalledStream) Context() context.Context { return s.ctx }
+
+func (s *stalledStream) Send(*nodev1.WatchResponse) error {
+	select {
+	case <-s.stalled:
+	default:
+		close(s.stalled)
+	}
+	<-s.resumed
+	return nil
+}
+
+func TestAnAgentThatFallsBehindIsCutOffSoThatItStartsAgain(t *testing.T) {
+	cp := newControlPlane(t)
+	servers := store.GameServersOf(cp.store)
+	gs, err := servers.Create(placed("gs", "node-1"))
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream := &stalledStream{ctx: ctx, stalled: make(chan struct{}), resumed: make(chan struct{})}
+	ended := make(chan error, 1)
+	go func() {
+		ended <- cp.server.Watch(&nodev1.WatchRequest{Node: "node-1"}, stream)
+	}()
+	<-stream.stalled
+
+	// One change more than the store keeps for a watcher that does not read.
+	unread, stop := servers.Watch()
+	defer stop()
+	for range cap(unread) + 1 {
+		gs, err = servers.Update(gs)
+		require.NoError(t, err)
+	}
+	close(stream.resumed)
+
+	select {
+	case err := <-ended:
+		assert.Equal(t, codes.Aborted, status.Code(err), "an error makes the agent dial again and receive everything anew")
+	case <-time.After(5 * time.Second):
+		assert.Fail(t, "the call goes on, and the agent's copy keeps a hole it cannot know of")
+	}
 }
 
 func TestAWrongJoinTokenIsRefused(t *testing.T) {
@@ -229,6 +360,44 @@ func TestLogsTravelFromARemoteAgentToTheControlPlane(t *testing.T) {
 
 	_, err = read("nobody")
 	assert.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestLogsSurviveAnAgentThatDialsAgainBeforeItsOldCallEnds(t *testing.T) {
+	cp := newControlPlane(t)
+	_, err := store.GameServersOf(cp.store).Create(placed("gs", "node-1"))
+	require.NoError(t, err)
+	watching := func(ctx context.Context, log string) {
+		remote, err := Dial(cp.address, cp.secrets.Token(auth.Node))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = remote.Close() })
+		remote.Serve(fixedLog(log))
+		go remote.Run(ctx, "node-1")
+		soon(t, func() bool { _, current := remote.Assigned("node-1"); return current }, "the agent connects")
+	}
+	read := func() string {
+		stream, err := cp.local.Logs(context.Background(), agent.LogRequest{Namespace: "default", Name: "gs"})
+		if err != nil {
+			return err.Error()
+		}
+		defer func() { _ = stream.Close() }()
+		text, _ := io.ReadAll(stream)
+		return string(text)
+	}
+	old, endOld := context.WithCancel(context.Background())
+	watching(old, "old")
+	current, endCurrent := context.WithCancel(context.Background())
+	defer endCurrent()
+	watching(current, "new") // the control plane has not noticed yet that the old call is dead
+	require.Equal(t, "new for gs", read())
+
+	endOld()
+
+	soon(t, func() bool {
+		cp.server.mu.Lock()
+		defer cp.server.mu.Unlock()
+		return cp.server.streams["node-1"] == 1
+	}, "the old call ends")
+	assert.Equal(t, "new for gs", read(), "the call that ended must not take the other one's reader with it")
 }
 
 func TestCountsChangedThroughTheSDKReachTheGameServer(t *testing.T) {

@@ -29,11 +29,15 @@ func (l *Local) Attach(node string, reader LogReader) {
 	l.readers[node] = reader
 }
 
-// Detach forgets the reader of a node whose agent went away.
-func (l *Local) Detach(node string) {
+// Detach forgets reader when the agent it reads through went away. An agent
+// that dials again may attach its next reader before the old one is seen
+// to be gone, and that next one has to stay.
+func (l *Local) Detach(node string, reader LogReader) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	delete(l.readers, node)
+	if l.readers[node] == reader {
+		delete(l.readers, node)
+	}
 }
 
 // Logs reads a game server's log from whichever node it runs on.

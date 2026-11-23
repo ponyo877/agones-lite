@@ -130,6 +130,27 @@ func TestALongDisconnectMakesIdleServersUnhealthy(t *testing.T) {
 	assert.Equal(t, agonesv1.GameServerStateAllocated, f.state("allocated"), "the session is given a day")
 }
 
+func TestStartingOverKeepsCountingForANodeThatWasAlreadyGone(t *testing.T) {
+	f := newControllerFixture(t)
+	_, err := f.nodes.Create(disconnectedFor(4 * time.Minute))
+	require.NoError(t, err)
+	_, err = f.nodes.Create(node("node-2"))
+	require.NoError(t, err)
+	f.add(inState("ready", agonesv1.GameServerStateReady))
+
+	// A control plane that restarts more often than the grace lasts.
+	for minute := 1; minute <= 3; minute++ {
+		f.now = func() time.Time { return noon.Add(time.Duration(minute) * time.Minute) }
+		require.NoError(t, f.StartOver())
+	}
+	f.sync()
+
+	assert.Equal(t, agonesv1.GameServerStateUnhealthy, f.state("ready"), "seven minutes out of reach, restarts or not")
+	n, _ := f.nodes.Get("", "node-2")
+	assert.Equal(t, litev1.NodeDisconnected, n.Status.Phase)
+	assert.Equal(t, noon.Add(time.Minute), n.Status.LastHeartbeatTime.UTC(), "a node that was Ready is waited for from the first start on")
+}
+
 func TestDeletingANodeGivesUpEverythingOnIt(t *testing.T) {
 	f := newControllerFixture(t)
 	f.add(inState("ready", agonesv1.GameServerStateReady), inState("allocated", agonesv1.GameServerStateAllocated))

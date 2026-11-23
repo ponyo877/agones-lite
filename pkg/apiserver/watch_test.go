@@ -2,13 +2,19 @@ package apiserver
 
 import (
 	"bufio"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/ponyo877/agones-lite/pkg/store"
 )
 
 // watcher reads a watch the way a client does: over a real connection,
@@ -76,4 +82,30 @@ func TestAWatchIsAListThatGoesOn(t *testing.T) {
 	event, name = w.next()
 	assert.Equal(t, "before", name)
 	assert.Contains(t, []string{"Modified", "Deleted"}, event, "marked for deletion, or gone already")
+}
+
+// The store closes the channel of a watcher that fell too far behind. The
+// stream must then end, so that the client lists and watches again instead
+// of trusting a copy with a hole in it.
+func TestAWatchEndsWhenTheStoreGivesUpOnIt(t *testing.T) {
+	rec := httptest.NewRecorder()
+	stream := newEventStream(rec)
+	changes := make(chan store.Event, 1)
+	last := &agonesv1.Fleet{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "last"}}
+	changes <- store.Event{Type: store.Modified, Key: store.Key{Namespace: "default", Name: "last"}, Object: last}
+	close(changes)
+
+	ended := make(chan struct{})
+	go func() {
+		defer close(ended)
+		stream.relay(context.Background(), changes, "")
+	}()
+
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "the stream went on after the watch was closed")
+	}
+	assert.Equal(t, 1, strings.Count(rec.Body.String(), "event: "), "what was told before the close is still sent, and nothing after")
+	assert.Contains(t, rec.Body.String(), "event: Modified\ndata: {\"metadata\":{\"name\":\"last\"")
 }

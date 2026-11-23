@@ -26,9 +26,10 @@ type Key = types.NamespacedName
 // ActionKind is what the agent does about one GameServer.
 type ActionKind int
 
-// The four things the agent can do.
+// The five things the agent can do.
 const (
 	Create  ActionKind = iota // pull images, create and start the containers
+	Start                     // start containers that were created and left at that
 	Remove                    // stop and delete the containers, then report ContainersRemoved
 	Discard                   // delete containers that belong to nothing we know
 	Tell                      // report an Event and touch nothing
@@ -39,7 +40,7 @@ type Action struct {
 	Kind       ActionKind
 	Key        Key
 	GameServer *agonesv1.GameServer // set for Create and Remove
-	Containers []docker.Container   // set for Remove and Discard
+	Containers []docker.Container   // set for Start, Remove and Discard
 	Event      gameservers.Event    // set for Tell
 }
 
@@ -74,12 +75,17 @@ func planOne(gs *agonesv1.GameServer, containers []docker.Container) (Action, bo
 	case gameservers.Final(gs.Status.State):
 		return Action{}, false // kept as they are until the GameServer is deleted
 	}
-	event, ok := observe(gs, containers)
-	return Action{Kind: Tell, Event: event}, ok
+	if event, ok := trouble(containers); ok {
+		return Action{Kind: Tell, Event: event}, true
+	}
+	if gs.Status.State == agonesv1.GameServerStateStarting {
+		return resume(containers)
+	}
+	return Action{}, false
 }
 
-// observe turns the state of a running GameServer's containers into an Event.
-func observe(gs *agonesv1.GameServer, containers []docker.Container) (gameservers.Event, bool) {
+// trouble turns containers that are gone or have stopped into an Event.
+func trouble(containers []docker.Container) (gameservers.Event, bool) {
 	sidecar, hasSidecar := withRole(containers, podspec.RoleSidecar)
 	game, hasGame := withRole(containers, podspec.RoleGame)
 	switch {
@@ -89,10 +95,35 @@ func observe(gs *agonesv1.GameServer, containers []docker.Container) (gameserver
 		return gameservers.ExitedCleanly, true
 	case game.Exited():
 		return gameservers.ExitedWithError, true
-	case gs.Status.State == agonesv1.GameServerStateStarting && game.State == "running":
-		return gameservers.ContainersRunning, true // in case the first report was lost
 	}
 	return "", false
+}
+
+// resume takes up a start that was cut short. The agent may have stopped
+// between creating the containers and starting them all, or its report
+// that they run may have been lost.
+func resume(containers []docker.Container) (Action, bool) {
+	if waiting := neverStarted(containers); len(waiting) > 0 {
+		return Action{Kind: Start, Containers: waiting}, true
+	}
+	game, _ := withRole(containers, podspec.RoleGame)
+	return Action{Kind: Tell, Event: gameservers.ContainersRunning}, game.State == "running"
+}
+
+// neverStarted returns the containers that were created and left at that,
+// the sidecar first: the others join its network and cannot start before it.
+func neverStarted(containers []docker.Container) []docker.Container {
+	var sidecar, others []docker.Container
+	for _, c := range containers {
+		switch {
+		case c.State != "created":
+		case c.Labels[podspec.LabelRole] == podspec.RoleSidecar:
+			sidecar = append(sidecar, c)
+		default:
+			others = append(others, c)
+		}
+	}
+	return append(sidecar, others...)
 }
 
 // discardRest removes containers whose GameServer is not on this node any more.

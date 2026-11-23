@@ -10,6 +10,8 @@
 package portallocator
 
 import (
+	"maps"
+
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	corev1 "k8s.io/api/core/v1"
 
@@ -38,13 +40,26 @@ func Allocate(gs *agonesv1.GameServer, r litev1.PortRange, used map[int32]bool) 
 	if !staticPortsFree(gs, used) {
 		return false
 	}
-	free, ok := pickFree(countAutomatic(gs), r, used)
+	free, ok := pickFree(countAutomatic(gs), r, withStatic(used, gs))
 	if !ok {
 		return false
 	}
 	assign(gs, free)
 	splitTCPUDP(gs)
 	return true
+}
+
+// withStatic returns used plus the Static host ports of gs itself. They may
+// lie in the node's range, and are then as taken as a neighbour's.
+func withStatic(used map[int32]bool, gs *agonesv1.GameServer) map[int32]bool {
+	taken := map[int32]bool{}
+	maps.Copy(taken, used)
+	for _, p := range gs.Spec.Ports {
+		if p.PortPolicy == agonesv1.Static {
+			taken[p.HostPort] = true
+		}
+	}
+	return taken
 }
 
 func automatic(p agonesv1.GameServerPort) bool {

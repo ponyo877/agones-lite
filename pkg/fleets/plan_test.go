@@ -1,12 +1,14 @@
 package fleets
 
 import (
+	"math/rand"
 	"testing"
 
 	"agones.dev/agones/pkg/apis"
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -207,6 +209,7 @@ func TestActive(t *testing.T) {
 	second := born(current(fleet, "second", shape{}), 2)
 	third := born(current(fleet, "third", shape{}), 3)
 	stale := born(old(fleet, "stale", shape{}), 0)
+	twin := born(current(fleet, "twin", shape{}), 1) // created in the same minute as first
 
 	tests := map[string]struct {
 		sets   []*agonesv1.GameServerSet
@@ -225,10 +228,14 @@ func TestActive(t *testing.T) {
 			sets: list(first, second, third), active: first, rest: list(second, third),
 		},
 		"the oldest is found wherever it is in the list": {
-			sets: list(third, first, second), active: first, rest: list(third, second),
+			sets: list(third, first, second), active: first, rest: list(second, third),
 		},
-		"the duplicates join the old sets": {
-			sets: list(third, stale, first, second), active: first, rest: list(stale, third, second),
+		"the duplicates join the old sets, and the rest comes oldest first": {
+			sets: list(third, stale, first, second), active: first, rest: list(stale, second, third),
+		},
+		// Upstream takes whichever its cache lists first.
+		"of two sets that are the same age the name decides": {
+			sets: list(twin, first), active: first, rest: list(twin),
 		},
 	}
 	for name, tc := range tests {
@@ -259,4 +266,42 @@ func TestActiveComparesTemplatesByMeaning(t *testing.T) {
 
 	assert.Equal(t, oneCPU, active, "1 CPU is 1000m")
 	assert.Equal(t, list(more), rest)
+}
+
+// The store hands the sets over in no particular order, so neither which
+// set is active nor which old set gives up GameServers first may depend on
+// it.
+func TestActiveDoesNotDependOnTheOrderOfItsInput(t *testing.T) {
+	fleet := newFleet(t)
+	random := rand.New(rand.NewSource(20))
+	for range 500 {
+		sets := family(random, fleet)
+		wantActive, wantRest := Active(fleet, sets)
+
+		active, rest := Active(fleet, shuffled(random, sets))
+
+		require.Equal(t, wantActive, active)
+		require.Equal(t, wantRest, rest)
+	}
+}
+
+func TestPlanDoesNotDependOnTheOrderOfItsInput(t *testing.T) {
+	template := newFleet(t)
+	random := rand.New(rand.NewSource(20))
+	for range 500 {
+		fleet := template.DeepCopy()
+		fleet.Spec.Replicas = int32(random.Intn(10))
+		if random.Intn(2) == 0 {
+			fleet.Spec.Strategy.Type = appsv1.RecreateDeploymentStrategyType
+		}
+		sets := family(random, fleet)
+		seenReady(fleet, sets...)
+		want, err := Plan(fleet, sets)
+		require.NoError(t, err)
+
+		got, err := Plan(fleet, shuffled(random, sets))
+
+		require.NoError(t, err)
+		require.Equal(t, want, got)
+	}
 }

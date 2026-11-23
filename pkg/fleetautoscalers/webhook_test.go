@@ -124,6 +124,13 @@ func TestWebhookThatDoesNotAnswerProperlyIsAnError(t *testing.T) {
 			call: answering(nil, nil),
 			want: "webhook response missing required 'response' field",
 		},
+		// Upstream passes it on, and its API server refuses the Fleet.
+		"the answer is a size below zero": {
+			call: answering(&autoscalingv1.FleetAutoscaleReview{
+				Response: &autoscalingv1.FleetAutoscaleResponse{Scale: true, Replicas: -5},
+			}, nil),
+			want: "webhook response asks for -5 replicas, which is fewer than none",
+		},
 		"there is nothing to call": {
 			call: nil,
 			want: "no Webhook was given to call",
