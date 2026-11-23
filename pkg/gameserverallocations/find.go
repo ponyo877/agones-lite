@@ -21,11 +21,21 @@ import (
 // gsa must have been through ApplyDefaults, Validate and Converter. A
 // selector that would not pass Validate makes Matches panic.
 //
+// counts says how full each node is, counting the GameServers of every
+// namespace, as gameservers.CountByNode does. A GameServer on a node that
+// counts does not know is passed over, whatever the strategy: nobody has
+// counted a Ready or Allocated GameServer there, so the two arguments
+// disagree about it, and a player is not sent on a guess.
+//
 // Upstream: findGameServerForAllocation in pkg/gameserverallocations/find.go.
 // It shuffles the candidates and takes the first match, which makes every
-// match equally likely, as a uniform pick does.
+// match equally likely, as a uniform pick does. A GameServer on a node its
+// counter does not know it offers last (ListSortedGameServers).
 func Find(gsa *allocationv1.GameServerAllocation, servers []*agonesv1.GameServer, counts map[string]gameservers.NodeCount, pick func(n int) int) (*agonesv1.GameServer, bool) {
-	list := filter(servers, func(gs *agonesv1.GameServer) bool { return candidate(gsa, gs) })
+	list := filter(servers, func(gs *agonesv1.GameServer) bool {
+		_, counted := counts[gs.Status.NodeName]
+		return counted && candidate(gsa, gs)
+	})
 	slices.SortFunc(list, orderOf(gsa, counts))
 	choose := first
 	if random(gsa) {

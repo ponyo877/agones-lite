@@ -80,10 +80,13 @@ func (c *Controller) sync(_ context.Context, key store.Key) error {
 		return c.dissolve(set, owned)
 	}
 	actions := Plan(set, owned, gameservers.CountByNode(c.servers.View("")), c.now())
-	if err := c.carryOut(set, actions); err != nil {
-		return err
-	}
-	return c.publish(set, owned)
+	// The Fleet and the autoscaler steer by the status, so it is written
+	// from a fresh look, and also when the plan could only be carried out
+	// in part: sessions begin and end whether or not this pass went well.
+	//
+	// Upstream writes it from the list it planned with, and not at all
+	// after a failure (syncGameServerSet).
+	return errors.Join(c.carryOut(set, actions), c.publish(set, c.owned(set)))
 }
 
 // owned returns the GameServers that set controls.

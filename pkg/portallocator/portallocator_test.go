@@ -1,6 +1,7 @@
 package portallocator
 
 import (
+	"math"
 	"testing"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
@@ -113,4 +114,19 @@ func TestUsedCountsATCPUDPPortOnce(t *testing.T) {
 	assert.Equal(t, map[int32]bool{7000: true, 7001: true}, Used([]*agonesv1.GameServer{a, b}))
 	// Removing a frees exactly its own port.
 	assert.Equal(t, map[int32]bool{7001: true}, Used([]*agonesv1.GameServer{b}))
+}
+
+// Found by TestAllocatedPortsAreFreeDistinctAndInRange once its ranges
+// reached the end of int32: the loop over the range counted on past it, to
+// the smallest int32, and handed that out as the third port.
+func TestARangeThatEndsWhereInt32DoesHasNoPortsBeyondIt(t *testing.T) {
+	lastTwo := litev1.PortRange{Min: math.MaxInt32 - 1, Max: math.MaxInt32}
+	dynamic := port(agonesv1.Dynamic, corev1.ProtocolUDP)
+
+	two := server(dynamic, dynamic)
+	assert.True(t, Allocate(two, lastTwo, nil))
+	assert.Equal(t, []int32{math.MaxInt32 - 1, math.MaxInt32}, []int32{two.Spec.Ports[0].HostPort, two.Spec.Ports[1].HostPort})
+
+	three := server(dynamic, dynamic, dynamic)
+	assert.False(t, Allocate(three, lastTwo, nil), "the range has two ports")
 }

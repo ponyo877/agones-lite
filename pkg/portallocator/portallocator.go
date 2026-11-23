@@ -84,9 +84,11 @@ func staticPortsFree(gs *agonesv1.GameServer, used map[int32]bool) bool {
 // pickFree returns the n lowest free ports in r.
 func pickFree(n int, r litev1.PortRange, used map[int32]bool) ([]int32, bool) {
 	free := make([]int32, 0, n)
-	for port := r.Min; port <= r.Max && len(free) < n; port++ {
-		if !used[port] {
-			free = append(free, port)
+	// Counted as int64: an int32 that has reached a range's end at the
+	// largest int32 starts again at the smallest, far outside the range.
+	for port := int64(r.Min); port <= int64(r.Max) && len(free) < n; port++ {
+		if !used[int32(port)] {
+			free = append(free, int32(port))
 		}
 	}
 	return free, len(free) == n

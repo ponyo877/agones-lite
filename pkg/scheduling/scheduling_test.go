@@ -83,6 +83,10 @@ func TestPlaceSkipsNodesThatCannotTakeIt(t *testing.T) {
 		"cordoned": {
 			node: node("n1", func(n *litev1.Node) { n.Spec.Unschedulable = true }),
 		},
+		// Found by TestPlaceOnlyUsesANodeThatCanTakeTheGameServer.
+		"draining, though not cordoned": {
+			node: node("n1", func(n *litev1.Node) { n.Spec.Drain = true }),
+		},
 		"at the game server limit": {
 			node:      node("n1", func(n *litev1.Node) { n.Status.MaxGameServers = 1 }),
 			residents: []*agonesv1.GameServer{server("a", "n1", "")},

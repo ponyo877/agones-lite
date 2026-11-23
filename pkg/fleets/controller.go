@@ -150,10 +150,11 @@ func (c *Controller) carryOut(fleet *agonesv1.Fleet, changes Changes) error {
 
 // discard deletes an old set that Plan found empty, once it really is.
 //
-// Plan goes by the set's status, which is a pass behind its GameServers: a
-// set writes it from what was there before the pass created any. Deleting
-// the set takes its GameServers along, sessions and all, so a set that
-// still has some is left for the pass that sees them in its status.
+// Plan goes by the set's status, which can be behind its GameServers: the
+// set's controller writes it on its own passes, and GameServers come and
+// go in between. Deleting the set takes its GameServers along, sessions
+// and all, so a set that still has some is left for the pass that sees
+// them in its status.
 //
 // Upstream: deleteEmptyGameServerSets, which goes by the status alone.
 func (c *Controller) discard(fleet *agonesv1.Fleet, name string) error {

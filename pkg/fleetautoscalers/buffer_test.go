@@ -83,6 +83,25 @@ func TestBufferThatCannotBeReadIsAnError(t *testing.T) {
 			policy: autoscalingv1.FleetAutoscalerPolicy{Type: bufferType},
 			want:   "bufferPolicy parameter must not be nil",
 		},
+		// Upstream divides by 100 less the share: by zero here, and by less
+		// than zero for the next.
+		"a share that leaves nothing for the players": {
+			policy: bufferPolicy(share("100%"), 1, 10),
+			want:   "bufferSize should be between 1% and 99%, and is 100%",
+		},
+		"a share of more than there is": {
+			policy: bufferPolicy(share("150%"), 1, 10),
+			want:   "bufferSize should be between 1% and 99%, and is 150%",
+		},
+		"a share of nothing": {
+			policy: bufferPolicy(share("0%"), 1, 10),
+			want:   "bufferSize should be between 1% and 99%, and is 0%",
+		},
+		// Upstream leaves it to the API server to refuse the Fleet.
+		"limits that lead below zero": {
+			policy: bufferPolicy(amount(-10), -5, 20),
+			want:   "Buffer policy asks for -5 replicas, which is fewer than none",
+		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {

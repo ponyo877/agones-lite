@@ -2,6 +2,7 @@ package fleetautoscalers
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
@@ -48,7 +49,20 @@ type pass struct {
 
 // apply asks one policy. Schedule and Chain come back here for the policies
 // they contain.
+//
+// A size below zero is no answer. Admission keeps the limits that could
+// lead to one out, except from the policy inside a Schedule, and upstream
+// leaves it to the API server to refuse the Fleet.
 func (p pass) apply(policy autoscalingv1.FleetAutoscalerPolicy) (replicas int32, limited bool, err error) {
+	replicas, limited, err = p.ask(policy)
+	if err == nil && replicas < 0 {
+		return 0, false, fmt.Errorf("%s policy asks for %d replicas, which is fewer than none", policy.Type, replicas)
+	}
+	return replicas, limited, err
+}
+
+// ask hands the policy to the function for its type.
+func (p pass) ask(policy autoscalingv1.FleetAutoscalerPolicy) (replicas int32, limited bool, err error) {
 	switch policy.Type {
 	case autoscalingv1.BufferPolicyType:
 		return p.buffer(policy.Buffer)

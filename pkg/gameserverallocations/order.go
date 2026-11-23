@@ -25,7 +25,8 @@ func orderOf(gsa *allocationv1.GameServerAllocation, counts map[string]gameserve
 
 // packed is the order for Packed: sessions go to the nodes that are already
 // the busiest, so that the quiet ones empty out and can be removed. A node
-// missing from counts ranks as an empty one, which puts it last.
+// missing from counts would rank as an empty one, and so last; Find leaves
+// the GameServers on such a node out before it sorts.
 //
 // Upstream: ListSortedGameServers in
 // pkg/gameserverallocations/allocation_cache.go.

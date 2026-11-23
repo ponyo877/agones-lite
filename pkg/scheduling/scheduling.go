@@ -72,7 +72,11 @@ func ranked(strategy apis.SchedulingStrategy, nodes []*litev1.Node, onNode map[s
 
 // fits reports whether node has room for gs, ports aside.
 func fits(gs *agonesv1.GameServer, node *litev1.Node, residents []*agonesv1.GameServer) bool {
-	if !node.Schedulable() {
+	// A node that is being drained shuts down every GameServer without a
+	// session, so one placed there would be told to go at once, and its
+	// set would make another. Draining a node cordons it as well, but the
+	// two are separate fields, and Schedulable only reads the one.
+	if !node.Schedulable() || node.Spec.Drain {
 		return false
 	}
 	if limit := int(node.Status.MaxGameServers); limit > 0 && len(residents) >= limit {

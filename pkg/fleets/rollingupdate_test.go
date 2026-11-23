@@ -167,6 +167,28 @@ func TestRollingUpdateTakesOneStep(t *testing.T) {
 			old:        []shape{full(3)},
 			wantActive: 1, wantOld: []int32{2},
 		},
+
+		// Found by the rollouts in property_test.go, and shrunk by rapid.
+		// Upstream gets each of them wrong, in the way the name says must
+		// not happen.
+		"an old set that is short of its size holds the active set back": {
+			replicas: 8, maxSurge: "1",
+			active:     shape{spec: 7, replicas: 7, ready: 2, allocated: 4},
+			old:        []shape{{spec: 2, shutdown: 1}},
+			wantActive: 7, wantOld: []int32{2}, // upstream: 8, and ten GameServers where nine may be
+		},
+		"a Fleet made smaller in the middle of a rollout keeps its new GameServers": {
+			replicas:   10, // it was 20
+			active:     full(5),
+			old:        []shape{full(15)},
+			wantActive: 5, wantOld: []int32{5}, // upstream: 0 and 5, half of what was asked for
+		},
+		"an old set that holds more sessions than its size does not hold up the ones after it": {
+			replicas:   10,
+			active:     full(3),
+			old:        []shape{{spec: 2, replicas: 4, allocated: 4}, full(3)},
+			wantActive: 6, wantOld: []int32{0, 2}, // upstream: 2 and 3, until a session ends
+		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {

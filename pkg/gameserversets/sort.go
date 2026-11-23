@@ -25,6 +25,7 @@ import (
 //
 // Upstream: SortGameServersByStrategy in pkg/gameserversets/gameserversets.go.
 func SortForRemoval(strategy apis.SchedulingStrategy, servers []*agonesv1.GameServer, counts map[string]gameservers.NodeCount, priorities []agonesv1.Priority) []*agonesv1.GameServer {
+	priorities = ascendingByDefault(priorities)
 	before := oldestFirst(priorities)
 	if strategy == apis.Packed {
 		before = emptiestNodeFirst(counts, priorities)
@@ -32,6 +33,22 @@ func SortForRemoval(strategy apis.SchedulingStrategy, servers []*agonesv1.GameSe
 	sorted := slices.Clone(servers)
 	sort.Slice(sorted, func(i, j int) bool { return before(sorted[i], sorted[j]) })
 	return sorted
+}
+
+// ascendingByDefault returns the priorities with every order that is not
+// Descending spelled out as Ascending. Upstream's CRD fills in an order that
+// was left out; nothing does that here. CompareCountAndListPriorities reads
+// such an order as Ascending between two GameServers that both have the key,
+// and as no order at all when one of them lacks it, and a sort by that can go
+// round in a circle.
+func ascendingByDefault(priorities []agonesv1.Priority) []agonesv1.Priority {
+	out := slices.Clone(priorities)
+	for i := range out {
+		if out[i].Order != agonesv1.GameServerPriorityDescending {
+			out[i].Order = agonesv1.GameServerPriorityAscending
+		}
+	}
+	return out
 }
 
 // order reports whether a is removed before b.

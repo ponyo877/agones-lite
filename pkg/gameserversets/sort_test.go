@@ -160,6 +160,31 @@ func TestRemovalOrderWhereUpstreamHasNone(t *testing.T) {
 	}
 }
 
+// Found by TestSortForRemovalGivesTheSameOrderForAnyOrderOfTheGameServers.
+// Admission lets a Fleet leave the order of a priority out. Upstream then
+// compares two GameServers that both have the Counter as Ascending, and
+// leaves a pair of which one lacks it to the name: "c-full" before "a-roomy"
+// by the Counter, "a-roomy" before "b-bare" and "b-bare" before "c-full" by
+// name. Sorting such a circle gave three different answers for six orders
+// of the same three GameServers.
+func TestAPriorityWithoutAnOrderIsAscendingWhateverTheOrderOfTheInput(t *testing.T) {
+	roomy := server("a-roomy", ready, counter("rooms", 1, 3))
+	bare := server("b-bare", ready)
+	full := server("c-full", ready, counter("rooms", 2, 3))
+	counts := map[string]gameservers.NodeCount{}
+	orders := [][]*agonesv1.GameServer{
+		{roomy, bare, full}, {roomy, full, bare}, {bare, roomy, full},
+		{bare, full, roomy}, {full, roomy, bare}, {full, bare, roomy},
+	}
+	for _, strategy := range []apis.SchedulingStrategy{apis.Packed, apis.Distributed} {
+		for _, servers := range orders {
+			sorted := SortForRemoval(strategy, servers, counts, byCounter("rooms", ""))
+
+			assert.Equal(t, []string{"c-full", "a-roomy", "b-bare"}, names(sorted), "%s, given %v", strategy, names(servers))
+		}
+	}
+}
+
 // The store hands GameServers over in no particular order, so which of them
 // go first must not depend on it.
 func TestSortForRemovalDoesNotDependOnTheOrderOfItsInput(t *testing.T) {

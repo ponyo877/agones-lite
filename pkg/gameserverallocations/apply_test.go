@@ -1,6 +1,7 @@
 package gameserverallocations
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -129,6 +130,13 @@ func TestApplyRunsTheCounterAndListActions(t *testing.T) {
 			}},
 			wantCounters: map[string]agonesv1.CounterStatus{"rooms": {Count: 1000, Capacity: 1000}},
 			wantLists:    map[string]agonesv1.ListStatus{"players": {Values: []string{"x7un"}, Capacity: 1}},
+		},
+		// Found by TestApplyMovesACountTheWayTheRequestSays. Upstream adds
+		// the two as int64; the sum is below zero, and it makes that 0.
+		"a Counter given more than an int64 has room for is full, not empty": {
+			server:       server("gs4", ready, counter("rooms", 1, 3)),
+			counters:     map[string]allocationv1.CounterAction{"rooms": increment(math.MaxInt64)},
+			wantCounters: map[string]agonesv1.CounterStatus{"rooms": {Count: 3, Capacity: 3}},
 		},
 		"a List may be given the largest capacity upstream allows by default": {
 			server:    server("gs3", ready, list("players", 100)),

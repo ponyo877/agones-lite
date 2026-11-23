@@ -433,6 +433,14 @@ func TestNumbersTooLargeForAFleetDoNotWrapAround(t *testing.T) {
 			policy: counterPolicy(share("50%"), 1, math.MaxInt64),
 			want:   20,
 		},
+		// Found by TestACounterPolicyGrowsByExactlyTheReplicasThatWholeNumbersGive.
+		// One more replica is exactly the half that has to be free. Upstream
+		// divides in floating point, finds one unit missing, and adds two.
+		"an Allocated count with more digits than a float64 holds": {
+			perReplica: usage{0, 1e15 + 6}, replicas: 1, total: usage{1e15 + 6, 1e15 + 6}, allocated: 1e15 + 6,
+			policy: counterPolicy(share("50%"), 1, math.MaxInt64),
+			want:   2,
+		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -467,6 +475,30 @@ func TestDesiredDoesNotDependOnTheOrderOfTheGameServers(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, want, replicas, "%s, removing %v", fleet.Spec.Scheduling, fleet.Spec.Priorities)
 		require.Equal(t, wantLimited, limited)
+	}
+}
+
+// The suspect this was written for: a share of 100% divides by zero. With
+// nothing Allocated that is 0/0, which Go turns into the smallest int64 on
+// amd64 and into 0 on arm64. This Fleet then came out at 2 replicas,
+// limited, on the one and stayed at 3 on the other. Admission refuses the
+// share, but it does not look at the policy inside a Schedule.
+func TestAShareOfTheWholeFleetIsRefusedOnEveryCPU(t *testing.T) {
+	tc := capacityCase{perReplica: usage{0, 4}, replicas: 3, total: usage{12, 12}}
+	servers := readyOn("n1", counting, usage{4, 4}, usage{4, 4}, usage{4, 4})
+	inner := counterPolicy(share("100%"), 5, 100)
+	tests := map[string]autoscalingv1.FleetAutoscalerPolicy{
+		"on its own":        inner,
+		"inside a Schedule": schedulePolicy(between("", ""), inner),
+	}
+	for name, policy := range tests {
+		t.Run(name, func(t *testing.T) {
+			replicas, limited, _, err := Desired(policy, counterFleet(tc), servers, nil, noon, neverCalled(t))
+
+			assert.EqualError(t, err, "bufferSize should be between 1% and 99%, and is 100%")
+			assert.Zero(t, replicas)
+			assert.False(t, limited)
+		})
 	}
 }
 

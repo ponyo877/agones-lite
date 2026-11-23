@@ -31,10 +31,7 @@ func resize(fleet *agonesv1.Fleet, active *agonesv1.GameServerSet, rest []*agone
 	case agonesv1.SumGameServerSets(rest, specReplicas) == 0:
 		// The rest has given up all it can. What it still holds is in use,
 		// and the active set makes up the difference.
-		inUse := agonesv1.SumGameServerSets(rest, func(set *agonesv1.GameServerSet) int32 {
-			return set.Status.ReservedReplicas + set.Status.AllocatedReplicas
-		})
-		return max(fleet.Spec.Replicas-inUse, 0), sizes{}, nil
+		return max(fleet.Spec.Replicas-agonesv1.SumGameServerSets(rest, inUse), 0), sizes{}, nil
 	case fleet.Spec.Strategy.Type == appsv1.RecreateDeploymentStrategyType:
 		replicas, shrunk := recreate(fleet, rest)
 		return replicas, shrunk, nil
@@ -63,8 +60,12 @@ func recreate(fleet *agonesv1.Fleet, rest []*agonesv1.GameServerSet) (int32, siz
 
 func specReplicas(set *agonesv1.GameServerSet) int32 { return set.Spec.Replicas }
 
-func statusReplicas(set *agonesv1.GameServerSet) int32 { return set.Status.Replicas }
-
 func readyReplicas(set *agonesv1.GameServerSet) int32 { return set.Status.ReadyReplicas }
 
 func allocatedReplicas(set *agonesv1.GameServerSet) int32 { return set.Status.AllocatedReplicas }
+
+// inUse is the GameServers of a set that have, or are held for, a session.
+// No scaling down removes them.
+func inUse(set *agonesv1.GameServerSet) int32 {
+	return set.Status.ReservedReplicas + set.Status.AllocatedReplicas
+}

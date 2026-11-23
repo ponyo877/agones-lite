@@ -117,7 +117,7 @@ func (p pass) removalOrder() []*agonesv1.GameServer {
 //
 // Upstream: applyCounterOrListPolicy.
 func (c capacityPolicy) replicas(current int32, removable []*agonesv1.GameServer) (int32, bool, error) {
-	enough, err := withBuffer(c.allocated, c.bufferSize)
+	buffer, err := bufferFor(c.allocated, c.bufferSize)
 	if err != nil {
 		return 0, false, err
 	}
@@ -126,7 +126,6 @@ func (c capacityPolicy) replicas(current int32, removable []*agonesv1.GameServer
 		// up, and one replica is enough for that.
 		return fewest, true, nil
 	}
-	buffer := enough - c.allocated
 	free := c.total.free()
 	switch {
 	case c.total.capacity < c.min:

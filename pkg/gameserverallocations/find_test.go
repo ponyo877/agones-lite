@@ -169,6 +169,29 @@ func TestASelectorForAllocatedFindsAGameServerThatIsInUse(t *testing.T) {
 	assert.Same(t, servers[2], gs, "Find returns one of the GameServers it was given")
 }
 
+// Found by TestFindReturnsAMatchOfTheFirstSelectorThatHasOne. The counts
+// say on which nodes anybody has seen a Ready or Allocated GameServer. One
+// on a node they do not know, or on no node at all, used to be offered
+// last, as upstream does, and was allocated when nothing else matched.
+func TestAGameServerOnANodeThatWasNotCountedIsPassedOver(t *testing.T) {
+	counts := map[string]gameservers.NodeCount{"n1": {Ready: 1}}
+	last := func(n int) int { return n - 1 }
+	for _, scheduling := range []apis.SchedulingStrategy{apis.Packed, apis.Distributed} {
+		t.Run(string(scheduling), func(t *testing.T) {
+			gsa := request(t, allocationv1.GameServerAllocationSpec{Scheduling: scheduling})
+			counted := server("a-counted", ready, on("n1"))
+			strays := []*agonesv1.GameServer{server("b-uncounted", ready, on("n2")), server("c-nowhere", ready)}
+
+			gs, found := Find(gsa, append(strays, counted), counts, last)
+			require.True(t, found)
+			assert.Same(t, counted, gs)
+
+			_, found = Find(gsa, strays, counts, last)
+			assert.False(t, found, "nobody is sent to a node that was not counted")
+		})
+	}
+}
+
 func TestFindReportsWhenNothingMatches(t *testing.T) {
 	gsa := request(t, allocationv1.GameServerAllocationSpec{
 		Selectors: []allocationv1.GameServerSelector{withLabels(role)},

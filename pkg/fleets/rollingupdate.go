@@ -27,7 +27,9 @@ func rollingUpdate(fleet *agonesv1.Fleet, active *agonesv1.GameServerSet, rest [
 
 // grow returns the size of the active set after one more step up.
 //
-// Upstream: rollingUpdateActive in pkg/fleets/controller.go.
+// Upstream: rollingUpdateActive in pkg/fleets/controller.go. It differs in
+// how it holds the Fleet to the surge, in two places that a rollout played
+// through by rapid ran into; see running and the comment at its use.
 func grow(fleet *agonesv1.Fleet, active *agonesv1.GameServerSet, rest []*agonesv1.GameServerSet) (int32, error) {
 	// Allocated GameServers in the rest are never removed, so the active set
 	// can only have what they leave of the Fleet's size.
@@ -44,13 +46,26 @@ func grow(fleet *agonesv1.Fleet, active *agonesv1.GameServerSet, rest []*agonesv
 		return 0, err
 	}
 	replicas := fleet.UpperBoundReplicas(active.Spec.Replicas + surge)
-	// Together with what the rest still runs, the Fleet may be over its
-	// size by the surge and no more.
-	running := agonesv1.SumGameServerSets(rest, statusReplicas)
-	if over := running + replicas - (fleet.Spec.Replicas + surge); over > 0 {
-		replicas = fleet.LowerBoundReplicas(replicas - over)
+	// Together with the rest, the Fleet may be over its size by the surge
+	// and no more. Being over holds the active set back where it is.
+	//
+	// Upstream takes away from the active set what it is over, down to
+	// nothing: a Fleet made smaller in the middle of a rollout loses its
+	// new GameServers and keeps the old ones.
+	if over := agonesv1.SumGameServerSets(rest, running) + replicas - (fleet.Spec.Replicas + surge); over > 0 {
+		replicas = max(replicas-over, active.Spec.Replicas)
 	}
 	return min(replicas, room), nil
+}
+
+// running is how many GameServers a set has, or will have once it has made
+// the ones it is short of.
+//
+// Upstream counts what the set has now. A set of the rest that is short of
+// its size then lets the active set grow into the room it is about to
+// fill itself, and the Fleet ends up over the surge.
+func running(set *agonesv1.GameServerSet) int32 {
+	return max(set.Spec.Replicas, set.Status.Replicas)
 }
 
 // shrink returns new sizes for the sets of the rest that can give up
@@ -111,6 +126,9 @@ func dropUnhealthy(rest []*agonesv1.GameServerSet, shrunk sizes, limit int32) {
 // after the other.
 //
 // Upstream: the last loop of rollingUpdateRestFixedOnReadyRollingUpdateFix.
+// It stops at a set that holds more sessions than its size, which is not
+// at its size until they end. The Ready GameServers of the sets after it
+// then stay, and take new sessions, for as long as the old ones last.
 func scaleDown(rest []*agonesv1.GameServerSet, shrunk sizes, limit int32) {
 	for _, set := range rest {
 		size := shrunk.of(set)
@@ -118,6 +136,12 @@ func scaleDown(rest []*agonesv1.GameServerSet, shrunk sizes, limit int32) {
 		case limit <= 0:
 			return
 		case size <= 0:
+			continue
+		case inUse(set) >= size:
+			// It holds as many sessions as its size, or more. They stay
+			// whatever the size says and nothing else of it does, so the
+			// set is done, and nothing is lost by saying so.
+			shrunk[set.Name] = 0
 			continue
 		case size != set.Status.Replicas:
 			return // not at its size yet: wait for it before going further
@@ -127,11 +151,6 @@ func scaleDown(rest []*agonesv1.GameServerSet, shrunk sizes, limit int32) {
 		cut := min(size, limit)
 		limit -= cut
 		shrunk[set.Name] = size - cut
-		if set.Status.Replicas == set.Status.AllocatedReplicas {
-			// Only Allocated GameServers are left. They stay whatever the
-			// size says, so the set is done.
-			shrunk[set.Name] = 0
-		}
 	}
 }
 

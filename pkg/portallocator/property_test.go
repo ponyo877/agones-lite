@@ -2,6 +2,7 @@ package portallocator
 
 import (
 	"fmt"
+	"math"
 	"testing"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
@@ -39,7 +40,12 @@ func aGameServer(t *rapid.T) *agonesv1.GameServer {
 	return gs
 }
 
+// aRange draws a range from the narrow band, or now and then one that ends
+// where int32 does.
 func aRange(t *rapid.T) litev1.PortRange {
+	if rapid.IntRange(0, 9).Draw(t, "atTheEnd") == 0 {
+		return litev1.PortRange{Min: math.MaxInt32 - rapid.Int32Range(0, 3).Draw(t, "below"), Max: math.MaxInt32}
+	}
 	return litev1.PortRange{Min: aPort().Draw(t, "min"), Max: aPort().Draw(t, "max")}
 }
 
@@ -99,8 +105,8 @@ func tooFewFree(gs *agonesv1.GameServer, r litev1.PortRange, used map[int32]bool
 		}
 	}
 	free := 0
-	for port := r.Min; port <= r.Max; port++ {
-		if !used[port] && !static[port] {
+	for port := int64(r.Min); port <= int64(r.Max); port++ {
+		if !used[int32(port)] && !static[int32(port)] {
 			free++
 		}
 	}

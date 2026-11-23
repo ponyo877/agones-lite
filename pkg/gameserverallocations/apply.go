@@ -2,6 +2,7 @@ package gameserverallocations
 
 import (
 	"maps"
+	"math"
 	"slices"
 	"time"
 
@@ -59,12 +60,29 @@ func stampLastAllocated(gs *agonesv1.GameServer, now time.Time) {
 func counterActions(actions map[string]allocationv1.CounterAction, gs *agonesv1.GameServer) []error {
 	var failed []error
 	for _, name := range slices.Sorted(maps.Keys(actions)) {
-		action := actions[name]
+		action := withinReach(actions[name], gs.Status.Counters[name])
 		if err := action.CounterActions(name, gs); err != nil {
 			failed = append(failed, err)
 		}
 	}
 	return failed
+}
+
+// withinReach returns the action with an amount that the count can take.
+//
+// Upstream adds the amount as it is (UpdateCount in
+// pkg/apis/agones/v1/gameserver.go). A sum past the end of int64 comes out
+// below zero, which it takes for a count that fell too low and sets to 0:
+// adding as much as an int64 holds to a Counter empties it. No amount does
+// more than fill the Counter, so what is beyond that is left out.
+func withinReach(action allocationv1.CounterAction, counter agonesv1.CounterStatus) allocationv1.CounterAction {
+	if action.Amount == nil || action.Action == nil || *action.Action != agonesv1.GameServerPriorityIncrement {
+		return action
+	}
+	if most := math.MaxInt64 - max(counter.Count, 0); *action.Amount > most {
+		action.Amount = &most
+	}
+	return action
 }
 
 // listActions is counterActions for lists.
