@@ -18,7 +18,7 @@ proto:
 	protoc --plugin=bin/protoc-gen-go --plugin=bin/protoc-gen-go-grpc \
 		--go_out=. --go_opt=paths=source_relative \
 		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
-		proto/sidecar/v1/sidecar.proto
+		proto/sidecar/v1/sidecar.proto proto/node/v1/node.proto
 
 # Build the sidecar image for the local Docker daemon's architecture.
 sidecar-image:

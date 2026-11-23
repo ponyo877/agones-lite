@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +57,18 @@ func TestCreateRequest(t *testing.T) {
 	}`, string(body), "a container that joins a network publishes nothing itself")
 }
 
+func TestFramesAreUnwrappedIntoOneStream(t *testing.T) {
+	frame := func(stream byte, text string) string {
+		return string([]byte{stream, 0, 0, 0, 0, 0, 0, byte(len(text))}) + text
+	}
+	wire := frame(1, "ready\n") + frame(2, "warning: low memory\n") + frame(1, "") + frame(1, "bye\n")
+
+	out, err := io.ReadAll(&frames{body: io.NopCloser(strings.NewReader(wire))})
+
+	require.NoError(t, err)
+	assert.Equal(t, "ready\nwarning: low memory\nbye\n", string(out))
+}
+
 // TestAgainstTheDaemon runs a real container. It is skipped when no Docker
 // daemon answers at DefaultHost.
 func TestAgainstTheDaemon(t *testing.T) {
@@ -76,7 +89,7 @@ func TestAgainstTheDaemon(t *testing.T) {
 	id, err := c.Create(ctx, Spec{
 		Name:    "agones-lite-docker-test",
 		Image:   image,
-		Command: []string{"sh", "-c", "exit 3"},
+		Command: []string{"sh", "-c", "echo to stdout; echo to stderr >&2; exit 3"},
 		Labels:  map[string]string{label: "yes"},
 	})
 	require.NoError(t, err)
@@ -87,6 +100,13 @@ func TestAgainstTheDaemon(t *testing.T) {
 		containers, err := c.List(ctx, label)
 		return err == nil && len(containers) == 1 && containers[0].Exited() && containers[0].ExitCode == 3
 	}, 30*time.Second, 200*time.Millisecond, "the container should exit with code 3")
+
+	logs, err := c.Logs(ctx, id, false, 0)
+	require.NoError(t, err)
+	text, err := io.ReadAll(logs)
+	require.NoError(t, err)
+	_ = logs.Close()
+	assert.ElementsMatch(t, []string{"to stdout", "to stderr"}, strings.Split(strings.TrimSpace(string(text)), "\n"))
 
 	require.NoError(t, c.Remove(ctx, id))
 	require.NoError(t, c.Remove(ctx, id), "removing twice is fine")

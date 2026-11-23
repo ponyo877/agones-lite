@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/yaml"
 
 	"github.com/ponyo877/agones-lite/pkg/agones"
@@ -92,7 +93,7 @@ func TestCheck(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			warnings, errs := Check(server(tc.change))
+			warnings, errs := Check(&server(tc.change).Spec, field.NewPath("spec"))
 			assert.ElementsMatch(t, tc.warnings, warnings)
 			var fields []string
 			for _, e := range errs {
@@ -114,7 +115,7 @@ func TestCheckAcceptsTheUpstreamSample(t *testing.T) {
 	require.NoError(t, yaml.UnmarshalStrict(raw, gs))
 	gs.ApplyDefaults()
 
-	warnings, errs := Check(gs)
+	warnings, errs := Check(&gs.Spec, field.NewPath("spec"))
 
 	assert.Empty(t, warnings)
 	assert.Empty(t, errs)

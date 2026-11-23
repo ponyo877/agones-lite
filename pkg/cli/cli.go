@@ -1,6 +1,7 @@
 // Package cli is the agones-lite command line: one binary that is the
-// control plane ("server") and the tool to talk to it ("apply", "get",
-// "delete").
+// control plane ("server"), the agent for further nodes ("agent"), and the
+// tool to talk to them ("apply", "get", "describe", "delete", "scale",
+// "allocate", "node", "token").
 //
 // Each command is one function in its own file. They share nothing but the
 // small HTTP client in client.go.
@@ -19,10 +20,17 @@ import (
 type command func(ctx context.Context, args []string, out io.Writer) error
 
 var commands = map[string]command{
-	"server": runServer,
-	"apply":  runApply,
-	"get":    runGet,
-	"delete": runDelete,
+	"server":   runServer,
+	"agent":    runAgent,
+	"node":     runNode,
+	"token":    runToken,
+	"apply":    runApply,
+	"get":      runGet,
+	"describe": runDescribe,
+	"logs":     runLogs,
+	"delete":   runDelete,
+	"scale":    runScale,
+	"allocate": runAllocate,
 }
 
 // Main runs the command named by args[0].

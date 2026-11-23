@@ -31,7 +31,7 @@ func newFixture(t *testing.T) fixture {
 	s, err := store.Open(filepath.Join(t.TempDir(), "state.db"), store.Kinds())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
-	c := NewController(s)
+	c := NewController(s, nil)
 	c.now = func() time.Time { return noon }
 	return fixture{t: t, Controller: c}
 }
@@ -200,21 +200,23 @@ func TestReserveAndAllocateRecordTheirTime(t *testing.T) {
 func TestDecide(t *testing.T) {
 	deleted := metav1.NewTime(noon)
 	tests := map[string]struct {
-		state   agonesv1.GameServerState
-		node    string
-		deleted bool
-		want    step
+		state    agonesv1.GameServerState
+		node     string
+		deleted  bool
+		nodeGone bool
+		want     step
 	}{
-		"new, needs ports":           {state: portAllocation, want: place},
-		"new, no ports to allocate":  {state: creating, want: place},
-		"placed, agent's turn":       {state: creating, node: "n", want: wait},
-		"asked to be ready":          {state: requestReady, node: "n", want: grantReady},
-		"ready":                      {state: ready, node: "n", want: wait},
-		"shut down":                  {state: shutdown, node: "n", want: startDelete},
-		"deleting, containers exist": {state: shutdown, node: "n", deleted: true, want: wait},
-		"deleting, never placed":     {state: creating, deleted: true, want: forget},
-		"failed before placement":    {state: failed, want: wait},
-		"unhealthy stays for a look": {state: unhealthy, node: "n", want: wait},
+		"new, needs ports":            {state: portAllocation, want: place},
+		"new, no ports to allocate":   {state: creating, want: place},
+		"placed, agent's turn":        {state: creating, node: "n", want: wait},
+		"asked to be ready":           {state: requestReady, node: "n", want: grantReady},
+		"ready":                       {state: ready, node: "n", want: wait},
+		"shut down":                   {state: shutdown, node: "n", want: startDelete},
+		"deleting, containers exist":  {state: shutdown, node: "n", deleted: true, want: wait},
+		"deleting, never placed":      {state: creating, deleted: true, want: forget},
+		"deleting, node out of reach": {state: shutdown, node: "n", deleted: true, nodeGone: true, want: forget},
+		"failed before placement":     {state: failed, want: wait},
+		"unhealthy stays for a look":  {state: unhealthy, node: "n", want: wait},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -224,7 +226,7 @@ func TestDecide(t *testing.T) {
 			if tc.deleted {
 				gs.DeletionTimestamp = &deleted
 			}
-			assert.Equal(t, tc.want, decide(gs))
+			assert.Equal(t, tc.want, decide(gs, !tc.nodeGone))
 		})
 	}
 }

@@ -10,6 +10,7 @@ package nodes
 
 import (
 	"errors"
+	"sync"
 	"time"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
@@ -25,11 +26,19 @@ type Local struct {
 	servers    store.Typed[*agonesv1.GameServer]
 	nodes      store.Typed[*litev1.Node]
 	controller *gameservers.Controller
+
+	mu      sync.Mutex
+	readers map[string]LogReader // who reads logs on each connected node
 }
 
 // NewLocal returns a Local working on s.
 func NewLocal(s *store.Store, controller *gameservers.Controller) *Local {
-	return &Local{servers: store.GameServersOf(s), nodes: store.NodesOf(s), controller: controller}
+	return &Local{
+		servers:    store.GameServersOf(s),
+		nodes:      store.NodesOf(s),
+		controller: controller,
+		readers:    map[string]LogReader{},
+	}
 }
 
 // Register records the node, or refreshes it when it is already known.
@@ -50,15 +59,16 @@ func (l *Local) Register(node *litev1.Node) error {
 	return err
 }
 
-// Assigned returns the GameServers placed on the node.
-func (l *Local) Assigned(node string) []*agonesv1.GameServer {
+// Assigned returns the GameServers placed on the node. Read straight from
+// the store, the answer is always current.
+func (l *Local) Assigned(node string) ([]*agonesv1.GameServer, bool) {
 	var out []*agonesv1.GameServer
 	for _, gs := range l.servers.List("") {
 		if gs.Status.NodeName == node {
 			out = append(out, gs)
 		}
 	}
-	return out
+	return out, true
 }
 
 // Changes signals after any GameServer changed. Signals that pile up while

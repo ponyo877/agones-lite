@@ -12,9 +12,9 @@ import (
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"sigs.k8s.io/yaml"
 
 	"github.com/ponyo877/agones-lite/pkg/agones"
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
 	"github.com/ponyo877/agones-lite/pkg/store"
 )
 
@@ -42,7 +42,7 @@ func newServer(t *testing.T) http.Handler {
 	s, err := store.Open(filepath.Join(t.TempDir(), "state.db"), store.Kinds())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
-	return New(s, gameservers.NewController(s)).Handler()
+	return New(s, nil, nil, nil).Handler()
 }
 
 func call(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
@@ -96,7 +96,9 @@ func TestGetListAndDelete(t *testing.T) {
 	assert.Equal(t, http.StatusOK, call(t, h, http.MethodGet, "/v1/namespaces/default/gameservers/simple", "").Code)
 	assert.Equal(t, http.StatusNotFound, call(t, h, http.MethodGet, "/v1/namespaces/default/gameservers/nope", "").Code)
 
-	list := agonesv1.GameServerList{}
+	var list struct {
+		Items []agonesv1.GameServer `json:"items"`
+	}
 	rec := call(t, h, http.MethodGet, "/v1/namespaces/default/gameservers", "")
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
 	assert.Len(t, list.Items, 1)
@@ -119,6 +121,122 @@ func TestAcceptsTheUpstreamSamples(t *testing.T) {
 				t.Skip("the Agones submodule is not checked out")
 			}
 			rec := call(t, newServer(t), http.MethodPost, "/v1/namespaces/default/gameservers", string(body))
+			assert.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		})
+	}
+}
+
+const fleetManifest = `
+apiVersion: agones.dev/v1
+kind: Fleet
+metadata:
+  name: simple
+spec:
+  replicas: 2
+  template:
+    spec:
+      ports:
+        - name: default
+          containerPort: 7654
+      template:
+        spec:
+          containers:
+            - name: game
+              image: example/game:1
+`
+
+func getFleet(t *testing.T, h http.Handler) *agonesv1.Fleet {
+	t.Helper()
+	rec := call(t, h, http.MethodGet, "/v1/namespaces/default/fleets/simple", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	fleet := &agonesv1.Fleet{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), fleet))
+	return fleet
+}
+
+func TestApplyingAFleetTwiceUpdatesIt(t *testing.T) {
+	h := newServer(t)
+
+	first := call(t, h, http.MethodPut, "/v1/namespaces/default/fleets/simple", fleetManifest)
+	require.Equal(t, http.StatusCreated, first.Code, first.Body.String())
+	created := getFleet(t, h)
+	assert.Equal(t, int64(1), created.Generation)
+	assert.Equal(t, "25%", created.Spec.Strategy.RollingUpdate.MaxSurge.String(), "upstream's default")
+
+	same := call(t, h, http.MethodPut, "/v1/namespaces/default/fleets/simple", fleetManifest)
+	require.Equal(t, http.StatusOK, same.Code, same.Body.String())
+	assert.Equal(t, int64(1), getFleet(t, h).Generation, "nothing changed, so no new generation")
+
+	changed := strings.Replace(fleetManifest, "example/game:1", "example/game:2", 1)
+	require.Equal(t, http.StatusOK, call(t, h, http.MethodPut, "/v1/namespaces/default/fleets/simple", changed).Code)
+	updated := getFleet(t, h)
+	assert.Equal(t, int64(2), updated.Generation)
+	assert.Equal(t, created.UID, updated.UID)
+	assert.Equal(t, "example/game:2", updated.Spec.Template.Spec.Template.Spec.Containers[0].Image)
+}
+
+func TestScaleChangesOnlyTheSize(t *testing.T) {
+	h := newServer(t)
+	require.Equal(t, http.StatusCreated, call(t, h, http.MethodPut, "/v1/namespaces/default/fleets/simple", fleetManifest).Code)
+
+	rec := call(t, h, http.MethodPut, "/v1/namespaces/default/fleets/simple/scale", `{"replicas": 5}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, int32(5), getFleet(t, h).Spec.Replicas)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, call(t, h, http.MethodPut, "/v1/namespaces/default/fleets/simple/scale", `{"replicas": -1}`).Code)
+	assert.Equal(t, http.StatusNotFound, call(t, h, http.MethodPut, "/v1/namespaces/default/fleets/nope/scale", `{"replicas": 1}`).Code)
+}
+
+func TestAFleetWithAnUnsupportedPodFieldIsRejected(t *testing.T) {
+	h := newServer(t)
+	bad := strings.Replace(fleetManifest, "containers:", "hostNetwork: true\n          containers:", 1)
+
+	rec := call(t, h, http.MethodPut, "/v1/namespaces/default/fleets/simple", bad)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Contains(t, rec.Body.String(), "spec.template.spec.template.spec.hostNetwork")
+}
+
+func TestGameServerSetsAreReadOnly(t *testing.T) {
+	h := newServer(t)
+
+	assert.Equal(t, http.StatusOK, call(t, h, http.MethodGet, "/v1/namespaces/default/gameserversets", "").Code)
+	assert.Equal(t, http.StatusMethodNotAllowed, call(t, h, http.MethodPost, "/v1/namespaces/default/gameserversets", "{}").Code)
+}
+
+func TestAcceptsTheUpstreamFleetSamples(t *testing.T) {
+	for _, sample := range []string{"examples/simple-game-server/fleet.yaml", "examples/fleet.yaml"} {
+		t.Run(sample, func(t *testing.T) {
+			body, err := os.ReadFile(filepath.Join("../../third_party/agones", sample))
+			if err != nil {
+				t.Skip("the Agones submodule is not checked out")
+			}
+			var head struct {
+				Metadata struct{ Name string } `json:"metadata"`
+			}
+			require.NoError(t, yaml.Unmarshal(body, &head))
+			rec := call(t, newServer(t), http.MethodPut, "/v1/namespaces/default/fleets/"+head.Metadata.Name, string(body))
+			assert.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		})
+	}
+}
+
+func TestAcceptsTheUpstreamFleetAutoscalerSamples(t *testing.T) {
+	samples := []string{
+		"examples/fleetautoscaler.yaml", "examples/counterfleetautoscaler.yaml", "examples/listfleetautoscaler.yaml",
+		"examples/schedulefleetautoscaler.yaml", "examples/chainfleetautoscaler.yaml",
+	}
+	for _, sample := range samples {
+		t.Run(sample, func(t *testing.T) {
+			body, err := os.ReadFile(filepath.Join("../../third_party/agones", sample))
+			if err != nil {
+				t.Skip("the Agones submodule is not checked out")
+			}
+			var head struct {
+				Metadata struct{ Name string } `json:"metadata"`
+			}
+			require.NoError(t, yaml.Unmarshal(body, &head))
+			rec := call(t, newServer(t), http.MethodPut, "/v1/namespaces/default/fleetautoscalers/"+head.Metadata.Name, string(body))
 			assert.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 		})
 	}

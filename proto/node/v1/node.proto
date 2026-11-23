@@ -1,0 +1,114 @@
+// The conversation between a node's agent and the control plane.
+//
+// The agent always dials, so a node needs no open port for this. Every call
+// carries the join token as gRPC metadata ("authorization: Bearer ...") and
+// runs over TLS; the agent recognises the control plane by the fingerprint
+// of its certificate authority, which is part of the join token.
+//
+// Resources travel as the same JSON the management API uses, so this file
+// does not have to describe them a second time.
+//
+// Change this file by adding fields only: agents and the control plane are
+// upgraded one after the other, and must keep talking in between.
+syntax = "proto3";
+
+package agoneslite.node.v1;
+
+option go_package = "github.com/ponyo877/agones-lite/proto/node/v1;nodev1";
+
+service Nodes {
+  // Register announces a node and what it can hold. The agent repeats the
+  // call from time to time, which also serves as a heartbeat.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+
+  // Watch sends the GameServers placed on the node: all of them first, then
+  // every change. While the stream is open the node counts as connected.
+  rpc Watch(WatchRequest) returns (stream WatchResponse);
+
+  // Report passes on something that happened to a GameServer on the node.
+  rpc Report(ReportRequest) returns (ReportResponse);
+
+  // SetMetadata adds labels and annotations a game server set through the SDK.
+  rpc SetMetadata(SetMetadataRequest) returns (SetMetadataResponse);
+
+  // Logs carries a game server's log to the control plane. The agent opens
+  // it in answer to a LogRequest it received through Watch.
+  rpc Logs(stream LogChunk) returns (LogsResponse);
+}
+
+message RegisterRequest {
+  // JSON of a Node (apiVersion agones-lite/v1).
+  bytes node = 1;
+}
+
+message RegisterResponse {}
+
+message WatchRequest {
+  // The name of the node that is watching.
+  string node = 1;
+}
+
+message WatchResponse {
+  oneof change {
+    // JSON of a GameServer that was placed on the node or has changed.
+    bytes game_server = 1;
+    // A GameServer that is gone: the agent removes its containers.
+    Removed removed = 2;
+    // Everything placed on the node has now been sent once. Before this
+    // arrives the agent must not conclude that anything is missing.
+    Synced synced = 3;
+    // Somebody wants to read a game server's log: the agent answers by
+    // calling Logs. This is how the control plane asks an agent for
+    // something although only the agent can dial.
+    LogRequest log_request = 4;
+  }
+}
+
+message LogRequest {
+  // Chosen by the control plane; the agent repeats it in every LogChunk.
+  string id = 1;
+  string namespace = 2;
+  string name = 3;
+  // The container to read. Empty means the game server's main container.
+  string container = 4;
+  // Keep sending new output until the reader goes away.
+  bool follow = 5;
+  // Only the last lines of what was written so far. Zero means everything.
+  int32 tail = 6;
+}
+
+message LogChunk {
+  string id = 1;
+  bytes data = 2;
+  // Set instead of data when the log cannot be read. It ends the call.
+  string error = 3;
+}
+
+message LogsResponse {}
+
+message Removed {
+  string namespace = 1;
+  string name = 2;
+}
+
+message Synced {}
+
+message ReportRequest {
+  string namespace = 1;
+  string name = 2;
+  // One of the Events of pkg/gameservers, by name, for example "ContainersRunning".
+  string event = 3;
+  // For "SDKReserve": how long to stay Reserved. Zero means until told otherwise.
+  int64 reserve_seconds = 4;
+}
+
+message ReportResponse {}
+
+message SetMetadataRequest {
+  string namespace = 1;
+  string name = 2;
+  map<string, string> labels = 3;
+  map<string, string> annotations = 4;
+}
+
+message SetMetadataResponse {}

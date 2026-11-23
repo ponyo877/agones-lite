@@ -17,7 +17,10 @@ const (
 	LabelNamespace  = "agones-lite.namespace"
 	LabelGameServer = "agones-lite.gameserver"
 	LabelUID        = "agones-lite.uid"
-	LabelRole       = "agones-lite.role"
+	// LabelNode names the node whose agent owns the container. An agent only
+	// touches its own, so two agents can share one Docker daemon.
+	LabelNode = "agones-lite.node"
+	LabelRole = "agones-lite.role"
 	// LabelToken is on the sidecar only: the secret it shows the agent.
 	LabelToken = "agones-lite.token"
 )
@@ -134,6 +137,7 @@ func labels(gs *agonesv1.GameServer, role string) map[string]string {
 		LabelNamespace:  gs.Namespace,
 		LabelGameServer: gs.Name,
 		LabelUID:        string(gs.UID),
+		LabelNode:       gs.Status.NodeName,
 		LabelRole:       role,
 	}
 }

@@ -40,6 +40,7 @@ const (
 	Event_EVENT_RESERVE       Event = 4
 	Event_EVENT_HEALTH_FAILED Event = 5
 	Event_EVENT_SET_METADATA  Event = 6
+	Event_EVENT_UPDATE_COUNTS Event = 7
 )
 
 // Enum value maps for Event.
@@ -52,6 +53,7 @@ var (
 		4: "EVENT_RESERVE",
 		5: "EVENT_HEALTH_FAILED",
 		6: "EVENT_SET_METADATA",
+		7: "EVENT_UPDATE_COUNTS",
 	}
 	Event_value = map[string]int32{
 		"EVENT_UNSPECIFIED":   0,
@@ -61,6 +63,7 @@ var (
 		"EVENT_RESERVE":       4,
 		"EVENT_HEALTH_FAILED": 5,
 		"EVENT_SET_METADATA":  6,
+		"EVENT_UPDATE_COUNTS": 7,
 	}
 )
 
@@ -179,8 +182,12 @@ type TellRequest struct {
 	ReserveSeconds int64 `protobuf:"varint,2,opt,name=reserve_seconds,json=reserveSeconds,proto3" json:"reserve_seconds,omitempty"`
 	// For EVENT_SET_METADATA: what SetLabel and SetAnnotation asked for.
 	// Keys come without the "agones.dev/sdk-" prefix; the control plane adds it.
-	Labels        map[string]string `protobuf:"bytes,3,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Annotations   map[string]string `protobuf:"bytes,4,rep,name=annotations,proto3" json:"annotations,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Labels      map[string]string `protobuf:"bytes,3,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Annotations map[string]string `protobuf:"bytes,4,rep,name=annotations,proto3" json:"annotations,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// For EVENT_UPDATE_COUNTS: changes to Counters and Lists, in the order
+	// the game server made them.
+	Counters      []*CounterUpdate `protobuf:"bytes,5,rep,name=counters,proto3" json:"counters,omitempty"`
+	Lists         []*ListUpdate    `protobuf:"bytes,6,rep,name=lists,proto3" json:"lists,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -243,15 +250,175 @@ func (x *TellRequest) GetAnnotations() map[string]string {
 	return nil
 }
 
+func (x *TellRequest) GetCounters() []*CounterUpdate {
+	if x != nil {
+		return x.Counters
+	}
+	return nil
+}
+
+func (x *TellRequest) GetLists() []*ListUpdate {
+	if x != nil {
+		return x.Lists
+	}
+	return nil
+}
+
+// CounterUpdate changes one Counter. Capacity is applied first, then count,
+// then count_diff.
+type CounterUpdate struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// The new capacity, when set.
+	Capacity *int64 `protobuf:"varint,2,opt,name=capacity,proto3,oneof" json:"capacity,omitempty"`
+	// The new count, when set.
+	Count *int64 `protobuf:"varint,3,opt,name=count,proto3,oneof" json:"count,omitempty"`
+	// Added to the count. May be negative.
+	CountDiff     int64 `protobuf:"varint,4,opt,name=count_diff,json=countDiff,proto3" json:"count_diff,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CounterUpdate) Reset() {
+	*x = CounterUpdate{}
+	mi := &file_proto_sidecar_v1_sidecar_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CounterUpdate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CounterUpdate) ProtoMessage() {}
+
+func (x *CounterUpdate) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_sidecar_v1_sidecar_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CounterUpdate.ProtoReflect.Descriptor instead.
+func (*CounterUpdate) Descriptor() ([]byte, []int) {
+	return file_proto_sidecar_v1_sidecar_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *CounterUpdate) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CounterUpdate) GetCapacity() int64 {
+	if x != nil && x.Capacity != nil {
+		return *x.Capacity
+	}
+	return 0
+}
+
+func (x *CounterUpdate) GetCount() int64 {
+	if x != nil && x.Count != nil {
+		return *x.Count
+	}
+	return 0
+}
+
+func (x *CounterUpdate) GetCountDiff() int64 {
+	if x != nil {
+		return x.CountDiff
+	}
+	return 0
+}
+
+// ListUpdate changes one List. Capacity is applied first, then add, then remove.
+type ListUpdate struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// The new capacity, when set.
+	Capacity      *int64   `protobuf:"varint,2,opt,name=capacity,proto3,oneof" json:"capacity,omitempty"`
+	Add           []string `protobuf:"bytes,3,rep,name=add,proto3" json:"add,omitempty"`
+	Remove        []string `protobuf:"bytes,4,rep,name=remove,proto3" json:"remove,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListUpdate) Reset() {
+	*x = ListUpdate{}
+	mi := &file_proto_sidecar_v1_sidecar_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListUpdate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListUpdate) ProtoMessage() {}
+
+func (x *ListUpdate) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_sidecar_v1_sidecar_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListUpdate.ProtoReflect.Descriptor instead.
+func (*ListUpdate) Descriptor() ([]byte, []int) {
+	return file_proto_sidecar_v1_sidecar_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ListUpdate) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ListUpdate) GetCapacity() int64 {
+	if x != nil && x.Capacity != nil {
+		return *x.Capacity
+	}
+	return 0
+}
+
+func (x *ListUpdate) GetAdd() []string {
+	if x != nil {
+		return x.Add
+	}
+	return nil
+}
+
+func (x *ListUpdate) GetRemove() []string {
+	if x != nil {
+		return x.Remove
+	}
+	return nil
+}
+
 type TellResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// For EVENT_UPDATE_COUNTS: the GameServer after the change, as a
+	// serialized agones.dev.sdk.GameServer. Empty for the other events.
+	GameServer    []byte `protobuf:"bytes,1,opt,name=game_server,json=gameServer,proto3" json:"game_server,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *TellResponse) Reset() {
 	*x = TellResponse{}
-	mi := &file_proto_sidecar_v1_sidecar_proto_msgTypes[3]
+	mi := &file_proto_sidecar_v1_sidecar_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -263,7 +430,7 @@ func (x *TellResponse) String() string {
 func (*TellResponse) ProtoMessage() {}
 
 func (x *TellResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sidecar_v1_sidecar_proto_msgTypes[3]
+	mi := &file_proto_sidecar_v1_sidecar_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -276,7 +443,14 @@ func (x *TellResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TellResponse.ProtoReflect.Descriptor instead.
 func (*TellResponse) Descriptor() ([]byte, []int) {
-	return file_proto_sidecar_v1_sidecar_proto_rawDescGZIP(), []int{3}
+	return file_proto_sidecar_v1_sidecar_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *TellResponse) GetGameServer() []byte {
+	if x != nil {
+		return x.GameServer
+	}
+	return nil
 }
 
 var File_proto_sidecar_v1_sidecar_proto protoreflect.FileDescriptor
@@ -287,19 +461,38 @@ const file_proto_sidecar_v1_sidecar_proto_rawDesc = "" +
 	"\fWatchRequest\"0\n" +
 	"\rWatchResponse\x12\x1f\n" +
 	"\vgame_server\x18\x01 \x01(\fR\n" +
-	"gameServer\"\x84\x03\n" +
+	"gameServer\"\xff\x03\n" +
 	"\vTellRequest\x122\n" +
 	"\x05event\x18\x01 \x01(\x0e2\x1c.agoneslite.sidecar.v1.EventR\x05event\x12'\n" +
 	"\x0freserve_seconds\x18\x02 \x01(\x03R\x0ereserveSeconds\x12F\n" +
 	"\x06labels\x18\x03 \x03(\v2..agoneslite.sidecar.v1.TellRequest.LabelsEntryR\x06labels\x12U\n" +
-	"\vannotations\x18\x04 \x03(\v23.agoneslite.sidecar.v1.TellRequest.AnnotationsEntryR\vannotations\x1a9\n" +
+	"\vannotations\x18\x04 \x03(\v23.agoneslite.sidecar.v1.TellRequest.AnnotationsEntryR\vannotations\x12@\n" +
+	"\bcounters\x18\x05 \x03(\v2$.agoneslite.sidecar.v1.CounterUpdateR\bcounters\x127\n" +
+	"\x05lists\x18\x06 \x03(\v2!.agoneslite.sidecar.v1.ListUpdateR\x05lists\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a>\n" +
 	"\x10AnnotationsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x0e\n" +
-	"\fTellResponse*\x9b\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x95\x01\n" +
+	"\rCounterUpdate\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
+	"\bcapacity\x18\x02 \x01(\x03H\x00R\bcapacity\x88\x01\x01\x12\x19\n" +
+	"\x05count\x18\x03 \x01(\x03H\x01R\x05count\x88\x01\x01\x12\x1d\n" +
+	"\n" +
+	"count_diff\x18\x04 \x01(\x03R\tcountDiffB\v\n" +
+	"\t_capacityB\b\n" +
+	"\x06_count\"x\n" +
+	"\n" +
+	"ListUpdate\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
+	"\bcapacity\x18\x02 \x01(\x03H\x00R\bcapacity\x88\x01\x01\x12\x10\n" +
+	"\x03add\x18\x03 \x03(\tR\x03add\x12\x16\n" +
+	"\x06remove\x18\x04 \x03(\tR\x06removeB\v\n" +
+	"\t_capacity\"/\n" +
+	"\fTellResponse\x12\x1f\n" +
+	"\vgame_server\x18\x01 \x01(\fR\n" +
+	"gameServer*\xb4\x01\n" +
 	"\x05Event\x12\x15\n" +
 	"\x11EVENT_UNSPECIFIED\x10\x00\x12\x0f\n" +
 	"\vEVENT_READY\x10\x01\x12\x12\n" +
@@ -307,7 +500,8 @@ const file_proto_sidecar_v1_sidecar_proto_rawDesc = "" +
 	"\x0eEVENT_SHUTDOWN\x10\x03\x12\x11\n" +
 	"\rEVENT_RESERVE\x10\x04\x12\x17\n" +
 	"\x13EVENT_HEALTH_FAILED\x10\x05\x12\x16\n" +
-	"\x12EVENT_SET_METADATA\x10\x062\xae\x01\n" +
+	"\x12EVENT_SET_METADATA\x10\x06\x12\x17\n" +
+	"\x13EVENT_UPDATE_COUNTS\x10\a2\xae\x01\n" +
 	"\x05Agent\x12T\n" +
 	"\x05Watch\x12#.agoneslite.sidecar.v1.WatchRequest\x1a$.agoneslite.sidecar.v1.WatchResponse0\x01\x12O\n" +
 	"\x04Tell\x12\".agoneslite.sidecar.v1.TellRequest\x1a#.agoneslite.sidecar.v1.TellResponseB<Z:github.com/ponyo877/agones-lite/proto/sidecar/v1;sidecarv1b\x06proto3"
@@ -325,29 +519,33 @@ func file_proto_sidecar_v1_sidecar_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_sidecar_v1_sidecar_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_proto_sidecar_v1_sidecar_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_proto_sidecar_v1_sidecar_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_proto_sidecar_v1_sidecar_proto_goTypes = []any{
 	(Event)(0),            // 0: agoneslite.sidecar.v1.Event
 	(*WatchRequest)(nil),  // 1: agoneslite.sidecar.v1.WatchRequest
 	(*WatchResponse)(nil), // 2: agoneslite.sidecar.v1.WatchResponse
 	(*TellRequest)(nil),   // 3: agoneslite.sidecar.v1.TellRequest
-	(*TellResponse)(nil),  // 4: agoneslite.sidecar.v1.TellResponse
-	nil,                   // 5: agoneslite.sidecar.v1.TellRequest.LabelsEntry
-	nil,                   // 6: agoneslite.sidecar.v1.TellRequest.AnnotationsEntry
+	(*CounterUpdate)(nil), // 4: agoneslite.sidecar.v1.CounterUpdate
+	(*ListUpdate)(nil),    // 5: agoneslite.sidecar.v1.ListUpdate
+	(*TellResponse)(nil),  // 6: agoneslite.sidecar.v1.TellResponse
+	nil,                   // 7: agoneslite.sidecar.v1.TellRequest.LabelsEntry
+	nil,                   // 8: agoneslite.sidecar.v1.TellRequest.AnnotationsEntry
 }
 var file_proto_sidecar_v1_sidecar_proto_depIdxs = []int32{
 	0, // 0: agoneslite.sidecar.v1.TellRequest.event:type_name -> agoneslite.sidecar.v1.Event
-	5, // 1: agoneslite.sidecar.v1.TellRequest.labels:type_name -> agoneslite.sidecar.v1.TellRequest.LabelsEntry
-	6, // 2: agoneslite.sidecar.v1.TellRequest.annotations:type_name -> agoneslite.sidecar.v1.TellRequest.AnnotationsEntry
-	1, // 3: agoneslite.sidecar.v1.Agent.Watch:input_type -> agoneslite.sidecar.v1.WatchRequest
-	3, // 4: agoneslite.sidecar.v1.Agent.Tell:input_type -> agoneslite.sidecar.v1.TellRequest
-	2, // 5: agoneslite.sidecar.v1.Agent.Watch:output_type -> agoneslite.sidecar.v1.WatchResponse
-	4, // 6: agoneslite.sidecar.v1.Agent.Tell:output_type -> agoneslite.sidecar.v1.TellResponse
-	5, // [5:7] is the sub-list for method output_type
-	3, // [3:5] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	7, // 1: agoneslite.sidecar.v1.TellRequest.labels:type_name -> agoneslite.sidecar.v1.TellRequest.LabelsEntry
+	8, // 2: agoneslite.sidecar.v1.TellRequest.annotations:type_name -> agoneslite.sidecar.v1.TellRequest.AnnotationsEntry
+	4, // 3: agoneslite.sidecar.v1.TellRequest.counters:type_name -> agoneslite.sidecar.v1.CounterUpdate
+	5, // 4: agoneslite.sidecar.v1.TellRequest.lists:type_name -> agoneslite.sidecar.v1.ListUpdate
+	1, // 5: agoneslite.sidecar.v1.Agent.Watch:input_type -> agoneslite.sidecar.v1.WatchRequest
+	3, // 6: agoneslite.sidecar.v1.Agent.Tell:input_type -> agoneslite.sidecar.v1.TellRequest
+	2, // 7: agoneslite.sidecar.v1.Agent.Watch:output_type -> agoneslite.sidecar.v1.WatchResponse
+	6, // 8: agoneslite.sidecar.v1.Agent.Tell:output_type -> agoneslite.sidecar.v1.TellResponse
+	7, // [7:9] is the sub-list for method output_type
+	5, // [5:7] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_proto_sidecar_v1_sidecar_proto_init() }
@@ -355,13 +553,15 @@ func file_proto_sidecar_v1_sidecar_proto_init() {
 	if File_proto_sidecar_v1_sidecar_proto != nil {
 		return
 	}
+	file_proto_sidecar_v1_sidecar_proto_msgTypes[3].OneofWrappers = []any{}
+	file_proto_sidecar_v1_sidecar_proto_msgTypes[4].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_sidecar_v1_sidecar_proto_rawDesc), len(file_proto_sidecar_v1_sidecar_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   6,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

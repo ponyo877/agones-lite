@@ -40,6 +40,9 @@ type Node struct {
 type NodeSpec struct {
 	// Unschedulable stops new game servers and allocations from landing here.
 	Unschedulable bool `json:"unschedulable,omitempty"`
+	// Drain also shuts down the game servers here that have no session, so
+	// the node empties as its sessions end.
+	Drain bool `json:"drain,omitempty"`
 }
 
 // NodeStatus is what the node's agent reports about itself.

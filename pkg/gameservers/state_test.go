@@ -55,6 +55,12 @@ func TestNext(t *testing.T) {
 		{ready, ContainersMissing, unhealthy, true},
 		{allocated, ExitedCleanly, shutdown, true},
 
+		// Scaling down never takes a server that has, or is about to have, players.
+		{ready, ScaledDown, shutdown, true},
+		{starting, ScaledDown, shutdown, true},
+		{allocated, ScaledDown, allocated, false},
+		{reserved, ScaledDown, reserved, false},
+
 		// Events in the wrong state are ignored.
 		{ready, Placed, ready, false},
 		{ready, Readied, ready, false},

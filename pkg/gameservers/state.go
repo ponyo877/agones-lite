@@ -12,8 +12,10 @@ type Event string
 // Events, grouped by who reports them.
 const (
 	// Reported by the control plane itself.
-	Placed  Event = "Placed"  // a node and host ports were chosen
-	Readied Event = "Readied" // a Ready request was granted
+	Placed     Event = "Placed"     // a node and host ports were chosen
+	Readied    Event = "Readied"    // a Ready request was granted
+	ScaledDown Event = "ScaledDown" // its GameServerSet has one too many
+	NodeLost   Event = "NodeLost"   // its node has been out of reach for too long
 
 	// Reported by the node's agent, from what Docker tells it.
 	ContainersCreated Event = "ContainersCreated"
@@ -46,6 +48,9 @@ var rules = map[Event]rule{
 	CreateFailed:      {from: states(agonesv1.GameServerStateCreating, agonesv1.GameServerStateStarting), to: agonesv1.GameServerStateError},
 	ContainersRunning: {from: states(agonesv1.GameServerStateStarting), to: agonesv1.GameServerStateScheduled},
 	Readied:           {from: states(agonesv1.GameServerStateRequestReady), to: agonesv1.GameServerStateReady},
+	// Never from Allocated or Reserved: a session may have started since the
+	// decision to scale down was taken.
+	ScaledDown: {from: beforeSession, to: agonesv1.GameServerStateShutdown},
 
 	SDKReady:    {to: agonesv1.GameServerStateRequestReady},
 	SDKAllocate: {to: agonesv1.GameServerStateAllocated},
@@ -56,6 +61,7 @@ var rules = map[Event]rule{
 	ExitedWithError:   {to: agonesv1.GameServerStateUnhealthy},
 	ContainersMissing: {to: agonesv1.GameServerStateUnhealthy},
 	HealthFailed:      {to: agonesv1.GameServerStateUnhealthy},
+	NodeLost:          {to: agonesv1.GameServerStateUnhealthy},
 }
 
 // Next returns the state a GameServer moves to when an event arrives.
@@ -78,6 +84,13 @@ func Final(s agonesv1.GameServerState) bool {
 		s == agonesv1.GameServerStateUnhealthy ||
 		s == agonesv1.GameServerStateError
 }
+
+// beforeSession lists the states in which no players are, or are about to be, on the server.
+var beforeSession = states(
+	agonesv1.GameServerStatePortAllocation, agonesv1.GameServerStateCreating,
+	agonesv1.GameServerStateStarting, agonesv1.GameServerStateScheduled,
+	agonesv1.GameServerStateRequestReady, agonesv1.GameServerStateReady,
+)
 
 func states(s ...agonesv1.GameServerState) []agonesv1.GameServerState {
 	return s

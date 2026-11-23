@@ -3,7 +3,6 @@ package gameservers
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"time"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
@@ -11,7 +10,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/queue"
+	"github.com/ponyo877/agones-lite/pkg/control"
+	"github.com/ponyo877/agones-lite/pkg/events"
 	"github.com/ponyo877/agones-lite/pkg/scheduling"
 	"github.com/ponyo877/agones-lite/pkg/store"
 )
@@ -20,10 +20,11 @@ const (
 	// resyncPeriod is how often every GameServer is looked at again, in case
 	// a change notification was missed.
 	resyncPeriod = 30 * time.Second
+	// Kind is the name GameServers go by in manifests and in the event history.
+	Kind = "GameServer"
 	// LastAllocatedAnnotation records when a GameServer was last allocated.
 	// Same key as upstream's gameserverallocations.LastAllocatedAnnotationKey.
 	LastAllocatedAnnotation = "agones.dev/last-allocated"
-	conflictRetries         = 5
 )
 
 // Report is an Event that an agent or a sidecar saw happen to a GameServer.
@@ -39,61 +40,53 @@ type Report struct {
 type Controller struct {
 	servers store.Typed[*agonesv1.GameServer]
 	nodes   store.Typed[*litev1.Node]
-	queue   *queue.Queue[store.Key]
+	events  *events.Recorder
 	now     func() time.Time
+	// Entered, when set, is told about every state a GameServer enters.
+	// It is how the metrics learn of transitions.
+	Entered func(gs *agonesv1.GameServer, state agonesv1.GameServerState)
+	// waiting holds the GameServers that found no node, so that the reason
+	// is recorded once and not on every pass. Only the sync loop touches it.
+	waiting map[store.Key]bool
 }
 
-// NewController returns a Controller working on s.
-func NewController(s *store.Store) *Controller {
+// NewController returns a Controller working on s. History goes to recorder,
+// which may be nil.
+func NewController(s *store.Store, recorder *events.Recorder) *Controller {
 	return &Controller{
 		servers: store.GameServersOf(s),
 		nodes:   store.NodesOf(s),
-		queue:   queue.New[store.Key](),
+		events:  recorder,
 		now:     time.Now,
+		waiting: map[store.Key]bool{},
 	}
 }
 
 // Run keeps GameServers moving until ctx is done.
 func (c *Controller) Run(ctx context.Context) {
-	servers, stopServers := c.servers.Watch()
-	defer stopServers()
-	nodes, stopNodes := c.nodes.Watch()
-	defer stopNodes()
-	go c.feed(ctx, servers, nodes)
-	c.queue.Run(ctx, c.sync)
+	loop := control.Loop{Sync: c.sync, All: c.all, Resync: resyncPeriod}
+	loop.Run(ctx,
+		control.Watch{Subscribe: c.servers.Watch, Keys: c.afterServerChange},
+		// A new or changed node may have room for the servers that wait.
+		control.Watch{Subscribe: c.nodes.Watch},
+	)
 }
 
-// feed turns change notifications into queue entries.
-func (c *Controller) feed(ctx context.Context, servers, nodes <-chan store.Event) {
-	resync := time.NewTicker(resyncPeriod)
-	defer resync.Stop()
-	c.enqueueAll()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case e := <-servers:
-			c.onServerChange(e)
-		case <-nodes:
-			c.enqueueAll() // a new or changed node may have room for waiting servers
-		case <-resync.C:
-			c.enqueueAll()
-		}
-	}
-}
-
-func (c *Controller) onServerChange(e store.Event) {
+// afterServerChange names what to look at after a GameServer changed. One
+// that is gone has left room on its node, which any waiting server may use.
+func (c *Controller) afterServerChange(e store.Event) []store.Key {
 	if e.Type == store.Deleted {
-		c.enqueueAll() // its node has room again
-		return
+		return c.all()
 	}
-	c.queue.Add(e.Key)
+	return control.Self(e)
 }
 
-func (c *Controller) enqueueAll() {
+func (c *Controller) all() []store.Key {
+	var keys []store.Key
 	for _, gs := range c.servers.List("") {
-		c.queue.Add(store.KeyOf(store.GameServers, gs))
+		keys = append(keys, store.KeyOf(store.GameServers, gs))
 	}
+	return keys
 }
 
 // step is what the sync loop should do for one GameServer.
@@ -107,11 +100,14 @@ const (
 	forget                  // nothing left to clean up: drop the record
 )
 
-// decide is the judgement half of the sync loop. It looks only at gs.
-func decide(gs *agonesv1.GameServer) step {
+// decide is the judgement half of the sync loop. It looks only at gs and at
+// whether the agent of its node can currently be reached.
+func decide(gs *agonesv1.GameServer, reachable bool) step {
 	unplaced := gs.Status.NodeName == ""
 	switch {
-	case gs.DeletionTimestamp != nil && unplaced:
+	case gs.DeletionTimestamp != nil && (unplaced || !reachable):
+		// Nobody will report the cleanup. If the node comes back, its agent
+		// finds containers that belong to nothing and removes them.
 		return forget
 	case gs.DeletionTimestamp != nil:
 		return wait // the agent reports ContainersRemoved when it is done
@@ -131,7 +127,7 @@ func (c *Controller) sync(_ context.Context, key store.Key) error {
 	if !ok {
 		return nil
 	}
-	switch decide(gs) {
+	switch decide(gs, c.reachable(gs.Status.NodeName)) {
 	case place:
 		return c.place(gs)
 	case grantReady:
@@ -144,61 +140,80 @@ func (c *Controller) sync(_ context.Context, key store.Key) error {
 	return nil
 }
 
+// reachable reports whether the node's agent is connected.
+func (c *Controller) reachable(nodeName string) bool {
+	node, ok := c.nodes.Get("", nodeName)
+	return ok && node.Status.Phase == litev1.NodeReady
+}
+
 func (c *Controller) place(gs *agonesv1.GameServer) error {
+	key := store.KeyOf(store.GameServers, gs)
 	placed, ok := scheduling.Place(gs, c.nodes.List(""), c.servers.List(""))
 	if !ok {
-		slog.Info("no node has room, waiting", "gameserver", gs.Namespace+"/"+gs.Name)
+		if !c.waiting[key] {
+			c.waiting[key] = true
+			c.events.Record(Kind, gs.Namespace, gs.Name, events.Warning, "Unschedulable", "no node has room; waiting for one")
+		}
 		return nil
 	}
 	placed.Status.State, _ = Next(gs.Status.State, Placed)
-	_, err := c.servers.Update(placed)
-	return err
+	if _, err := c.servers.Update(placed); err != nil {
+		return err
+	}
+	delete(c.waiting, key)
+	c.events.Record(Kind, gs.Namespace, gs.Name, events.Normal, "Placed", "on node %s", placed.Status.NodeName)
+	return nil
 }
 
 // Delete asks for a GameServer to be removed. The record stays until its
 // containers are gone, which the agent reports with ContainersRemoved.
 func (c *Controller) Delete(namespace, name string) error {
-	return retryOnConflict(func() error {
-		gs, ok := c.servers.Get(namespace, name)
-		if !ok || gs.DeletionTimestamp != nil {
-			return nil
-		}
-		now := metav1.NewTime(c.now())
-		gs.DeletionTimestamp = &now
-		_, err := c.servers.Update(gs)
-		return err
-	})
+	return c.servers.MarkDeleted(namespace, name, c.now())
 }
 
 // Report applies an Event to a GameServer. Events that do not apply in the
 // GameServer's current state are ignored.
 func (c *Controller) Report(r Report) error {
-	return retryOnConflict(func() error { return c.report(r) })
-}
-
-func (c *Controller) report(r Report) error {
-	gs, ok := c.servers.Get(r.Namespace, r.Name)
-	if !ok {
-		return nil
-	}
 	if r.Event == ContainersRemoved {
-		return c.forgetDeleted(gs)
+		return c.forgetDeleted(r.Namespace, r.Name)
 	}
-	next, ok := Next(gs.Status.State, r.Event)
-	if !ok || gs.DeletionTimestamp != nil {
-		return nil
+	var from, to agonesv1.GameServerState
+	var moved *agonesv1.GameServer
+	err := c.servers.Change(r.Namespace, r.Name, func(gs *agonesv1.GameServer) bool {
+		next, ok := Next(gs.Status.State, r.Event)
+		if !ok || gs.DeletionTimestamp != nil {
+			return false
+		}
+		from, to, moved = gs.Status.State, next, gs
+		node, _ := c.nodes.Get("", gs.Status.NodeName)
+		apply(gs, next, r, node, c.now())
+		return true
+	})
+	if err != nil || moved == nil {
+		return err
 	}
-	node, _ := c.nodes.Get("", gs.Status.NodeName)
-	apply(gs, next, r, node, c.now())
-	_, err := c.servers.Update(gs)
-	return err
+	c.events.Record(Kind, r.Namespace, r.Name, severity(to), string(to), "%s: was %s", r.Event, from)
+	if c.Entered != nil {
+		c.Entered(moved, to)
+	}
+	return nil
 }
 
-func (c *Controller) forgetDeleted(gs *agonesv1.GameServer) error {
-	if gs.DeletionTimestamp == nil {
+// severity marks the two states an operator should look into.
+func severity(s agonesv1.GameServerState) events.Type {
+	if s == agonesv1.GameServerStateUnhealthy || s == agonesv1.GameServerStateError {
+		return events.Warning
+	}
+	return events.Normal
+}
+
+// forgetDeleted drops the record of a GameServer whose containers are gone.
+func (c *Controller) forgetDeleted(namespace, name string) error {
+	gs, ok := c.servers.Get(namespace, name)
+	if !ok || gs.DeletionTimestamp == nil {
 		return nil
 	}
-	return ignoreNotFound(c.servers.Delete(gs.Namespace, gs.Name))
+	return ignoreNotFound(c.servers.Delete(namespace, name))
 }
 
 // apply moves gs to next and records what comes with the move.
@@ -208,6 +223,11 @@ func apply(gs *agonesv1.GameServer, next agonesv1.GameServerState, r Report, nod
 	if r.Event == SDKAllocate {
 		stamp, _ := now.UTC().MarshalText()
 		metav1.SetMetaDataAnnotation(&gs.ObjectMeta, LastAllocatedAnnotation, string(stamp))
+	}
+	if next == agonesv1.GameServerStateError {
+		// A GameServerSet waits a little from this moment before replacing
+		// it. Upstream: moveToErrorState in pkg/gameservers/controller.go.
+		metav1.SetMetaDataAnnotation(&gs.ObjectMeta, agonesv1.GameServerErroredAtAnnotation, now.UTC().Format(time.RFC3339))
 	}
 	if node != nil && reachable(next) {
 		publishAddress(gs, node)
@@ -240,17 +260,6 @@ func publishAddress(gs *agonesv1.GameServer, node *litev1.Node) {
 	}
 }
 
-// retryOnConflict repeats fn while it loses the race to update a resource.
-func retryOnConflict(fn func() error) error {
-	var err error
-	for range conflictRetries {
-		if err = fn(); !errors.Is(err, store.ErrConflict) {
-			return err
-		}
-	}
-	return err
-}
-
 func ignoreNotFound(err error) error {
 	if errors.Is(err, store.ErrNotFound) {
 		return nil
@@ -264,10 +273,9 @@ const SDKPrefix = "agones.dev/sdk-"
 
 // SetMetadata adds labels and annotations a game server set through the SDK.
 func (c *Controller) SetMetadata(namespace, name string, labels, annotations map[string]string) error {
-	return retryOnConflict(func() error {
-		gs, ok := c.servers.Get(namespace, name)
-		if !ok || gs.DeletionTimestamp != nil {
-			return nil
+	return c.servers.Change(namespace, name, func(gs *agonesv1.GameServer) bool {
+		if gs.DeletionTimestamp != nil {
+			return false
 		}
 		for key, value := range labels {
 			metav1.SetMetaDataLabel(&gs.ObjectMeta, SDKPrefix+key, value)
@@ -275,7 +283,6 @@ func (c *Controller) SetMetadata(namespace, name string, labels, annotations map
 		for key, value := range annotations {
 			metav1.SetMetaDataAnnotation(&gs.ObjectMeta, SDKPrefix+key, value)
 		}
-		_, err := c.servers.Update(gs)
-		return err
+		return true
 	})
 }

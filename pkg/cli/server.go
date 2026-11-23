@@ -6,58 +6,74 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
+	"strings"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 
 	"github.com/ponyo877/agones-lite/pkg/agent"
 	"github.com/ponyo877/agones-lite/pkg/agones"
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/apiserver"
-	"github.com/ponyo877/agones-lite/pkg/docker"
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
+	"github.com/ponyo877/agones-lite/pkg/auth"
+	"github.com/ponyo877/agones-lite/pkg/controlplane"
+	"github.com/ponyo877/agones-lite/pkg/events"
+	"github.com/ponyo877/agones-lite/pkg/metrics"
 	"github.com/ponyo877/agones-lite/pkg/nodes"
 	"github.com/ponyo877/agones-lite/pkg/store"
+	nodev1 "github.com/ponyo877/agones-lite/proto/node/v1"
 )
 
-const sidecarPort = "9447"
+const (
+	// eventRetention is how long the event history is kept.
+	eventRetention = 24 * time.Hour
+	// tokenReload is how often rotated tokens are picked up.
+	tokenReload = 5 * time.Second
+)
+
+// part is one long-running piece of a process. It returns when ctx is done.
+type part func(ctx context.Context) error
 
 type serverOptions struct {
-	dataDir    string
-	listen     string
-	dockerHost string
-	agent      agent.Config
-	minPort    int
-	maxPort    int
-	maxServers int
+	dataDir          string
+	listen           string
+	allocationListen string
+	nodeListen       string
+	metricsListen    string
+	tlsNames         string
+	clientCADir      string
+	noAgent          bool
+	graces           nodes.Graces
+	node             nodeOptions
 }
 
 func serverFlags(args []string) (*serverOptions, error) {
-	hostname, _ := os.Hostname()
 	o := &serverOptions{}
 	fs := flag.NewFlagSet("server", flag.ContinueOnError)
-	fs.StringVar(&o.dataDir, "data-dir", "agones-lite-data", "directory for the state database")
+	fs.StringVar(&o.dataDir, "data-dir", env("AGONES_LITE_DATA_DIR", defaultDataDir), "directory for the state database, certificates and tokens")
 	fs.StringVar(&o.listen, "listen", "127.0.0.1:9443", "address of the management API")
-	fs.StringVar(&o.dockerHost, "docker-host", docker.DefaultHost(), "Docker daemon socket")
-	fs.StringVar(&o.agent.NodeName, "node-name", hostname, "name of this node")
-	fs.StringVar(&o.agent.Address, "address", "127.0.0.1", "address players use to reach game servers on this node")
-	fs.IntVar(&o.minPort, "min-port", 7000, "first host port for game servers")
-	fs.IntVar(&o.maxPort, "max-port", 8000, "last host port for game servers")
-	fs.IntVar(&o.maxServers, "max-gameservers", 0, "most game servers on this node; 0 means no limit")
-	fs.StringVar(&o.agent.SidecarImage, "sidecar-image", "agones-lite-sidecar:dev", "image of the SDK sidecar")
-	fs.StringVar(&o.agent.SidecarListen, "sidecar-listen", "", "where the agent listens for sidecars (default: chosen per platform)")
-	fs.StringVar(&o.agent.SidecarDial, "sidecar-dial", "host.docker.internal:"+sidecarPort, "how a container reaches --sidecar-listen")
+	fs.StringVar(&o.allocationListen, "allocation-listen", "127.0.0.1:9444", "address of the allocation API")
+	fs.StringVar(&o.nodeListen, "node-listen", "", "address where agents on other machines connect, for example :9445 (default: none)")
+	fs.StringVar(&o.metricsListen, "metrics-listen", "127.0.0.1:9446", "address where Prometheus scrapes metrics, without TLS or tokens")
+	fs.StringVar(&o.tlsNames, "tls-san", "", "extra host names and addresses for the server certificate, comma separated")
+	fs.StringVar(&o.clientCADir, "allocation-client-ca-dir", "", "accept allocation clients with a certificate from a CA in this directory")
+	fs.BoolVar(&o.noAgent, "no-agent", false, "do not run game servers on this machine")
+	fs.DurationVar(&o.graces.Unallocated, "node-lost-grace", nodes.DefaultGraces.Unallocated, "how long a disconnected node's idle game servers are waited for")
+	fs.DurationVar(&o.graces.Allocated, "node-lost-allocated-grace", nodes.DefaultGraces.Allocated, "how long a disconnected node's allocated game servers are waited for")
+	o.node.register(fs)
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
-	o.agent.PortRange = litev1.PortRange{Min: int32(o.minPort), Max: int32(o.maxPort)}
-	o.agent.MaxGameServers = int32(o.maxServers)
+	o.node.finish()
 	return o, nil
 }
 
-// runServer starts the control plane with an agent in the same process.
+// runServer starts the control plane and, unless told otherwise, an agent
+// in the same process.
 func runServer(ctx context.Context, args []string, out io.Writer) error {
 	o, err := serverFlags(args)
 	if err != nil {
@@ -69,63 +85,116 @@ func runServer(ctx context.Context, args []string, out io.Writer) error {
 	if err := os.MkdirAll(o.dataDir, 0o700); err != nil {
 		return err
 	}
-	s, err := store.Open(filepath.Join(o.dataDir, "state.db"), store.Kinds())
+	database := filepath.Join(o.dataDir, "state.db")
+	s, err := store.Open(database, store.Kinds())
 	if err != nil {
 		return err
 	}
 	defer func() { _ = s.Close() }()
-
-	daemon, err := connectDocker(ctx, o)
+	recorder, err := events.Open(database)
 	if err != nil {
 		return err
 	}
-	controller := gameservers.NewController(s)
-	node := agent.New(o.agent, nodes.NewLocal(s, controller), daemon)
-	api := &http.Server{
-		Addr:              o.listen,
-		Handler:           apiserver.New(s, controller).Handler(),
-		ReadHeaderTimeout: 10 * time.Second,
+	defer func() { _ = recorder.Close() }()
+	secrets, err := auth.Load(o.dataDir, strings.Split(o.tlsNames, ","))
+	if err != nil {
+		return err
 	}
 
-	_, _ = fmt.Fprintf(out, "agones-lite: API on http://%s, node %q, sidecars on %s\n", o.listen, o.agent.NodeName, o.agent.SidecarListen)
-	return runAll(ctx,
-		func(ctx context.Context) error { controller.Run(ctx); return nil },
-		node.Run,
-		func(ctx context.Context) error { return serve(ctx, api) },
-	)
+	parts, err := o.parts(ctx, s, recorder, secrets)
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(out, "agones-lite: management API on https://%s, allocation API on https://%s\n", o.listen, o.allocationListen)
+	_, _ = fmt.Fprintf(out, "agones-lite: tokens and the CA certificate are in %s\n", o.dataDir)
+	return runAll(ctx, parts...)
 }
 
-// connectDocker checks that the daemon answers and fills in where the agent
-// should listen for sidecars.
-func connectDocker(ctx context.Context, o *serverOptions) (*docker.Client, error) {
-	daemon, err := docker.New(o.dockerHost)
+// parts lists everything the server runs side by side.
+func (o *serverOptions) parts(ctx context.Context, s *store.Store, recorder *events.Recorder, secrets *auth.Secrets) ([]part, error) {
+	measure := metrics.New(s)
+	cp := controlplane.New(s, recorder, measure, o.graces)
+	scrape := &http.Server{Addr: o.metricsListen, Handler: measure.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	allocation, err := allocationServer(ctx, o, cp, secrets)
 	if err != nil {
 		return nil, err
 	}
-	if err := daemon.Ping(ctx); err != nil {
-		return nil, fmt.Errorf("cannot reach Docker at %s (set --docker-host or DOCKER_HOST): %w", o.dockerHost, err)
+	api := &http.Server{
+		Addr:              o.listen,
+		Handler:           exceptHealth(cp.API.Handler(), auth.RequireHTTP(secrets, auth.Admin, cp.API.Handler())),
+		TLSConfig:         secrets.ServerTLS(),
+		ReadHeaderTimeout: 10 * time.Second,
 	}
-	if o.agent.SidecarListen == "" {
-		o.agent.SidecarListen, err = defaultSidecarListen(ctx, daemon)
+	parts := []part{
+		func(ctx context.Context) error { cp.Run(ctx); return nil },
+		func(ctx context.Context) error { return serveTLS(ctx, api) },
+		func(ctx context.Context) error { return serveTLS(ctx, allocation) },
+		func(ctx context.Context) error { return servePlain(ctx, scrape) },
+		func(ctx context.Context) error {
+			return every(ctx, time.Hour, func() error { return recorder.Prune(eventRetention) })
+		},
+		func(ctx context.Context) error { return every(ctx, tokenReload, secrets.Reload) },
 	}
-	return daemon, err
-}
-
-// defaultSidecarListen picks the address containers can reach the host on.
-// On Linux that is the Docker bridge's gateway. On macOS Docker runs in a
-// virtual machine that forwards to the host's loopback.
-func defaultSidecarListen(ctx context.Context, daemon *docker.Client) (string, error) {
-	if runtime.GOOS != "linux" {
-		return "127.0.0.1:" + sidecarPort, nil
+	if o.nodeListen != "" {
+		parts = append(parts, func(ctx context.Context) error {
+			return serveAgents(ctx, o.nodeListen, nodes.NewServer(s, cp.Agents), secrets)
+		})
 	}
-	gateway, err := daemon.BridgeGateway(ctx)
+	if o.noAgent {
+		return parts, nil
+	}
+	daemon, err := o.node.connect(ctx)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return gateway + ":" + sidecarPort, nil
+	local := agent.New(o.node.agent, cp.Agents, daemon)
+	cp.Agents.Attach(o.node.agent.NodeName, local) // its logs are read directly
+	return append(parts, local.Run), nil
 }
 
-func serve(ctx context.Context, server *http.Server) error {
+// exceptHealth serves /healthz without asking for a token, so that load
+// balancers and service managers can check on the process.
+func exceptHealth(open, protected http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			open.ServeHTTP(w, r)
+			return
+		}
+		protected.ServeHTTP(w, r)
+	})
+}
+
+func allocationServer(ctx context.Context, o *serverOptions, cp *controlplane.ControlPlane, secrets *auth.Secrets) (*http.Server, error) {
+	handler, err := cp.Allocation.Handler(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tlsConfig, err := secrets.ServerTLSWithClients(o.clientCADir)
+	if err != nil {
+		return nil, err
+	}
+	return &http.Server{
+		Addr:              o.allocationListen,
+		Handler:           auth.RequireHTTP(secrets, auth.Allocator, handler),
+		TLSConfig:         tlsConfig,
+		ReadHeaderTimeout: 10 * time.Second,
+	}, nil
+}
+
+// serveTLS runs an HTTPS server until ctx is done.
+func serveTLS(ctx context.Context, server *http.Server) error {
+	go func() {
+		<-ctx.Done()
+		_ = server.Close()
+	}()
+	if err := server.ListenAndServeTLS("", ""); !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
+
+// servePlain runs an HTTP server without TLS until ctx is done.
+func servePlain(ctx context.Context, server *http.Server) error {
 	go func() {
 		<-ctx.Done()
 		_ = server.Close()
@@ -136,14 +205,51 @@ func serve(ctx context.Context, server *http.Server) error {
 	return nil
 }
 
-// runAll runs the parts of the server side by side. When one fails or ctx
+// serveAgents runs the gRPC service that agents on other machines dial.
+func serveAgents(ctx context.Context, address string, service nodev1.NodesServer, secrets *auth.Secrets) error {
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return err
+	}
+	options := append(auth.RequireGRPC(secrets, auth.Node),
+		grpc.Creds(credentials.NewTLS(secrets.ServerTLS())),
+		// Agents ping to notice a lost control plane; allow them to.
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 5 * time.Second, PermitWithoutStream: true}),
+		grpc.KeepaliveParams(keepalive.ServerParameters{Time: 10 * time.Second, Timeout: 5 * time.Second}),
+	)
+	server := grpc.NewServer(options...)
+	nodev1.RegisterNodesServer(server, service)
+	go func() {
+		<-ctx.Done()
+		server.Stop()
+	}()
+	return server.Serve(listener)
+}
+
+// every calls fn now and then again each period, until ctx is done or fn fails.
+func every(ctx context.Context, period time.Duration, fn func() error) error {
+	tick := time.NewTicker(period)
+	defer tick.Stop()
+	for {
+		if err := fn(); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-tick.C:
+		}
+	}
+}
+
+// runAll runs the parts of a process side by side. When one fails or ctx
 // ends, the others are told to stop and runAll returns the first error.
-func runAll(ctx context.Context, parts ...func(context.Context) error) error {
+func runAll(ctx context.Context, parts ...part) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	results := make(chan error, len(parts))
-	for _, part := range parts {
-		go func() { results <- part(ctx) }()
+	for _, run := range parts {
+		go func() { results <- run(ctx) }()
 	}
 	var first error
 	for range parts {

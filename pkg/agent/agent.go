@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"sync"
@@ -24,6 +25,8 @@ const (
 	// reconcilePeriod is how often Docker is checked even when nothing was
 	// announced, which is how container exits are noticed.
 	reconcilePeriod = 2 * time.Second
+	// heartbeatPeriod is how often the node is announced again.
+	heartbeatPeriod = 10 * time.Second
 	// discardGrace is how long containers nobody wants get to exit.
 	discardGrace = 10 * time.Second
 )
@@ -34,8 +37,10 @@ const (
 type ControlPlane interface {
 	// Register announces this node and what it can hold.
 	Register(node *litev1.Node) error
-	// Assigned returns the GameServers placed on the node.
-	Assigned(node string) []*agonesv1.GameServer
+	// Assigned returns the GameServers placed on the node. current is false
+	// while the list is not known to be complete and up to date, for example
+	// before the first answer from a remote control plane has arrived.
+	Assigned(node string) (servers []*agonesv1.GameServer, current bool)
 	// Changes signals whenever an assigned GameServer may have changed.
 	Changes() (signal <-chan struct{}, cancel func())
 	// Report passes on something that happened to a GameServer.
@@ -54,6 +59,7 @@ type Docker interface {
 	Stop(ctx context.Context, id string, grace time.Duration) error
 	Remove(ctx context.Context, id string) error
 	RemoveVolumes(ctx context.Context, prefix string) error
+	Logs(ctx context.Context, id string, follow bool, tail int) (io.ReadCloser, error)
 }
 
 // Config describes this node.
@@ -88,16 +94,14 @@ func New(cfg Config, cp ControlPlane, d Docker) *Agent {
 	return &Agent{cfg: cfg, cp: cp, docker: d, sidecars: newSidecarServer(cp), busy: map[Key]bool{}}
 }
 
-// Run registers the node and reconciles until ctx is done.
+// Run announces the node and reconciles until ctx is done.
 func (a *Agent) Run(ctx context.Context) error {
-	if err := a.cp.Register(a.node()); err != nil {
-		return fmt.Errorf("register node: %w", err)
-	}
 	listener, err := net.Listen("tcp", a.cfg.SidecarListen)
 	if err != nil {
 		return fmt.Errorf("listen for sidecars: %w", err)
 	}
 	go a.sidecars.serve(ctx, listener)
+	go a.announce(ctx)
 
 	changes, cancel := a.cp.Changes()
 	defer cancel()
@@ -109,6 +113,23 @@ func (a *Agent) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-changes:
+		case <-tick.C:
+		}
+	}
+}
+
+// announce registers the node now and again every heartbeatPeriod. A control
+// plane that cannot be reached yet is simply tried again.
+func (a *Agent) announce(ctx context.Context) {
+	tick := time.NewTicker(heartbeatPeriod)
+	defer tick.Stop()
+	for {
+		if err := a.cp.Register(a.node()); err != nil {
+			slog.Warn("cannot register the node, will try again", "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
 		case <-tick.C:
 		}
 	}
@@ -128,9 +149,14 @@ func (a *Agent) node() *litev1.Node {
 }
 
 // reconcile is one pass: look at both sides, plan, and start the actions.
+// Without a current answer from the control plane nothing is touched: the
+// containers may be exactly what is wanted, and we just cannot know yet.
 func (a *Agent) reconcile(ctx context.Context) {
-	desired := a.cp.Assigned(a.cfg.NodeName)
-	actual, err := a.docker.List(ctx, podspec.LabelGameServer)
+	desired, current := a.cp.Assigned(a.cfg.NodeName)
+	if !current {
+		return
+	}
+	actual, err := a.docker.List(ctx, podspec.LabelNode+"="+a.cfg.NodeName)
 	if err != nil {
 		slog.Error("cannot list containers", "error", err)
 		return

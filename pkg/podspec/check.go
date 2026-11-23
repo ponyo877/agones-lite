@@ -86,12 +86,14 @@ var (
 	}
 )
 
-// Check reports what in the Pod definition of gs cannot be honoured:
-// warnings for fields that are safely ignored, errors for the rest.
-func Check(gs *agonesv1.GameServer) (warnings []string, errs field.ErrorList) {
+// Check reports what in the Pod definition of a GameServer spec cannot be
+// honoured: warnings for fields that are safely ignored, errors for the rest.
+// at is where the spec sits in its manifest: "spec" in a GameServer,
+// "spec.template.spec" in a Fleet.
+func Check(spec *agonesv1.GameServerSpec, at *field.Path) (warnings []string, errs field.ErrorList) {
 	var r findings
-	pod := gs.Spec.Template.Spec
-	path := field.NewPath("spec", "template", "spec")
+	pod := spec.Template.Spec
+	path := at.Child("template", "spec")
 
 	r.audit(pod, path, podFields)
 	for i, c := range pod.Containers {

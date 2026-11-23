@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,11 +23,14 @@ import (
 // fakeDocker records what the agent asks of Docker, in order.
 type fakeDocker struct {
 	calls      []string
+	containers []docker.Container
 	images     map[string]bool
 	failCreate bool
 }
 
-func (f *fakeDocker) List(context.Context, string) ([]docker.Container, error) { return nil, nil }
+func (f *fakeDocker) List(context.Context, string) ([]docker.Container, error) {
+	return f.containers, nil
+}
 
 func (f *fakeDocker) HasImage(_ context.Context, image string) (bool, error) {
 	return f.images[image], nil
@@ -59,6 +64,10 @@ func (f *fakeDocker) Remove(_ context.Context, id string) error {
 	return nil
 }
 
+func (f *fakeDocker) Logs(_ context.Context, id string, _ bool, _ int) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("log of " + id)), nil
+}
+
 func (f *fakeDocker) RemoveVolumes(_ context.Context, prefix string) error {
 	f.calls = append(f.calls, "remove volumes "+prefix)
 	return nil
@@ -69,9 +78,9 @@ type fakeControlPlane struct {
 	events []gameservers.Event
 }
 
-func (f *fakeControlPlane) Register(*litev1.Node) error            { return nil }
-func (f *fakeControlPlane) Assigned(string) []*agonesv1.GameServer { return nil }
-func (f *fakeControlPlane) Changes() (<-chan struct{}, func())     { return nil, func() {} }
+func (f *fakeControlPlane) Register(*litev1.Node) error                    { return nil }
+func (f *fakeControlPlane) Assigned(string) ([]*agonesv1.GameServer, bool) { return nil, true }
+func (f *fakeControlPlane) Changes() (<-chan struct{}, func())             { return nil, func() {} }
 func (f *fakeControlPlane) SetMetadata(string, string, map[string]string, map[string]string) error {
 	return nil
 }
@@ -191,4 +200,25 @@ func TestSidecarTokensComeBackFromLabels(t *testing.T) {
 	a.sidecars.update(nil, []docker.Container{sidecar})
 
 	assert.Equal(t, "secret", a.sidecars.tokens[key])
+}
+
+func TestLogsReadTheMainContainerUnlessAnotherIsNamed(t *testing.T) {
+	sidecar := container("gs", podspec.RoleSidecar, "running", 0)
+	sidecar.Name = "agones-lite_default_gs_agones-gameserver-sidecar"
+	game := container("gs", podspec.RoleGame, "running", 0)
+	game.Name = "agones-lite_default_gs_game"
+	a, _ := newAgent(&fakeDocker{containers: []docker.Container{sidecar, game, container("other", podspec.RoleGame, "running", 0)}})
+
+	read := func(req LogRequest) string {
+		stream, err := a.Logs(context.Background(), req)
+		require.NoError(t, err)
+		text, err := io.ReadAll(stream)
+		require.NoError(t, err)
+		return string(text)
+	}
+	assert.Equal(t, "log of gs-game", read(LogRequest{Namespace: "default", Name: "gs"}))
+	assert.Equal(t, "log of gs-sidecar", read(LogRequest{Namespace: "default", Name: "gs", Container: podspec.SidecarName}))
+
+	_, err := a.Logs(context.Background(), LogRequest{Namespace: "default", Name: "missing"})
+	assert.Error(t, err)
 }
