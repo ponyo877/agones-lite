@@ -1,0 +1,4 @@
+[submodule "third_party/agones"]
+	path = third_party/agones
+	url = https://github.com/agones-dev/agones.git
+	shallow = true
