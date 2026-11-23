@@ -14,6 +14,8 @@ syntax = "proto3";
 
 package agoneslite.node.v1;
 
+import "proto/sidecar/v1/sidecar.proto";
+
 option go_package = "github.com/ponyo877/agones-lite/proto/node/v1;nodev1";
 
 service Nodes {
@@ -30,6 +32,10 @@ service Nodes {
 
   // SetMetadata adds labels and annotations a game server set through the SDK.
   rpc SetMetadata(SetMetadataRequest) returns (SetMetadataResponse);
+
+  // UpdateCounts changes the Counters and Lists of a GameServer as the game
+  // server asked through the SDK, and answers with the GameServer afterwards.
+  rpc UpdateCounts(UpdateCountsRequest) returns (UpdateCountsResponse);
 
   // Logs carries a game server's log to the control plane. The agent opens
   // it in answer to a LogRequest it received through Watch.
@@ -112,3 +118,19 @@ message SetMetadataRequest {
 }
 
 message SetMetadataResponse {}
+
+message UpdateCountsRequest {
+  string namespace = 1;
+  string name = 2;
+  // The changes exactly as the sidecar sent them, in the order they were made.
+  repeated agoneslite.sidecar.v1.CounterUpdate counters = 3;
+  repeated agoneslite.sidecar.v1.ListUpdate lists = 4;
+  // The name the sidecar gave the change. A change whose name is the one
+  // made last is not made again.
+  string change_id = 5;
+}
+
+message UpdateCountsResponse {
+  // JSON of the GameServer after the change. Empty when it is gone.
+  bytes game_server = 1;
+}

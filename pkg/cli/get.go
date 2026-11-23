@@ -2,12 +2,14 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
+	"github.com/ponyo877/agones-lite/pkg/apiserver"
 	"github.com/ponyo877/agones-lite/pkg/events"
 )
 
@@ -23,12 +26,13 @@ import (
 func runGet(ctx context.Context, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("get", flag.ContinueOnError)
 	conn := clientFlags(fs)
+	watch := fs.Bool("w", false, "after the list, keep printing every change")
 	positional, err := parse(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(positional) == 0 {
-		return errors.New("usage: agones-lite get KIND [NAME]")
+		return errors.New("usage: agones-lite get KIND [NAME] [-w]")
 	}
 	c, err := conn.admin()
 	if err != nil {
@@ -44,7 +48,7 @@ func runGet(ctx context.Context, args []string, out io.Writer) error {
 	if len(positional) > 1 {
 		return show(ctx, c, k.path(conn.namespace, positional[1]), out)
 	}
-	return k.list(ctx, c, conn.namespace, out)
+	return k.list(ctx, c, conn.namespace, *watch, out)
 }
 
 // runDescribe shows one resource in full, followed by its history.
@@ -74,7 +78,7 @@ func runDescribe(ctx context.Context, args []string, out io.Writer) error {
 	row := func(e events.Event) string {
 		return fmt.Sprintf("%s\t%s\t%s\t%s", age(e.Time), e.Type, e.Reason, e.Message)
 	}
-	return table(ctx, c, "/v1/namespaces/"+conn.namespace+"/events?"+query.Encode(), "AGE\tTYPE\tREASON\tMESSAGE", row, out)
+	return table(ctx, c, "/v1/namespaces/"+conn.namespace+"/events?"+query.Encode(), "AGE\tTYPE\tREASON\tMESSAGE", row, false, out)
 }
 
 // show prints one object as YAML, the way it would be written in a manifest.
@@ -92,7 +96,10 @@ func show(ctx context.Context, c client, path string, out io.Writer) error {
 }
 
 // table fetches a list and prints one row per item under header.
-func table[T any](ctx context.Context, c client, path, header string, row func(T) string, out io.Writer) error {
+func table[T any](ctx context.Context, c client, path, header string, row func(T) string, watch bool, out io.Writer) error {
+	if watch {
+		return follow(ctx, c, path, header, row, out)
+	}
 	var list struct {
 		Items []T `json:"items"`
 	}
@@ -107,12 +114,69 @@ func table[T any](ctx context.Context, c client, path, header string, row func(T
 	return w.Flush()
 }
 
-func listGameServers(ctx context.Context, c client, namespace string, out io.Writer) error {
+// follow prints a table that keeps growing: everything there is, then a
+// line for every change. The first column says what happened.
+func follow[T any](ctx context.Context, c client, path, header string, row func(T) string, out io.Writer) error {
+	table := &columns{}
+	table.measure("Modified") // the longest word the first column will hold
+	rows := []string{"EVENT\t" + header}
+	synced := false
+	return c.events(ctx, path+"?watch=true", func(event string, data []byte) error {
+		if event == apiserver.Synced {
+			synced = true
+			return table.print(out, rows...)
+		}
+		var item T
+		if err := json.Unmarshal(data, &item); err != nil {
+			return err
+		}
+		line := event + "\t" + row(item)
+		if !synced {
+			rows = append(rows, line) // still the list: wait, so it lines up
+			return nil
+		}
+		return table.print(out, line)
+	})
+}
+
+// columns lines rows up that are printed one at a time: a column is as
+// wide as the widest cell it has held so far. Cells are separated by tabs.
+type columns struct {
+	widths []int
+}
+
+func (c *columns) measure(row string) {
+	for i, cell := range strings.Split(row, "\t") {
+		if i == len(c.widths) {
+			c.widths = append(c.widths, 0)
+		}
+		c.widths[i] = max(c.widths[i], len(cell))
+	}
+}
+
+// print writes the rows, after making room for their widest cells.
+func (c *columns) print(out io.Writer, rows ...string) error {
+	for _, row := range rows {
+		c.measure(row)
+	}
+	for _, row := range rows {
+		var line strings.Builder
+		for i, cell := range strings.Split(row, "\t") {
+			fmt.Fprintf(&line, "%-*s", c.widths[i]+3, cell)
+		}
+		if _, err := fmt.Fprintln(out, strings.TrimRight(line.String(), " ")); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func listGameServers(ctx context.Context, c client, namespace string, watch bool, out io.Writer) error {
 	row := func(gs agonesv1.GameServer) string {
 		return fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s",
 			gs.Name, gs.Status.State, gs.Status.Address, firstPort(gs), gs.Status.NodeName, age(gs.CreationTimestamp.Time))
 	}
-	return table(ctx, c, collection(namespace, "gameservers"), "NAME\tSTATE\tADDRESS\tPORT\tNODE\tAGE", row, out)
+	return table(ctx, c, collection(namespace, "gameservers"), "NAME\tSTATE\tADDRESS\tPORT\tNODE\tAGE", row, watch, out)
 }
 
 func firstPort(gs agonesv1.GameServer) string {
@@ -124,28 +188,28 @@ func firstPort(gs agonesv1.GameServer) string {
 
 const sizeColumns = "NAME\tSCHEDULING\tDESIRED\tCURRENT\tALLOCATED\tREADY\tAGE"
 
-func listGameServerSets(ctx context.Context, c client, namespace string, out io.Writer) error {
+func listGameServerSets(ctx context.Context, c client, namespace string, watch bool, out io.Writer) error {
 	row := func(set agonesv1.GameServerSet) string {
 		return fmt.Sprintf("%s\t%s\t%d\t%d\t%d\t%d\t%s", set.Name, set.Spec.Scheduling, set.Spec.Replicas,
 			set.Status.Replicas, set.Status.AllocatedReplicas, set.Status.ReadyReplicas, age(set.CreationTimestamp.Time))
 	}
-	return table(ctx, c, collection(namespace, "gameserversets"), sizeColumns, row, out)
+	return table(ctx, c, collection(namespace, "gameserversets"), sizeColumns, row, watch, out)
 }
 
-func listFleets(ctx context.Context, c client, namespace string, out io.Writer) error {
+func listFleets(ctx context.Context, c client, namespace string, watch bool, out io.Writer) error {
 	row := func(fleet agonesv1.Fleet) string {
 		return fmt.Sprintf("%s\t%s\t%d\t%d\t%d\t%d\t%s", fleet.Name, fleet.Spec.Scheduling, fleet.Spec.Replicas,
 			fleet.Status.Replicas, fleet.Status.AllocatedReplicas, fleet.Status.ReadyReplicas, age(fleet.CreationTimestamp.Time))
 	}
-	return table(ctx, c, collection(namespace, "fleets"), sizeColumns, row, out)
+	return table(ctx, c, collection(namespace, "fleets"), sizeColumns, row, watch, out)
 }
 
-func listFleetAutoscalers(ctx context.Context, c client, namespace string, out io.Writer) error {
+func listFleetAutoscalers(ctx context.Context, c client, namespace string, watch bool, out io.Writer) error {
 	row := func(fas autoscalingv1.FleetAutoscaler) string {
 		return fmt.Sprintf("%s\t%s\t%s\t%d\t%d\t%t\t%s", fas.Name, fas.Spec.FleetName, fas.Spec.Policy.Type,
 			fas.Status.CurrentReplicas, fas.Status.DesiredReplicas, fas.Status.ScalingLimited, age(fas.CreationTimestamp.Time))
 	}
-	return table(ctx, c, collection(namespace, "fleetautoscalers"), "NAME\tFLEET\tPOLICY\tCURRENT\tDESIRED\tLIMITED\tAGE", row, out)
+	return table(ctx, c, collection(namespace, "fleetautoscalers"), "NAME\tFLEET\tPOLICY\tCURRENT\tDESIRED\tLIMITED\tAGE", row, watch, out)
 }
 
 func listNodes(ctx context.Context, c client, out io.Writer) error {
@@ -153,7 +217,7 @@ func listNodes(ctx context.Context, c client, out io.Writer) error {
 		return fmt.Sprintf("%s\t%s\t%s\t%d-%d\t%s",
 			n.Name, nodeStatus(n), n.Status.Address, n.Status.PortRange.Min, n.Status.PortRange.Max, age(n.CreationTimestamp.Time))
 	}
-	return table(ctx, c, "/v1/nodes", "NAME\tSTATUS\tADDRESS\tPORTS\tAGE", row, out)
+	return table(ctx, c, "/v1/nodes", "NAME\tSTATUS\tADDRESS\tPORTS\tAGE", row, false, out)
 }
 
 // nodeStatus shows whether a node is connected and whether it takes new

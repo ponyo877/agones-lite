@@ -19,6 +19,7 @@ import (
 	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
 	"github.com/ponyo877/agones-lite/pkg/gameservers"
 	"github.com/ponyo877/agones-lite/pkg/store"
+	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
 )
 
 // Local connects an agent straight to the store and the GameServer controller.
@@ -63,7 +64,7 @@ func (l *Local) Register(node *litev1.Node) error {
 // the store, the answer is always current.
 func (l *Local) Assigned(node string) ([]*agonesv1.GameServer, bool) {
 	var out []*agonesv1.GameServer
-	for _, gs := range l.servers.List("") {
+	for _, gs := range l.servers.View("") {
 		if gs.Status.NodeName == node {
 			out = append(out, gs)
 		}
@@ -90,6 +91,32 @@ func (l *Local) Changes() (<-chan struct{}, func()) {
 // Report passes an Event to the GameServer controller.
 func (l *Local) Report(r gameservers.Report) error {
 	return l.controller.Report(r)
+}
+
+// UpdateCounts passes changes to Counters and Lists to the GameServer
+// controller. This is where they leave the wire format behind.
+func (l *Local) UpdateCounts(namespace, name, change string, counters []*sidecarv1.CounterUpdate, lists []*sidecarv1.ListUpdate) (*agonesv1.GameServer, error) {
+	return l.controller.UpdateCounts(namespace, name, change, counterUpdates(counters), listUpdates(lists))
+}
+
+func counterUpdates(wire []*sidecarv1.CounterUpdate) []gameservers.CounterUpdate {
+	updates := make([]gameservers.CounterUpdate, 0, len(wire))
+	for _, u := range wire {
+		updates = append(updates, gameservers.CounterUpdate{
+			Name: u.GetName(), Capacity: u.Capacity, Count: u.Count, CountDiff: u.GetCountDiff(),
+		})
+	}
+	return updates
+}
+
+func listUpdates(wire []*sidecarv1.ListUpdate) []gameservers.ListUpdate {
+	updates := make([]gameservers.ListUpdate, 0, len(wire))
+	for _, u := range wire {
+		updates = append(updates, gameservers.ListUpdate{
+			Name: u.GetName(), Capacity: u.Capacity, Add: u.GetAdd(), Remove: u.GetRemove(),
+		})
+	}
+	return updates
 }
 
 // SetMetadata passes SDK labels and annotations to the GameServer controller.

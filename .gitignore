@@ -1,4 +1,7 @@
 /bin/
+/dist/
+# The default data directory: state, private keys and tokens.
+/agones-lite-data/
 *.db
 *.db-shm
 *.db-wal

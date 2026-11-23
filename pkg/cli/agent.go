@@ -15,6 +15,7 @@ import (
 	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
 	"github.com/ponyo877/agones-lite/pkg/docker"
 	"github.com/ponyo877/agones-lite/pkg/nodes"
+	"github.com/ponyo877/agones-lite/pkg/version"
 )
 
 const sidecarPort = "9447"
@@ -37,7 +38,7 @@ func (n *nodeOptions) register(fs *flag.FlagSet) {
 	fs.IntVar(&n.minPort, "min-port", 7000, "first host port for game servers")
 	fs.IntVar(&n.maxPort, "max-port", 8000, "last host port for game servers")
 	fs.IntVar(&n.maxServers, "max-gameservers", 0, "most game servers on this node; 0 means no limit")
-	fs.StringVar(&n.agent.SidecarImage, "sidecar-image", "agones-lite-sidecar:dev", "image of the SDK sidecar")
+	fs.StringVar(&n.agent.SidecarImage, "sidecar-image", version.SidecarImage(), "image of the SDK sidecar")
 	fs.StringVar(&n.agent.SidecarListen, "sidecar-listen", "", "where the agent listens for sidecars (default: chosen per platform)")
 	fs.StringVar(&n.agent.SidecarDial, "sidecar-dial", "host.docker.internal:"+sidecarPort, "how a container reaches --sidecar-listen")
 }
@@ -86,7 +87,7 @@ func runAgent(ctx context.Context, args []string, out io.Writer) error {
 	tokenFile := fs.String("token-file", "", "file that holds the join token")
 	var node nodeOptions
 	node.register(fs)
-	if err := fs.Parse(args); err != nil {
+	if err := parseWithConfig(fs, args); err != nil {
 		return err
 	}
 	node.finish()

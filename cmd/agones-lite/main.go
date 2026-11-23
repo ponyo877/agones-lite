@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	_ "time/tzdata" // schedules of FleetAutoscalers name time zones
 
 	"github.com/ponyo877/agones-lite/pkg/cli"
 )

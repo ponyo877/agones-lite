@@ -14,11 +14,7 @@ import (
 	"strconv"
 	"syscall"
 
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-
 	"github.com/ponyo877/agones-lite/pkg/sdkserver"
-	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
 )
 
 // The environment variables, set by the agent (see pkg/podspec).
@@ -47,19 +43,10 @@ func run() error {
 		return err
 	}
 	creds := sdkserver.Credentials{GameServer: os.Getenv(envGameServer), Token: os.Getenv(envToken)}
-	conn, err := grpc.NewClient(os.Getenv(envAgent),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithPerRPCCredentials(creds),
-	)
-	if err != nil {
-		return fmt.Errorf("agent address %q: %w", os.Getenv(envAgent), err)
-	}
-	defer func() { _ = conn.Close() }()
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	slog.Info("sidecar started", "gameserver", creds.GameServer, "grpc", grpcPort, "http", httpPort)
-	return sdkserver.New(sidecarv1.NewAgentClient(conn)).Run(ctx, grpcPort, httpPort)
+	return sdkserver.Serve(ctx, os.Getenv(envAgent), creds, grpcPort, httpPort)
 }
 
 // port reads a port number from the environment. Unset or zero means fallback.

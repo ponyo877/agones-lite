@@ -4,6 +4,7 @@ go 1.27.3
 
 require (
 	agones.dev/agones v1.62.0
+	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0
 	github.com/prometheus/client_golang v1.25.0
 	github.com/robfig/cron/v3 v3.0.1
@@ -26,7 +27,6 @@ require (
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/magiconair/properties v1.8.1 // indirect

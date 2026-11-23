@@ -75,7 +75,29 @@ func (t Typed[T]) Get(namespace, name string) (T, bool) {
 
 // List returns copies of every object in namespace, or in all when it is empty.
 func (t Typed[T]) List(namespace string) []T {
-	objs := t.store.List(t.kind, namespace)
+	return typed[T](t.store.List(t.kind, namespace))
+}
+
+// ListAndWatch is List and Watch in one step: the events start exactly
+// where the list ends.
+func (t Typed[T]) ListAndWatch(namespace string) (objects []T, events <-chan Event, cancel func()) {
+	objs, events, cancel := t.store.ListAndWatch(t.kind, namespace)
+	return typed[T](objs), events, cancel
+}
+
+func typed[T Object](objs []Object) []T {
+	out := make([]T, len(objs))
+	for i, obj := range objs {
+		out[i] = obj.(T)
+	}
+	return out
+}
+
+// View returns every object in namespace, or in all when it is empty,
+// without copying. The objects are shared: read them, never change them.
+// See Store.View.
+func (t Typed[T]) View(namespace string) []T {
+	objs := t.store.View(t.kind, namespace)
 	out := make([]T, len(objs))
 	for i, obj := range objs {
 		out[i] = obj.(T)

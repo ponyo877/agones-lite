@@ -2,11 +2,14 @@ package sdkserver
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
 	"agones.dev/agones/pkg/sdk"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
@@ -45,6 +48,20 @@ func (s *Server) tell(req *sidecarv1.TellRequest) (*sdk.Empty, error) {
 	}
 }
 
+// Serve is the whole sidecar: it dials the agent at address, introduces
+// itself with creds, and serves the SDK on the two ports until ctx is done.
+func Serve(ctx context.Context, address string, creds Credentials, grpcPort, httpPort int) error {
+	conn, err := grpc.NewClient(address,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithPerRPCCredentials(creds),
+	)
+	if err != nil {
+		return fmt.Errorf("agent address %q: %w", address, err)
+	}
+	defer func() { _ = conn.Close() }()
+	return New(sidecarv1.NewAgentClient(conn)).Run(ctx, grpcPort, httpPort)
+}
+
 // deliver sends queued requests to the agent in order. A request that cannot
 // be sent is retried until it can: the agent may be restarting.
 func (s *Server) deliver(ctx context.Context) {
@@ -58,15 +75,33 @@ func (s *Server) deliver(ctx context.Context) {
 	}
 }
 
+// send hands one request to the agent, however many tries that takes, and
+// takes in the agent's answer.
 func (s *Server) send(ctx context.Context, req *sidecarv1.TellRequest) {
 	for ctx.Err() == nil {
-		_, err := s.agent.Tell(ctx, req)
+		resp, err := s.agent.Tell(ctx, req)
 		if err == nil {
+			s.settle(req, answer(resp))
 			return
 		}
 		slog.Warn("agent did not take the request, retrying", "event", req.GetEvent().String(), "error", err)
 		sleep(ctx, retryDelay)
 	}
+}
+
+// answer reads the GameServer the agent sends back after it changed Counters
+// or Lists. Other requests are answered without one, which gives nil.
+func answer(resp *sidecarv1.TellResponse) *sdk.GameServer {
+	if len(resp.GetGameServer()) == 0 {
+		return nil
+	}
+	gs := &sdk.GameServer{}
+	if err := proto.Unmarshal(resp.GetGameServer(), gs); err != nil {
+		// The next GameServer the agent pushes will put the view right.
+		slog.Warn("cannot read the agent's answer", "error", err)
+		return nil
+	}
+	return gs
 }
 
 // follow keeps the local copy of the GameServer up to date, reconnecting

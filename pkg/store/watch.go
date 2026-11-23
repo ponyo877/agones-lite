@@ -11,6 +11,7 @@ const (
 )
 
 // Event is one change. For Deleted, Object is the last stored version.
+// Object is shared with the store and must not be changed.
 type Event struct {
 	Type   EventType
 	Key    Key
@@ -30,10 +31,24 @@ type watcher struct {
 // A slow watcher loses events rather than blocking writers. Controllers cope
 // with that by also listing everything from time to time.
 func (s *Store) Watch(kind Kind) (events <-chan Event, cancel func()) {
-	w := &watcher{kind: kind, events: make(chan Event, watchBuffer)}
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.subscribe(kind)
+}
+
+// ListAndWatch is List and Watch in one step. The events start exactly
+// where the list ends, so no change is missed and none is told twice.
+func (s *Store) ListAndWatch(kind Kind, namespace string) (objects []Object, events <-chan Event, cancel func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	events, cancel = s.subscribe(kind)
+	return s.list(kind, namespace), events, cancel
+}
+
+// subscribe is called with the lock held.
+func (s *Store) subscribe(kind Kind) (events <-chan Event, cancel func()) {
+	w := &watcher{kind: kind, events: make(chan Event, watchBuffer)}
 	s.watchers[w] = struct{}{}
-	s.mu.Unlock()
 	return w.events, func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -50,9 +65,9 @@ func (s *Store) notify(e Event) {
 		if w.kind != e.Key.Kind {
 			continue
 		}
-		copied := Event{Type: e.Type, Key: e.Key, Object: clone(e.Object)}
+		// Like View, an event carries the stored object itself: read only.
 		select {
-		case w.events <- copied:
+		case w.events <- e:
 		default: // the watcher is too far behind
 		}
 	}

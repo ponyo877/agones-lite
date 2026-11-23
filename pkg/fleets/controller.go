@@ -51,7 +51,7 @@ func (c *Controller) Run(ctx context.Context) {
 
 func (c *Controller) all() []store.Key {
 	var keys []store.Key
-	for _, fleet := range c.fleets.List("") {
+	for _, fleet := range c.fleets.View("") {
 		keys = append(keys, store.KeyOf(store.Fleets, fleet))
 	}
 	return keys
@@ -92,7 +92,7 @@ func (c *Controller) sync(_ context.Context, key store.Key) error {
 // owned returns the GameServerSets that fleet controls.
 func (c *Controller) owned(fleet *agonesv1.Fleet) []*agonesv1.GameServerSet {
 	var out []*agonesv1.GameServerSet
-	for _, set := range c.sets.List(fleet.Namespace) {
+	for _, set := range c.sets.View(fleet.Namespace) {
 		if metav1.IsControlledBy(set, fleet) {
 			out = append(out, set)
 		}

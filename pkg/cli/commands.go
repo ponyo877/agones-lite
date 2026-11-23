@@ -24,8 +24,9 @@ type kind struct {
 	// named kinds are applied with PUT to their own URL, so applying twice
 	// updates. The others are created with POST, which allows generateName.
 	named bool
-	// list prints a table of every object of the kind.
-	list func(ctx context.Context, c client, namespace string, out io.Writer) error
+	// list prints a table of every object of the kind. With watch it goes
+	// on to print every change.
+	list func(ctx context.Context, c client, namespace string, watch bool, out io.Writer) error
 }
 
 var kinds = []kind{

@@ -26,6 +26,7 @@ import (
 	"github.com/ponyo877/agones-lite/pkg/gameservers"
 	"github.com/ponyo877/agones-lite/pkg/store"
 	nodev1 "github.com/ponyo877/agones-lite/proto/node/v1"
+	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
 )
 
 // controlPlane is a store with the node API served over TLS on a local port.
@@ -228,4 +229,47 @@ func TestLogsTravelFromARemoteAgentToTheControlPlane(t *testing.T) {
 
 	_, err = read("nobody")
 	assert.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestCountsChangedThroughTheSDKReachTheGameServer(t *testing.T) {
+	cp := newControlPlane(t)
+	servers := store.GameServersOf(cp.store)
+	gs := placed("gs", "node-1")
+	gs.Status.Counters = map[string]agonesv1.CounterStatus{"rooms": {Count: 1, Capacity: 10}}
+	gs.Status.Lists = map[string]agonesv1.ListStatus{"players": {Capacity: 4, Values: []string{"ada"}}}
+	_, err := servers.Create(gs)
+	require.NoError(t, err)
+	remote, err := Dial(cp.address, cp.secrets.Token(auth.Node))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = remote.Close() })
+
+	change := func(id string) (*agonesv1.GameServer, error) {
+		return remote.UpdateCounts("default", "gs", id,
+			[]*sidecarv1.CounterUpdate{{Name: "rooms", CountDiff: 2}},
+			[]*sidecarv1.ListUpdate{{Name: "players", Add: []string{"bob"}, Remove: []string{"ada"}}})
+	}
+	after, err := change("first")
+
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), after.Status.Counters["rooms"].Count)
+	assert.Equal(t, []string{"bob"}, after.Status.Lists["players"].Values)
+	stored, _ := servers.Get("default", "gs")
+	assert.Equal(t, after.Status, stored.Status)
+	assert.Equal(t, after.ResourceVersion, stored.ResourceVersion, "the answer is the GameServer as it was stored")
+
+	// The same change again, as after a lost answer, is not made twice.
+	again, err := change("first")
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), again.Status.Counters["rooms"].Count)
+	assert.Equal(t, stored.ResourceVersion, again.ResourceVersion)
+
+	// Another change that asks for the same thing is.
+	next, err := change("second")
+	require.NoError(t, err)
+	assert.Equal(t, int64(5), next.Status.Counters["rooms"].Count)
+
+	// A GameServer that is gone has nothing to answer with.
+	gone, err := remote.UpdateCounts("default", "nobody", "third", []*sidecarv1.CounterUpdate{{Name: "rooms", CountDiff: 1}}, nil)
+	require.NoError(t, err)
+	assert.Nil(t, gone)
 }

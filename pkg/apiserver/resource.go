@@ -35,7 +35,13 @@ func (r resource[T]) mount(mux *http.ServeMux, plural string) {
 	}
 }
 
+// list answers with every object, or with a watch when asked to keep the
+// client up to date ("?watch=true").
 func (r resource[T]) list(w http.ResponseWriter, req *http.Request) {
+	if req.URL.Query().Get("watch") == "true" {
+		r.watch(w, req)
+		return
+	}
 	respond(w, http.StatusOK, items[T]{Items: r.typed.List(req.PathValue("namespace"))})
 }
 

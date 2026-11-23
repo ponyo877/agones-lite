@@ -82,7 +82,7 @@ func (s *Store) loadRow(rows *sql.Rows) error {
 	if err := json.Unmarshal(data, obj); err != nil {
 		return fmt.Errorf("%s: %w", key, err)
 	}
-	s.objects[key] = obj
+	s.put(key, obj)
 	return nil
 }
 

@@ -1,0 +1,12 @@
+# Example /etc/agones-lite/agent.yaml. The keys are the flags of
+# `agones-lite agent`; see `agones-lite agent --help`.
+
+# The control plane's node-listen address, and the join token from
+# `agones-lite token show join` on the control plane's machine.
+server: cp.example.com:9445
+token-file: /etc/agones-lite/join-token
+
+node-name: node-2
+address: 203.0.113.11
+min-port: 7000
+max-port: 8000

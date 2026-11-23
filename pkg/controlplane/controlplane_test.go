@@ -12,6 +12,7 @@ import (
 
 	pb "agones.dev/agones/pkg/allocation/go"
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
+	autoscalingv1 "agones.dev/agones/pkg/apis/autoscaling/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -58,7 +59,8 @@ func newWorld(t *testing.T) world {
 	require.NoError(t, agones.Setup())
 	s, err := store.Open(filepath.Join(t.TempDir(), "state.db"), store.Kinds())
 	require.NoError(t, err)
-	cp := New(s, nil, nil, nodes.DefaultGraces)
+	cp, err := New(s, nil, nil, nodes.DefaultGraces)
+	require.NoError(t, err)
 	node := &litev1.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
 		Status: litev1.NodeStatus{
@@ -223,4 +225,106 @@ func TestDrainingANodeEmptiesItExceptForSessions(t *testing.T) {
 			assert.Empty(t, gs.Status.NodeName, "%s must not be placed on a draining node", gs.Name)
 		}
 	}
+}
+
+const autoscalerManifest = `
+apiVersion: autoscaling.agones.dev/v1
+kind: FleetAutoscaler
+metadata:
+  name: simple
+spec:
+  fleetName: simple
+  policy:
+    type: Buffer
+    buffer:
+      bufferSize: 2
+      minReplicas: 2
+      maxReplicas: 5
+  sync:
+    type: FixedInterval
+    fixedInterval:
+      seconds: 1
+`
+
+func (w world) autoscaler() *autoscalingv1.FleetAutoscaler {
+	w.t.Helper()
+	fas := &autoscalingv1.FleetAutoscaler{}
+	body := w.call(http.MethodGet, "/v1/namespaces/default/fleetautoscalers/simple", "").Body.Bytes()
+	require.NoError(w.t, json.Unmarshal(body, fas))
+	return fas
+}
+
+func TestTheAutoscalerKeepsABufferOfReadyGameServers(t *testing.T) {
+	w := newWorld(t)
+	w.call(http.MethodPut, "/v1/namespaces/default/fleets/simple", fleetManifest)
+	w.call(http.MethodPut, "/v1/namespaces/default/fleetautoscalers/simple", autoscalerManifest)
+
+	// Nobody is playing: the three replicas of the manifest shrink to the buffer.
+	w.soon(func() bool {
+		fleet := w.fleet()
+		return fleet.Spec.Replicas == 2 && fleet.Status.ReadyReplicas == 2 && fleet.Status.Replicas == 2
+	}, "the Fleet shrinks to its buffer of two")
+
+	// Every allocation is answered with one more game server.
+	for range 2 {
+		_, err := w.allocate()
+		require.NoError(t, err)
+	}
+	w.soon(func() bool {
+		fleet := w.fleet()
+		return fleet.Spec.Replicas == 4 && fleet.Status.ReadyReplicas == 2
+	}, "two in use, two more standing by")
+	assert.False(t, w.autoscaler().Status.ScalingLimited)
+
+	// The maximum is the limit, and the status says when it bites.
+	for range 2 {
+		_, err := w.allocate()
+		require.NoError(t, err)
+	}
+	w.soon(func() bool {
+		return w.fleet().Spec.Replicas == 5 && w.autoscaler().Status.ScalingLimited
+	}, "four in use would want six, but five is the maximum")
+	status := w.autoscaler().Status
+	assert.True(t, status.AbleToScale)
+	assert.Equal(t, int32(5), status.DesiredReplicas)
+}
+
+func TestTheAutoscalerAsksAWebhook(t *testing.T) {
+	asked := make(chan *autoscalingv1.FleetAutoscaleReview, 16)
+	webhook := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		review := &autoscalingv1.FleetAutoscaleReview{}
+		_ = json.NewDecoder(r.Body).Decode(review)
+		asked <- review
+		review.Response = &autoscalingv1.FleetAutoscaleResponse{UID: review.Request.UID, Scale: true, Replicas: 4}
+		_ = json.NewEncoder(rw).Encode(review)
+	}))
+	defer webhook.Close()
+
+	w := newWorld(t)
+	w.call(http.MethodPut, "/v1/namespaces/default/fleets/simple", fleetManifest)
+	manifest := strings.Replace(autoscalerManifest, `    type: Buffer
+    buffer:
+      bufferSize: 2
+      minReplicas: 2
+      maxReplicas: 5`, `    type: Webhook
+    webhook:
+      url: `+webhook.URL, 1)
+	w.call(http.MethodPut, "/v1/namespaces/default/fleetautoscalers/simple", manifest)
+
+	w.soon(func() bool { return w.fleet().Spec.Replicas == 4 }, "the Fleet takes the size the webhook answered")
+	review := <-asked
+	assert.Equal(t, "simple", review.Request.Name)
+	assert.NotEmpty(t, review.Request.UID)
+}
+
+func TestAnAutoscalerWithoutItsFleetSaysSo(t *testing.T) {
+	w := newWorld(t)
+	w.call(http.MethodPut, "/v1/namespaces/default/fleetautoscalers/simple", autoscalerManifest)
+
+	// It keeps looking, so the Fleet may come later.
+	time.Sleep(1500 * time.Millisecond)
+	assert.False(t, w.autoscaler().Status.AbleToScale)
+
+	w.call(http.MethodPut, "/v1/namespaces/default/fleets/simple", fleetManifest)
+	w.soon(func() bool { return w.autoscaler().Status.AbleToScale }, "the autoscaler finds the Fleet once it exists")
 }

@@ -109,7 +109,7 @@ func (s *Service) allocate(gsa *allocationv1.GameServerAllocation) (*allocationv
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for range attempts {
-		all := s.servers.List("")
+		all := s.servers.View("")
 		gs, found := Find(gsa, s.reachable(gsa.Namespace, all), gameservers.CountByNode(all), s.pick)
 		if !found {
 			return Unallocated(gsa), nil
@@ -131,7 +131,7 @@ func (s *Service) allocate(gsa *allocationv1.GameServerAllocation) (*allocationv
 // players can be sent to: connected and not cordoned.
 func (s *Service) reachable(namespace string, all []*agonesv1.GameServer) []*agonesv1.GameServer {
 	open := map[string]bool{}
-	for _, node := range s.nodes.List("") {
+	for _, node := range s.nodes.View("") {
 		open[node.Name] = node.Schedulable()
 	}
 	var out []*agonesv1.GameServer

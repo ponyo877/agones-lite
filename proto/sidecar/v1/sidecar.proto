@@ -52,6 +52,10 @@ message TellRequest {
   // the game server made them.
   repeated CounterUpdate counters = 5;
   repeated ListUpdate lists = 6;
+  // For EVENT_UPDATE_COUNTS: a name no other change has. A request is sent
+  // again when its answer was lost, and the name lets the control plane see
+  // that it is the same change and not a second one.
+  string change_id = 7;
 }
 
 // CounterUpdate changes one Counter. Capacity is applied first, then count,

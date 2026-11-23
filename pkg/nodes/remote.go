@@ -11,6 +11,7 @@ import (
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 	"k8s.io/apimachinery/pkg/types"
@@ -19,6 +20,7 @@ import (
 	"github.com/ponyo877/agones-lite/pkg/auth"
 	"github.com/ponyo877/agones-lite/pkg/gameservers"
 	nodev1 "github.com/ponyo877/agones-lite/proto/node/v1"
+	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
 )
 
 const (
@@ -27,6 +29,15 @@ const (
 	// callTimeout bounds every single call, so a dead connection is noticed.
 	callTimeout = 10 * time.Second
 )
+
+// redial is how gRPC spaces its attempts to connect. Its own limit is two
+// minutes; a control plane that comes back after a long break should be
+// found again within seconds, because until then its game servers cannot
+// be allocated.
+var redial = grpc.ConnectParams{
+	Backoff:           backoff.Config{BaseDelay: time.Second, Multiplier: 1.6, Jitter: 0.2, MaxDelay: 5 * time.Second},
+	MinConnectTimeout: 5 * time.Second,
+}
 
 // Remote is an agent's link to a control plane on another machine. It
 // satisfies agent.ControlPlane by speaking the protocol in proto/node/v1.
@@ -57,6 +68,7 @@ func Dial(address, joinToken string) (*Remote, error) {
 		grpc.WithPerRPCCredentials(auth.Token(joinToken)),
 		// Without pings, a control plane that vanished would look merely quiet.
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: 10 * time.Second, Timeout: 5 * time.Second}),
+		grpc.WithConnectParams(redial),
 	)
 	if err != nil {
 		return nil, err
@@ -191,6 +203,20 @@ func (r *Remote) Report(report gameservers.Report) error {
 		ReserveSeconds: int64(report.Reserve / time.Second),
 	})
 	return err
+}
+
+// UpdateCounts changes Counters and Lists as a game server asked through the SDK.
+func (r *Remote) UpdateCounts(namespace, name, change string, counters []*sidecarv1.CounterUpdate, lists []*sidecarv1.ListUpdate) (*agonesv1.GameServer, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+	defer cancel()
+	resp, err := r.client.UpdateCounts(ctx, &nodev1.UpdateCountsRequest{
+		Namespace: namespace, Name: name, ChangeId: change, Counters: counters, Lists: lists,
+	})
+	if err != nil || len(resp.GetGameServer()) == 0 {
+		return nil, err
+	}
+	gs := &agonesv1.GameServer{}
+	return gs, json.Unmarshal(resp.GetGameServer(), gs)
 }
 
 // SetMetadata adds labels and annotations set through the SDK.

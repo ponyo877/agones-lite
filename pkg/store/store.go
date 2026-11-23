@@ -48,10 +48,12 @@ func KeyOf(kind Kind, obj metav1.Object) Key {
 
 // Store is safe for concurrent use.
 type Store struct {
-	mu        sync.Mutex
-	db        *sql.DB
-	revision  int64
-	objects   map[Key]Object
+	mu       sync.Mutex
+	db       *sql.DB
+	revision int64
+	// objects holds everything, by kind. A stored object is never changed
+	// in place: an update swaps in a new one. That is what makes View safe.
+	objects   map[Kind]map[Key]Object
 	factories map[Kind]func() Object
 	watchers  map[*watcher]struct{}
 }
@@ -65,7 +67,7 @@ func Open(path string, kinds map[Kind]func() Object) (*Store, error) {
 	}
 	s := &Store{
 		db:        db,
-		objects:   map[Key]Object{},
+		objects:   map[Kind]map[Key]Object{},
 		factories: kinds,
 		watchers:  map[*watcher]struct{}{},
 	}
@@ -85,7 +87,7 @@ func (s *Store) Close() error {
 func (s *Store) Get(key Key) (Object, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	obj, ok := s.objects[key]
+	obj, ok := s.objects[key.Kind][key]
 	if !ok {
 		return nil, false
 	}
@@ -97,9 +99,14 @@ func (s *Store) Get(key Key) (Object, bool) {
 func (s *Store) List(kind Kind, namespace string) []Object {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.list(kind, namespace)
+}
+
+// list is List with the lock held.
+func (s *Store) list(kind Kind, namespace string) []Object {
 	var out []Object
-	for key, obj := range s.objects {
-		if key.Kind == kind && (namespace == "" || key.Namespace == namespace) {
+	for key, obj := range s.objects[kind] {
+		if namespace == "" || key.Namespace == namespace {
 			out = append(out, clone(obj))
 		}
 	}
@@ -107,6 +114,26 @@ func (s *Store) List(kind Kind, namespace string) []Object {
 		a, b := KeyOf(kind, out[i]), KeyOf(kind, out[j])
 		return a.Namespace+"/"+a.Name < b.Namespace+"/"+b.Name
 	})
+	return out
+}
+
+// View returns every object of kind without copying, in no particular order.
+// An empty namespace means all namespaces.
+//
+// What it returns is shared with the store and with every other caller, so
+// it is strictly for reading. It exists for the places that look at
+// everything on every change, such as allocation: copying a thousand game
+// servers each time is what would make them slow. To change an object, Get
+// a private copy of it or use Typed.Change.
+func (s *Store) View(kind Kind, namespace string) []Object {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Object, 0, len(s.objects[kind]))
+	for key, obj := range s.objects[kind] {
+		if namespace == "" || key.Namespace == namespace {
+			out = append(out, obj)
+		}
+	}
 	return out
 }
 
@@ -119,7 +146,7 @@ func (s *Store) Create(kind Kind, obj Object) (Object, error) {
 		return nil, err
 	}
 	key := KeyOf(kind, obj)
-	if _, ok := s.objects[key]; ok {
+	if _, ok := s.objects[kind][key]; ok {
 		return nil, fmt.Errorf("%s: %w", key, ErrExists)
 	}
 	return s.commit(Added, key, obj)
@@ -131,7 +158,7 @@ func (s *Store) Update(kind Kind, obj Object) (Object, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := KeyOf(kind, obj)
-	current, ok := s.objects[key]
+	current, ok := s.objects[kind][key]
 	if !ok {
 		return nil, fmt.Errorf("%s: %w", key, ErrNotFound)
 	}
@@ -145,7 +172,7 @@ func (s *Store) Update(kind Kind, obj Object) (Object, error) {
 func (s *Store) Delete(key Key) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	obj, ok := s.objects[key]
+	obj, ok := s.objects[key.Kind][key]
 	if !ok {
 		return fmt.Errorf("%s: %w", key, ErrNotFound)
 	}
@@ -154,7 +181,7 @@ func (s *Store) Delete(key Key) error {
 		return err
 	}
 	s.revision = next
-	delete(s.objects, key)
+	delete(s.objects[key.Kind], key)
 	s.notify(Event{Type: Deleted, Key: key, Object: obj})
 	return nil
 }
@@ -167,9 +194,16 @@ func (s *Store) commit(t EventType, key Key, obj Object) (Object, error) {
 		return nil, err
 	}
 	s.revision = next
-	s.objects[key] = obj
+	s.put(key, obj)
 	s.notify(Event{Type: t, Key: key, Object: obj})
 	return clone(obj), nil
+}
+
+func (s *Store) put(key Key, obj Object) {
+	if s.objects[key.Kind] == nil {
+		s.objects[key.Kind] = map[Key]Object{}
+	}
+	s.objects[key.Kind][key] = obj
 }
 
 // prepare fills in what the API server would on creation.

@@ -32,11 +32,12 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Nodes_Register_FullMethodName    = "/agoneslite.node.v1.Nodes/Register"
-	Nodes_Watch_FullMethodName       = "/agoneslite.node.v1.Nodes/Watch"
-	Nodes_Report_FullMethodName      = "/agoneslite.node.v1.Nodes/Report"
-	Nodes_SetMetadata_FullMethodName = "/agoneslite.node.v1.Nodes/SetMetadata"
-	Nodes_Logs_FullMethodName        = "/agoneslite.node.v1.Nodes/Logs"
+	Nodes_Register_FullMethodName     = "/agoneslite.node.v1.Nodes/Register"
+	Nodes_Watch_FullMethodName        = "/agoneslite.node.v1.Nodes/Watch"
+	Nodes_Report_FullMethodName       = "/agoneslite.node.v1.Nodes/Report"
+	Nodes_SetMetadata_FullMethodName  = "/agoneslite.node.v1.Nodes/SetMetadata"
+	Nodes_UpdateCounts_FullMethodName = "/agoneslite.node.v1.Nodes/UpdateCounts"
+	Nodes_Logs_FullMethodName         = "/agoneslite.node.v1.Nodes/Logs"
 )
 
 // NodesClient is the client API for Nodes service.
@@ -53,6 +54,9 @@ type NodesClient interface {
 	Report(ctx context.Context, in *ReportRequest, opts ...grpc.CallOption) (*ReportResponse, error)
 	// SetMetadata adds labels and annotations a game server set through the SDK.
 	SetMetadata(ctx context.Context, in *SetMetadataRequest, opts ...grpc.CallOption) (*SetMetadataResponse, error)
+	// UpdateCounts changes the Counters and Lists of a GameServer as the game
+	// server asked through the SDK, and answers with the GameServer afterwards.
+	UpdateCounts(ctx context.Context, in *UpdateCountsRequest, opts ...grpc.CallOption) (*UpdateCountsResponse, error)
 	// Logs carries a game server's log to the control plane. The agent opens
 	// it in answer to a LogRequest it received through Watch.
 	Logs(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[LogChunk, LogsResponse], error)
@@ -115,6 +119,16 @@ func (c *nodesClient) SetMetadata(ctx context.Context, in *SetMetadataRequest, o
 	return out, nil
 }
 
+func (c *nodesClient) UpdateCounts(ctx context.Context, in *UpdateCountsRequest, opts ...grpc.CallOption) (*UpdateCountsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateCountsResponse)
+	err := c.cc.Invoke(ctx, Nodes_UpdateCounts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *nodesClient) Logs(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[LogChunk, LogsResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &Nodes_ServiceDesc.Streams[1], Nodes_Logs_FullMethodName, cOpts...)
@@ -142,6 +156,9 @@ type NodesServer interface {
 	Report(context.Context, *ReportRequest) (*ReportResponse, error)
 	// SetMetadata adds labels and annotations a game server set through the SDK.
 	SetMetadata(context.Context, *SetMetadataRequest) (*SetMetadataResponse, error)
+	// UpdateCounts changes the Counters and Lists of a GameServer as the game
+	// server asked through the SDK, and answers with the GameServer afterwards.
+	UpdateCounts(context.Context, *UpdateCountsRequest) (*UpdateCountsResponse, error)
 	// Logs carries a game server's log to the control plane. The agent opens
 	// it in answer to a LogRequest it received through Watch.
 	Logs(grpc.ClientStreamingServer[LogChunk, LogsResponse]) error
@@ -166,6 +183,9 @@ func (UnimplementedNodesServer) Report(context.Context, *ReportRequest) (*Report
 }
 func (UnimplementedNodesServer) SetMetadata(context.Context, *SetMetadataRequest) (*SetMetadataResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetMetadata not implemented")
+}
+func (UnimplementedNodesServer) UpdateCounts(context.Context, *UpdateCountsRequest) (*UpdateCountsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateCounts not implemented")
 }
 func (UnimplementedNodesServer) Logs(grpc.ClientStreamingServer[LogChunk, LogsResponse]) error {
 	return status.Error(codes.Unimplemented, "method Logs not implemented")
@@ -256,6 +276,24 @@ func _Nodes_SetMetadata_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Nodes_UpdateCounts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateCountsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodesServer).UpdateCounts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Nodes_UpdateCounts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodesServer).UpdateCounts(ctx, req.(*UpdateCountsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Nodes_Logs_Handler(srv interface{}, stream grpc.ServerStream) error {
 	return srv.(NodesServer).Logs(&grpc.GenericServerStream[LogChunk, LogsResponse]{ServerStream: stream})
 }
@@ -281,6 +319,10 @@ var Nodes_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetMetadata",
 			Handler:    _Nodes_SetMetadata_Handler,
+		},
+		{
+			MethodName: "UpdateCounts",
+			Handler:    _Nodes_UpdateCounts_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

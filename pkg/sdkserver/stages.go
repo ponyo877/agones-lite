@@ -5,14 +5,7 @@ import (
 	"errors"
 
 	sdkalpha "agones.dev/agones/pkg/sdk/alpha"
-	sdkbeta "agones.dev/agones/pkg/sdk/beta"
 )
-
-// beta is the beta SDK service: Counters and Lists. Every call answers
-// Unimplemented until they are built.
-type beta struct {
-	sdkbeta.UnimplementedSDKServer
-}
 
 // errPlayerTracking is what upstream returns while the PlayerTracking
 // feature gate is off, which is its default.

@@ -7,13 +7,18 @@
 //
 // The sidecar keeps one copy of its GameServer, fed by the node's agent, and
 // answers reads from it. Requests that change something are queued for the
-// agent and acknowledged at once, as upstream does.
+// agent and acknowledged at once, as upstream does. A change to a Counter or
+// a List also shows in every read from that moment on.
 //
 //   - server.go: the state and the two listeners (gRPC and REST)
 //   - sdk.go: the stable SDK calls
+//   - counts.go: the beta SDK calls, Counters and Lists, and what they refuse
+//   - view.go: the GameServer as the game server sees it, changes on their
+//     way to the agent included
+//   - pending.go: what such a change does to a GameServer
 //   - agent.go: the link to the agent
 //   - health.go: noticing a game server that stopped sending Health pings
-//   - stages.go: the alpha and beta SDK services
+//   - stages.go: the alpha SDK service, which is switched off
 //
 // Upstream counterpart: pkg/sdkserver and cmd/sdk-server.
 package sdkserver
@@ -46,8 +51,11 @@ type Server struct {
 	health *health
 
 	mu       sync.Mutex
-	current  *sdk.GameServer
-	arrived  chan struct{} // closed once the first GameServer came in
+	current  *sdk.GameServer          // the base: the last GameServer from the agent
+	pending  []*sidecarv1.TellRequest // changes to Counters and Lists the agent has not answered, oldest first
+	held     *sdk.GameServer          // pushed while changes were pending; see set
+	view     *sdk.GameServer          // current with pending on top: what the game server sees
+	arrived  chan struct{}            // closed once the first GameServer came in
 	watchers map[chan *sdk.GameServer]struct{}
 	reserve  *time.Timer // returns a Reserved game server to Ready
 }
@@ -80,7 +88,7 @@ func (s *Server) Run(ctx context.Context, grpcPort, httpPort int) error {
 	}
 	grpcServer := grpc.NewServer()
 	sdk.RegisterSDKServer(grpcServer, s)
-	sdkbeta.RegisterSDKServer(grpcServer, beta{})
+	sdkbeta.RegisterSDKServer(grpcServer, beta{server: s})
 	sdkalpha.RegisterSDKServer(grpcServer, alpha{})
 
 	gateway, err := newGateway(ctx, fmt.Sprintf("127.0.0.1:%d", grpcPort))
@@ -158,56 +166,4 @@ func rejectEmptyHealth(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
-}
-
-// set stores a new version of the GameServer and shows it to every watcher.
-func (s *Server) set(gs *sdk.GameServer) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.current == nil {
-		close(s.arrived)
-	}
-	s.current = gs
-	for watcher := range s.watchers {
-		offer(watcher, gs)
-	}
-}
-
-// offer replaces an update the watcher has not read yet: only the latest
-// state matters.
-func offer(watcher chan *sdk.GameServer, gs *sdk.GameServer) {
-	select {
-	case <-watcher:
-	default:
-	}
-	watcher <- gs
-}
-
-// get waits for the first GameServer to arrive, then returns the latest.
-func (s *Server) get(ctx context.Context) (*sdk.GameServer, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-s.arrived:
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.current, nil
-}
-
-// subscribe returns a channel that carries the current GameServer and every
-// later version.
-func (s *Server) subscribe() (<-chan *sdk.GameServer, func()) {
-	watcher := make(chan *sdk.GameServer, 1)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.current != nil {
-		watcher <- s.current
-	}
-	s.watchers[watcher] = struct{}{}
-	return watcher, func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		delete(s.watchers, watcher)
-	}
 }

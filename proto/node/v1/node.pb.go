@@ -20,6 +20,7 @@
 package nodev1
 
 import (
+	v1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -764,11 +765,135 @@ func (*SetMetadataResponse) Descriptor() ([]byte, []int) {
 	return file_proto_node_v1_node_proto_rawDescGZIP(), []int{12}
 }
 
+type UpdateCountsRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Namespace string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	Name      string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// The changes exactly as the sidecar sent them, in the order they were made.
+	Counters []*v1.CounterUpdate `protobuf:"bytes,3,rep,name=counters,proto3" json:"counters,omitempty"`
+	Lists    []*v1.ListUpdate    `protobuf:"bytes,4,rep,name=lists,proto3" json:"lists,omitempty"`
+	// The name the sidecar gave the change. A change whose name is the one
+	// made last is not made again.
+	ChangeId      string `protobuf:"bytes,5,opt,name=change_id,json=changeId,proto3" json:"change_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateCountsRequest) Reset() {
+	*x = UpdateCountsRequest{}
+	mi := &file_proto_node_v1_node_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateCountsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateCountsRequest) ProtoMessage() {}
+
+func (x *UpdateCountsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_v1_node_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateCountsRequest.ProtoReflect.Descriptor instead.
+func (*UpdateCountsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_node_v1_node_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *UpdateCountsRequest) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *UpdateCountsRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *UpdateCountsRequest) GetCounters() []*v1.CounterUpdate {
+	if x != nil {
+		return x.Counters
+	}
+	return nil
+}
+
+func (x *UpdateCountsRequest) GetLists() []*v1.ListUpdate {
+	if x != nil {
+		return x.Lists
+	}
+	return nil
+}
+
+func (x *UpdateCountsRequest) GetChangeId() string {
+	if x != nil {
+		return x.ChangeId
+	}
+	return ""
+}
+
+type UpdateCountsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// JSON of the GameServer after the change. Empty when it is gone.
+	GameServer    []byte `protobuf:"bytes,1,opt,name=game_server,json=gameServer,proto3" json:"game_server,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateCountsResponse) Reset() {
+	*x = UpdateCountsResponse{}
+	mi := &file_proto_node_v1_node_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateCountsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateCountsResponse) ProtoMessage() {}
+
+func (x *UpdateCountsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_v1_node_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateCountsResponse.ProtoReflect.Descriptor instead.
+func (*UpdateCountsResponse) Descriptor() ([]byte, []int) {
+	return file_proto_node_v1_node_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *UpdateCountsResponse) GetGameServer() []byte {
+	if x != nil {
+		return x.GameServer
+	}
+	return nil
+}
+
 var File_proto_node_v1_node_proto protoreflect.FileDescriptor
 
 const file_proto_node_v1_node_proto_rawDesc = "" +
 	"\n" +
-	"\x18proto/node/v1/node.proto\x12\x12agoneslite.node.v1\"%\n" +
+	"\x18proto/node/v1/node.proto\x12\x12agoneslite.node.v1\x1a\x1eproto/sidecar/v1/sidecar.proto\"%\n" +
 	"\x0fRegisterRequest\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\fR\x04node\"\x12\n" +
 	"\x10RegisterResponse\"\"\n" +
@@ -816,12 +941,22 @@ const file_proto_node_v1_node_proto_rawDesc = "" +
 	"\x10AnnotationsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x15\n" +
-	"\x13SetMetadataResponse2\xa9\x03\n" +
+	"\x13SetMetadataResponse\"\xdf\x01\n" +
+	"\x13UpdateCountsRequest\x12\x1c\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12@\n" +
+	"\bcounters\x18\x03 \x03(\v2$.agoneslite.sidecar.v1.CounterUpdateR\bcounters\x127\n" +
+	"\x05lists\x18\x04 \x03(\v2!.agoneslite.sidecar.v1.ListUpdateR\x05lists\x12\x1b\n" +
+	"\tchange_id\x18\x05 \x01(\tR\bchangeId\"7\n" +
+	"\x14UpdateCountsResponse\x12\x1f\n" +
+	"\vgame_server\x18\x01 \x01(\fR\n" +
+	"gameServer2\x8c\x04\n" +
 	"\x05Nodes\x12U\n" +
 	"\bRegister\x12#.agoneslite.node.v1.RegisterRequest\x1a$.agoneslite.node.v1.RegisterResponse\x12N\n" +
 	"\x05Watch\x12 .agoneslite.node.v1.WatchRequest\x1a!.agoneslite.node.v1.WatchResponse0\x01\x12O\n" +
 	"\x06Report\x12!.agoneslite.node.v1.ReportRequest\x1a\".agoneslite.node.v1.ReportResponse\x12^\n" +
-	"\vSetMetadata\x12&.agoneslite.node.v1.SetMetadataRequest\x1a'.agoneslite.node.v1.SetMetadataResponse\x12H\n" +
+	"\vSetMetadata\x12&.agoneslite.node.v1.SetMetadataRequest\x1a'.agoneslite.node.v1.SetMetadataResponse\x12a\n" +
+	"\fUpdateCounts\x12'.agoneslite.node.v1.UpdateCountsRequest\x1a(.agoneslite.node.v1.UpdateCountsResponse\x12H\n" +
 	"\x04Logs\x12\x1c.agoneslite.node.v1.LogChunk\x1a .agoneslite.node.v1.LogsResponse(\x01B6Z4github.com/ponyo877/agones-lite/proto/node/v1;nodev1b\x06proto3"
 
 var (
@@ -836,45 +971,53 @@ func file_proto_node_v1_node_proto_rawDescGZIP() []byte {
 	return file_proto_node_v1_node_proto_rawDescData
 }
 
-var file_proto_node_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_proto_node_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_proto_node_v1_node_proto_goTypes = []any{
-	(*RegisterRequest)(nil),     // 0: agoneslite.node.v1.RegisterRequest
-	(*RegisterResponse)(nil),    // 1: agoneslite.node.v1.RegisterResponse
-	(*WatchRequest)(nil),        // 2: agoneslite.node.v1.WatchRequest
-	(*WatchResponse)(nil),       // 3: agoneslite.node.v1.WatchResponse
-	(*LogRequest)(nil),          // 4: agoneslite.node.v1.LogRequest
-	(*LogChunk)(nil),            // 5: agoneslite.node.v1.LogChunk
-	(*LogsResponse)(nil),        // 6: agoneslite.node.v1.LogsResponse
-	(*Removed)(nil),             // 7: agoneslite.node.v1.Removed
-	(*Synced)(nil),              // 8: agoneslite.node.v1.Synced
-	(*ReportRequest)(nil),       // 9: agoneslite.node.v1.ReportRequest
-	(*ReportResponse)(nil),      // 10: agoneslite.node.v1.ReportResponse
-	(*SetMetadataRequest)(nil),  // 11: agoneslite.node.v1.SetMetadataRequest
-	(*SetMetadataResponse)(nil), // 12: agoneslite.node.v1.SetMetadataResponse
-	nil,                         // 13: agoneslite.node.v1.SetMetadataRequest.LabelsEntry
-	nil,                         // 14: agoneslite.node.v1.SetMetadataRequest.AnnotationsEntry
+	(*RegisterRequest)(nil),      // 0: agoneslite.node.v1.RegisterRequest
+	(*RegisterResponse)(nil),     // 1: agoneslite.node.v1.RegisterResponse
+	(*WatchRequest)(nil),         // 2: agoneslite.node.v1.WatchRequest
+	(*WatchResponse)(nil),        // 3: agoneslite.node.v1.WatchResponse
+	(*LogRequest)(nil),           // 4: agoneslite.node.v1.LogRequest
+	(*LogChunk)(nil),             // 5: agoneslite.node.v1.LogChunk
+	(*LogsResponse)(nil),         // 6: agoneslite.node.v1.LogsResponse
+	(*Removed)(nil),              // 7: agoneslite.node.v1.Removed
+	(*Synced)(nil),               // 8: agoneslite.node.v1.Synced
+	(*ReportRequest)(nil),        // 9: agoneslite.node.v1.ReportRequest
+	(*ReportResponse)(nil),       // 10: agoneslite.node.v1.ReportResponse
+	(*SetMetadataRequest)(nil),   // 11: agoneslite.node.v1.SetMetadataRequest
+	(*SetMetadataResponse)(nil),  // 12: agoneslite.node.v1.SetMetadataResponse
+	(*UpdateCountsRequest)(nil),  // 13: agoneslite.node.v1.UpdateCountsRequest
+	(*UpdateCountsResponse)(nil), // 14: agoneslite.node.v1.UpdateCountsResponse
+	nil,                          // 15: agoneslite.node.v1.SetMetadataRequest.LabelsEntry
+	nil,                          // 16: agoneslite.node.v1.SetMetadataRequest.AnnotationsEntry
+	(*v1.CounterUpdate)(nil),     // 17: agoneslite.sidecar.v1.CounterUpdate
+	(*v1.ListUpdate)(nil),        // 18: agoneslite.sidecar.v1.ListUpdate
 }
 var file_proto_node_v1_node_proto_depIdxs = []int32{
 	7,  // 0: agoneslite.node.v1.WatchResponse.removed:type_name -> agoneslite.node.v1.Removed
 	8,  // 1: agoneslite.node.v1.WatchResponse.synced:type_name -> agoneslite.node.v1.Synced
 	4,  // 2: agoneslite.node.v1.WatchResponse.log_request:type_name -> agoneslite.node.v1.LogRequest
-	13, // 3: agoneslite.node.v1.SetMetadataRequest.labels:type_name -> agoneslite.node.v1.SetMetadataRequest.LabelsEntry
-	14, // 4: agoneslite.node.v1.SetMetadataRequest.annotations:type_name -> agoneslite.node.v1.SetMetadataRequest.AnnotationsEntry
-	0,  // 5: agoneslite.node.v1.Nodes.Register:input_type -> agoneslite.node.v1.RegisterRequest
-	2,  // 6: agoneslite.node.v1.Nodes.Watch:input_type -> agoneslite.node.v1.WatchRequest
-	9,  // 7: agoneslite.node.v1.Nodes.Report:input_type -> agoneslite.node.v1.ReportRequest
-	11, // 8: agoneslite.node.v1.Nodes.SetMetadata:input_type -> agoneslite.node.v1.SetMetadataRequest
-	5,  // 9: agoneslite.node.v1.Nodes.Logs:input_type -> agoneslite.node.v1.LogChunk
-	1,  // 10: agoneslite.node.v1.Nodes.Register:output_type -> agoneslite.node.v1.RegisterResponse
-	3,  // 11: agoneslite.node.v1.Nodes.Watch:output_type -> agoneslite.node.v1.WatchResponse
-	10, // 12: agoneslite.node.v1.Nodes.Report:output_type -> agoneslite.node.v1.ReportResponse
-	12, // 13: agoneslite.node.v1.Nodes.SetMetadata:output_type -> agoneslite.node.v1.SetMetadataResponse
-	6,  // 14: agoneslite.node.v1.Nodes.Logs:output_type -> agoneslite.node.v1.LogsResponse
-	10, // [10:15] is the sub-list for method output_type
-	5,  // [5:10] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	15, // 3: agoneslite.node.v1.SetMetadataRequest.labels:type_name -> agoneslite.node.v1.SetMetadataRequest.LabelsEntry
+	16, // 4: agoneslite.node.v1.SetMetadataRequest.annotations:type_name -> agoneslite.node.v1.SetMetadataRequest.AnnotationsEntry
+	17, // 5: agoneslite.node.v1.UpdateCountsRequest.counters:type_name -> agoneslite.sidecar.v1.CounterUpdate
+	18, // 6: agoneslite.node.v1.UpdateCountsRequest.lists:type_name -> agoneslite.sidecar.v1.ListUpdate
+	0,  // 7: agoneslite.node.v1.Nodes.Register:input_type -> agoneslite.node.v1.RegisterRequest
+	2,  // 8: agoneslite.node.v1.Nodes.Watch:input_type -> agoneslite.node.v1.WatchRequest
+	9,  // 9: agoneslite.node.v1.Nodes.Report:input_type -> agoneslite.node.v1.ReportRequest
+	11, // 10: agoneslite.node.v1.Nodes.SetMetadata:input_type -> agoneslite.node.v1.SetMetadataRequest
+	13, // 11: agoneslite.node.v1.Nodes.UpdateCounts:input_type -> agoneslite.node.v1.UpdateCountsRequest
+	5,  // 12: agoneslite.node.v1.Nodes.Logs:input_type -> agoneslite.node.v1.LogChunk
+	1,  // 13: agoneslite.node.v1.Nodes.Register:output_type -> agoneslite.node.v1.RegisterResponse
+	3,  // 14: agoneslite.node.v1.Nodes.Watch:output_type -> agoneslite.node.v1.WatchResponse
+	10, // 15: agoneslite.node.v1.Nodes.Report:output_type -> agoneslite.node.v1.ReportResponse
+	12, // 16: agoneslite.node.v1.Nodes.SetMetadata:output_type -> agoneslite.node.v1.SetMetadataResponse
+	14, // 17: agoneslite.node.v1.Nodes.UpdateCounts:output_type -> agoneslite.node.v1.UpdateCountsResponse
+	6,  // 18: agoneslite.node.v1.Nodes.Logs:output_type -> agoneslite.node.v1.LogsResponse
+	13, // [13:19] is the sub-list for method output_type
+	7,  // [7:13] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_proto_node_v1_node_proto_init() }
@@ -894,7 +1037,7 @@ func file_proto_node_v1_node_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_node_v1_node_proto_rawDesc), len(file_proto_node_v1_node_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   15,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

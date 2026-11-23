@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"flag"
@@ -82,28 +84,78 @@ func (c *connection) admin() (client, error) {
 	return c.client(c.server, auth.Admin)
 }
 
-// stream copies a response body to out as it arrives. It is for answers
-// that may never end, such as a log that is being followed.
-func (c client) stream(ctx context.Context, path string, out io.Writer) error {
+// open starts a GET whose answer may never end, such as a log that is
+// being followed. The caller closes the body.
+func (c client) open(ctx context.Context, path string) (io.ReadCloser, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		defer func() { _ = resp.Body.Close() }()
+		data, _ := io.ReadAll(resp.Body)
+		return nil, failure(resp.StatusCode, data)
+	}
+	return resp.Body, nil
+}
+
+// stream copies an answer to out as it arrives.
+func (c client) stream(ctx context.Context, path string, out io.Writer) error {
+	body, err := c.open(ctx, path)
+	if err != nil {
 		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= http.StatusBadRequest {
-		failure := &apiserver.Error{Status: resp.StatusCode}
-		_ = json.NewDecoder(resp.Body).Decode(failure)
-		return failure
-	}
-	_, err = io.Copy(out, resp.Body)
+	defer func() { _ = body.Close() }()
+	_, err = io.Copy(out, body)
 	return err
+}
+
+// events reads Server-Sent Events and hands each one to handle, until the
+// stream ends, handle fails, or the user has seen enough and ctx is done.
+func (c client) events(ctx context.Context, path string, handle func(event string, data []byte) error) error {
+	body, err := c.open(ctx, path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = body.Close() }()
+	lines := bufio.NewScanner(body)
+	lines.Buffer(nil, 16<<20) // one line is one whole object
+	event := ""
+	for lines.Scan() {
+		field, value, _ := strings.Cut(lines.Text(), ": ")
+		if field == "event" {
+			event = value
+		}
+		if field != "data" {
+			continue
+		}
+		if err := handle(event, []byte(value)); err != nil {
+			return err
+		}
+	}
+	if ctx.Err() != nil {
+		return nil // stopped by the user
+	}
+	return lines.Err()
+}
+
+// failure reads why a request was refused. The management API says it under
+// "error"; the allocation API answers the way gRPC does over HTTP, under
+// "message".
+func failure(status int, body []byte) error {
+	var said struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+	_ = json.Unmarshal(body, &said)
+	return &apiserver.Error{Status: status, Message: cmp.Or(said.Error, said.Message, http.StatusText(status))}
 }
 
 // call sends one request. The response is decoded into out when not nil.
@@ -126,9 +178,7 @@ func (c client) call(ctx context.Context, method, path string, body []byte, out 
 		return nil, err
 	}
 	if resp.StatusCode >= http.StatusBadRequest {
-		failure := &apiserver.Error{Status: resp.StatusCode}
-		_ = json.Unmarshal(data, failure)
-		return nil, failure
+		return nil, failure(resp.StatusCode, data)
 	}
 	if out != nil {
 		err = json.Unmarshal(data, out)

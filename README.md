@@ -17,9 +17,19 @@ Compatibility is pinned to Agones v1.62.0.
 
 ## Status
 
-Early. The first milestone works: a single `GameServer` is placed on a node,
-started in Docker, becomes `Ready` through the SDK, and is removed on
-`Shutdown`. Fleets, allocation and autoscaling come next; see the roadmap in
+Everything planned for the first version is in place and tested, but nothing
+has run in production yet, and it has only been tried on macOS with Colima.
+
+- `GameServer`, `Fleet` (with rolling updates), `GameServerSet`
+- Allocation over gRPC and REST, on the same API as the Agones allocator
+- `FleetAutoscaler`: Buffer, Counter, List, Webhook, Schedule and Chain
+- The SDK: every stable and beta call (Counters and Lists included), over
+  gRPC, REST and WebSocket
+- Several nodes: agents on other machines join with a token; a node that
+  goes quiet has its idle game servers replaced and its sessions kept
+- TLS and tokens, Prometheus metrics, an event history, logs through the CLI
+
+What is left out on purpose, and what Docker cannot express, is listed in
 [docs/planning.md](docs/planning.md).
 
 ## Try it
@@ -34,16 +44,30 @@ make build sidecar-image
 bin/agones-lite server
 ```
 
-In another terminal, apply the sample game server from the Agones repository:
+In another terminal, apply the sample Fleet from the Agones repository and
+take a game server from it, as a matchmaker would:
 
 ```sh
-bin/agones-lite apply -f third_party/agones/examples/simple-game-server/gameserver.yaml
+examples=third_party/agones/examples/simple-game-server
+bin/agones-lite apply -f $examples/fleet.yaml
 bin/agones-lite get gameservers
+bin/agones-lite allocate --fleet simple-game-server
 ```
 
 ```text
-NAME                       STATE   ADDRESS     PORT   NODE     AGE
-simple-game-server-5xbmz   Ready   127.0.0.1   7000   node-1   8s
+NAME                             STATE   ADDRESS     PORT   NODE      AGE
+simple-game-server-96p7v-dt658   Ready   127.0.0.1   7000   my-host   9s
+simple-game-server-96p7v-ggpt7   Ready   127.0.0.1   7001   my-host   9s
+simple-game-server-96p7v-dt658 127.0.0.1 7000
+```
+
+Let the Fleet grow and shrink by itself, then look at what happened:
+
+```sh
+bin/agones-lite apply -f $examples/fleetautoscaler.yaml
+bin/agones-lite get gameservers -w          # every change, until Ctrl-C
+bin/agones-lite describe fleet simple-game-server
+bin/agones-lite logs simple-game-server-96p7v-dt658
 ```
 
 If Docker does not listen on `/var/run/docker.sock` (Colima, for example),
@@ -52,6 +76,25 @@ point `DOCKER_HOST` at its socket first:
 ```sh
 export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
 ```
+
+## More machines
+
+The control plane listens for agents once it is given an address for them.
+The join token carries the fingerprint of the control plane's certificate
+authority, so an agent cannot be pointed at an impostor.
+
+```sh
+# on the control plane's machine
+bin/agones-lite server --node-listen 0.0.0.0:9445 --tls-san cp.example.com
+bin/agones-lite token show join
+
+# on every further machine
+bin/agones-lite agent --server cp.example.com:9445 --token-file join-token \
+    --address 203.0.113.11
+```
+
+`agones-lite node cordon`, `drain` and `delete` take a machine out of
+service. [deploy/](deploy) has systemd units and example configuration files.
 
 ## Reading the code
 
@@ -69,10 +112,18 @@ has a full reading order.
 ## Development
 
 ```sh
-make test   # unit tests; the Docker tests run when a daemon is reachable
+make test   # all tests; the Docker tests run when a daemon is reachable
 make lint   # golangci-lint, including the complexity limits
 make proto  # regenerate code for the protocols in proto/
+make dist   # release binaries for every platform, into dist/
+
+# 1,000 game servers on 10 simulated nodes, 50 allocations a second
+AGONES_LITE_LOAD=1 go test ./pkg/controlplane/ -run TestLoad -v
 ```
+
+`test/conformance` drives the sidecar with the official Go SDK and over
+REST; `pkg/controlplane` has the tests that tell the whole story, including
+the ones that break things on purpose.
 
 ## License
 

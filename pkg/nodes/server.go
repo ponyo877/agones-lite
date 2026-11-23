@@ -175,6 +175,22 @@ func (s *Server) Report(_ context.Context, req *nodev1.ReportRequest) (*nodev1.R
 	return &nodev1.ReportResponse{}, nil
 }
 
+// UpdateCounts implements the UpdateCounts call of the protocol.
+func (s *Server) UpdateCounts(_ context.Context, req *nodev1.UpdateCountsRequest) (*nodev1.UpdateCountsResponse, error) {
+	gs, err := s.local.UpdateCounts(req.GetNamespace(), req.GetName(), req.GetChangeId(), req.GetCounters(), req.GetLists())
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	if gs == nil {
+		return &nodev1.UpdateCountsResponse{}, nil
+	}
+	data, err := json.Marshal(gs)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &nodev1.UpdateCountsResponse{GameServer: data}, nil
+}
+
 // SetMetadata implements the SetMetadata call of the protocol.
 func (s *Server) SetMetadata(_ context.Context, req *nodev1.SetMetadataRequest) (*nodev1.SetMetadataResponse, error) {
 	if err := s.local.SetMetadata(req.GetNamespace(), req.GetName(), req.GetLabels(), req.GetAnnotations()); err != nil {

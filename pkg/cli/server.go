@@ -65,7 +65,7 @@ func serverFlags(args []string) (*serverOptions, error) {
 	fs.DurationVar(&o.graces.Unallocated, "node-lost-grace", nodes.DefaultGraces.Unallocated, "how long a disconnected node's idle game servers are waited for")
 	fs.DurationVar(&o.graces.Allocated, "node-lost-allocated-grace", nodes.DefaultGraces.Allocated, "how long a disconnected node's allocated game servers are waited for")
 	o.node.register(fs)
-	if err := fs.Parse(args); err != nil {
+	if err := parseWithConfig(fs, args); err != nil {
 		return nil, err
 	}
 	o.node.finish()
@@ -113,7 +113,10 @@ func runServer(ctx context.Context, args []string, out io.Writer) error {
 // parts lists everything the server runs side by side.
 func (o *serverOptions) parts(ctx context.Context, s *store.Store, recorder *events.Recorder, secrets *auth.Secrets) ([]part, error) {
 	measure := metrics.New(s)
-	cp := controlplane.New(s, recorder, measure, o.graces)
+	cp, err := controlplane.New(s, recorder, measure, o.graces)
+	if err != nil {
+		return nil, err
+	}
 	scrape := &http.Server{Addr: o.metricsListen, Handler: measure.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	allocation, err := allocationServer(ctx, o, cp, secrets)
 	if err != nil {

@@ -116,6 +116,7 @@ metadata:
   name: node-1
 spec:
   unschedulable: false        # cordon すると true になる
+  drain: false                # drain すると true になる
 status:
   phase: Ready                # Ready または Disconnected
   address: 203.0.113.10       # プレイヤーが接続するアドレス
@@ -191,21 +192,66 @@ Kubernetes の Service を指す `service` による指定は拒否する。
 store は SQLite のファイルと、その内容をすべて載せたメモリ上の写しを持つ。
 
 読み取りはメモリ上の写しから行う。
-Allocation は待機中のゲームサーバを毎回一覧するので、そのたびに SQLite から読んで JSON を復元していては、毎秒 50 件の目安に対して余裕がなくなる。
 プロセスは 1 つなので、すべての書き込みが store を通るかぎり、写しは SQLite と食い違わない。
+
+### 2 種類の読み取り
+
+読み取りには 2 つの形がある。
+
+- **Get と List**：呼び出し側だけの複製を返す。受け取ったものは自由に書き換えられ、そのまま更新に使える。
+- **View**：保存されているオブジェクトそのものを、複製せずに返す。読むだけに使い、書き換えるわけにはいかない。
+
+View は性能のためにある。
+Allocation や各制御は、変更があるたびにゲームサーバ全体を見渡す。
+最初の実装は List だけを持ち、そのたびに全台を複製していた。
+負荷試験にかけると、1,000 台が Ready になるまでに 1 分半かかり、割り当ての応答は秒の単位になった。
+全体を見渡す箇所を View に切り替えると、それぞれ約 1 秒と数ミリ秒になった。
+
+View を安全にしているのは、store が保存済みのオブジェクトを書き換えないことである。
+更新は、新しいオブジェクトへの差し替えとして行う。
+そのため、以前に取った View は、取った時点の姿を示し続ける。
+
+### 書き込み
 
 書き込みは次の順に進む。
 
 1. store 全体のロックを取る。
 2. 渡されたリソースの `resourceVersion` が現在の版と一致するか確かめる。一致しなければ競合エラーを返す。
 3. 版番号を 1 進め、SQLite に 1 トランザクションで書く。
-4. メモリ上の写しを更新する。
+4. メモリ上の写しを差し替える。
 5. 購読者に変更を通知する。
 
 版番号は store 全体で 1 本の通し番号にする。
 リソースごとに番号を持つより単純で、変更の前後関係がそのまま番号の大小になる。
 
-SQLite のテーブルは次の 3 つである。
+「読んで、変えて、書く」という一連の操作には `Change` を使う。
+`Change` は、書く時点で他の誰かが先に更新していたら、読むところからやり直す。
+制御のコードは、競合の処理を自分で書かずに済む。
+
+削除には 2 つの操作がある。
+`MarkDeleted` は「消してよい」という印（`deletionTimestamp`）を付けるだけで、記録は残す。
+その記録を持つ制御が後始末を済ませてから、`Delete` で記録を消す。
+Kubernetes の finalizer と同じ役割である。
+
+store の Go のインタフェースは、種類ごとの型を付けた次の形で使う。
+
+```go
+func (t Typed[T]) Get(namespace, name string) (T, bool)
+func (t Typed[T]) List(namespace string) []T // private copies, sorted by name
+func (t Typed[T]) View(namespace string) []T // shared with the store: read only
+func (t Typed[T]) Create(obj T) (T, error)
+func (t Typed[T]) Update(obj T) (T, error) // ErrConflict on a stale resourceVersion
+func (t Typed[T]) Change(namespace, name string, change func(T) (keep bool)) error
+func (t Typed[T]) MarkDeleted(namespace, name string, now time.Time) error
+func (t Typed[T]) Delete(namespace, name string) error
+func (t Typed[T]) Watch() (events <-chan Event, cancel func())
+func (t Typed[T]) ListAndWatch(namespace string) (objects []T, events <-chan Event, cancel func())
+```
+
+### SQLite のテーブル
+
+テーブルは 3 つある。
+リソース本体と版番号は `pkg/store` が、イベント履歴は `pkg/events` が、同じファイルの中に持つ。
 
 ```sql
 -- リソース本体。data は本家互換の JSON
@@ -218,10 +264,16 @@ CREATE TABLE resources (
   PRIMARY KEY (kind, namespace, name)
 );
 
--- イベント履歴。既定で 24 時間たったものを消す
+-- 版番号
+CREATE TABLE meta (
+  key   TEXT PRIMARY KEY,
+  value BLOB NOT NULL
+);
+
+-- イベント履歴。24 時間たったものを消す
 CREATE TABLE events (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
-  time      TEXT NOT NULL,
+  time      INTEGER NOT NULL,
   kind      TEXT NOT NULL,
   namespace TEXT NOT NULL,
   name      TEXT NOT NULL,
@@ -229,31 +281,10 @@ CREATE TABLE events (
   reason    TEXT NOT NULL,
   message   TEXT NOT NULL
 );
-
--- 版番号、CA、トークンのハッシュなど
-CREATE TABLE meta (
-  key   TEXT PRIMARY KEY,
-  value BLOB NOT NULL
-);
 ```
 
-SQLite は WAL モードで開き、コミットのたびにディスクへ同期させる。
+SQLite は WAL モードで開き、リソースの書き込みはコミットのたびにディスクへ同期させる。
 同期を省くと、電源断の直前に行った割り当てが失われ、対戦中のゲームサーバがもう一度割り当てられるおそれがある。
-
-store の Go のインタフェースは次の形にする。
-
-```go
-type Store interface {
-	Get(key Key) (Object, bool)
-	List(kind Kind, namespace string) []Object
-	Create(obj Object) (Object, error)
-	// Update fails with ErrConflict when obj carries a stale resourceVersion.
-	Update(obj Object) (Object, error)
-	Delete(key Key) error
-	// Watch delivers every change to kind until cancel is called.
-	Watch(kind Kind) (events <-chan Event, cancel func())
-}
-```
 
 ## 制御ロジックの書き方
 
@@ -289,6 +320,9 @@ func Plan(set *agonesv1.GameServerSet, servers []*agonesv1.GameServer) Actions {
 
 `pkg/queue` は、同じキーの重複を 1 つにまとめ、失敗したキーを間隔を空けて再試行する。
 標準ライブラリだけで書く。
+
+きっかけの部分はどの制御でも同じなので、`pkg/control` に 1 回だけ書いてある。
+各制御は、どの種類の変更を聞くかと、変更がどのリソースに関わるかを渡すだけでよい。
 
 ## GameServer のライフサイクル
 
@@ -335,7 +369,7 @@ SDK からの要求は、本家と同じく、遷移元の状態を問わずに�
 | Allocation API による割り当て | コントロールプレーン | Ready から Allocated へ |
 | SDK の Reserve | sidecar | Reserved へ。`status.reservedUntil` を埋める |
 | SDK の Shutdown | sidecar | Shutdown へ |
-| 台数の削減 | コントロールプレーン | Shutdown へ |
+| 台数の削減、drain | コントロールプレーン | Shutdown へ。Allocated と Reserved には効かない |
 | コンテナが終了コード 0 で終わった | エージェント | Shutdown へ |
 | コンテナが 0 以外で終わった | エージェント | Unhealthy へ |
 | コンテナが見当たらない | エージェント | Unhealthy へ |
@@ -392,6 +426,8 @@ Kubernetes で Pod が Pending のまま待つのと同じ挙動である。
 担当のエージェントはそれを見てコンテナを止めて撤去し、撤去したことを報告する。
 コントロールプレーンは報告を受けてから記録を消す。
 ノードが決まる前の GameServer は、コンテナがないのですぐに記録を消す。
+担当のノードに届かないとき（接続が切れている、または削除された）も、報告を待たずに記録を消す。
+そのノードが戻ってくれば、エージェントが担当一覧にないコンテナとして撤去する。
 
 Shutdown になった GameServer は、コントロールプレーンが削除要求を出す。
 Unhealthy や Error になった単体の GameServer は、本家と同じく自動では消さない。
@@ -488,7 +524,8 @@ Kubernetes の Pod と同じ構造である。
 | `agones-lite.namespace` | GameServer の namespace |
 | `agones-lite.gameserver` | GameServer の名前 |
 | `agones-lite.uid` | GameServer の uid |
-| `agones-lite.role` | `sidecar` または `game` |
+| `agones-lite.role` | `sidecar`、`game`（主となるコンテナ）、`other` |
+| `agones-lite.node` | そのコンテナを管理するエージェントのノード名 |
 
 ### エージェントの再起動
 
@@ -569,7 +606,7 @@ sidecar は、同じノードのエージェントと gRPC で通信する。
 sidecar はこれをメモリに持ち、GetGameServer と WatchGameServer に答える。
 
 SDK から受けた要求は、sidecar がエージェントに送り、エージェントがコントロールプレーンに中継する。
-カウンタとリストの更新は、本家と同じく、短い時間のうちに来たものをまとめて送る。
+要求は、受け付けた順に 1 件ずつ送る。
 
 エージェントは、GameServer ごとに専用のトークンを作り、sidecar コンテナの環境変数で渡す。
 sidecar は接続のたびにこのトークンを示す。
@@ -577,6 +614,36 @@ sidecar は接続のたびにこのトークンを示す。
 
 エージェントに接続できない間も、sidecar は手元の状態で SDK に応答し続ける。
 送れなかった要求は保持し、接続が戻ったら送る。
+
+### カウンタとリストの更新
+
+カウンタとリストを変える RPC は、応答に変更後の値を載せる。
+そのため sidecar は、コントロールプレーンに反映される前に、要求を受け付けるかどうかを自分で判断する。
+
+sidecar は、手元の GameServer に「まだ反映されていない変更」を重ねたものを、ゲームサーバに見せる。
+流れは次のとおりである。
+
+1. sidecar が、見せている状態に照らして要求を判断する。容量を超える加算や、すでにある値の追加は、ここで断る。
+2. 受け付けた変更を、未反映の一覧に加える。この時点から、読み出しは変更後の値を返す。
+3. 変更をエージェントに送る。エージェントはコントロールプレーンに中継し、変更後の GameServer を応答で受け取って sidecar に返す。
+4. sidecar は、応答の GameServer を手元の状態にし、その変更を未反映の一覧から外す。
+
+未反映の変更がある間にエージェントから届いた GameServer は、応答が来るまで脇に置く。
+その GameServer が変更を含むのかどうかは、応答を見るまで区別できず、重ねると二重に数えるおそれがあるためである。
+
+判断の規則は、本家の SDK サーバ（`pkg/sdkserver/sdkserver.go`）から移した。
+sidecar の判断（`pkg/sdkserver/pending.go`）とコントロールプレーンの反映（`pkg/gameservers/counts.go`）は、同じ結果になる必要がある。
+両者が一致することは、テストで突き合わせている。
+
+変更には、sidecar が 1 件ごとに固有の名前を付ける。
+応答が途中で失われると、sidecar は同じ変更をもう一度送る。
+コントロールプレーンは、最後に反映した変更の名前を GameServer のアノテーション（`agones-lite/last-counts-change`）に覚えておき、同じ名前の変更は反映しない。
+
+本家は、500 ミリ秒の間に来た変更をまとめてから API サーバに送る。
+agones-lite はまとめない。
+エージェントは同じノードにあり、1 件ずつ送っても負荷にならないためである。
+変更の間隔が 500 ミリ秒より長ければ、結果は本家と同じになる。
+間隔がそれより短いときは、結果が違うことがある。
 
 ### ヘルス判定
 
@@ -591,7 +658,17 @@ sidecar は接続のたびにこのトークンを示す。
 
 Reserve は、指定された秒数だけ GameServer を Reserved にする。
 期限が来たときに Ready を要求するのは、本家と同じく sidecar のタイマーである。
-sidecar が再起動した場合は、`status.reservedUntil` からタイマーを組み直す。
+そのため、期限が来た GameServer は、本家と同じく RequestReady を経て Ready に戻る。
+
+### sidecar が止まったとき
+
+sidecar は、その GameServer のネットワーク名前空間の持ち主である。
+sidecar のコンテナが止まると、ゲームコンテナは通信できなくなる。
+エージェントは、sidecar の終了をゲームサーバの終了と同じに扱い、GameServer は Unhealthy になる。
+Allocated でも同じである。
+
+本家では、SDK サーバのコンテナだけが再起動し、Pod は残る。
+agones-lite には Pod の土台にあたる別のコンテナがないので、この違いが出る。
 
 ## Fleet と GameServerSet
 
@@ -693,20 +770,51 @@ FleetAutoscaler の制御は、一定の間隔で Fleet の望ましい台数を
 Webhook の呼び出しだけは、純粋関数にできない。
 外部を呼ぶ部分を実行の層に置き、応答から台数を決める部分を判断の層に置く。
 
+制御は 1 秒ごとに全部の FleetAutoscaler を見て、それぞれの間隔が過ぎたものだけを計算する。
+定義が書き換えられたものは、間隔を待たずに計算する。
+計算に失敗したとき（Fleet がない、Webhook が応答しない、など）は、警告のイベントを記録し、`status.ableToScale` を偽にする。
+
+Counter と List のポリシーは、空き容量だけを見る。
+使用中のカウンタを持つ GameServer でも、Allocated でなければ、台数を減らすときに削除の対象になる。
+これは本家と同じ挙動である。
+セッションを持つ GameServer は、割り当てによって Allocated にしておく必要がある。
+
 ## ノードの管理
 
 ### 参加
 
-エージェントは、コントロールプレーンの URL と参加トークンを指定して起動する。
-参加トークンには、コントロールプレーンの CA 証明書の指紋が含まれている。
+エージェントは、コントロールプレーンのアドレスと参加トークンを指定して起動する。
+参加トークンは、コントロールプレーンの CA 証明書の指紋と秘密の文字列を `.` でつないだものである。
 エージェントは、接続先が示した証明書の CA をこの指紋と照合するので、偽のコントロールプレーンには接続しない。
 
-接続すると、エージェントは自分の名前、公開アドレス、容量、ポート範囲、いま動いているコンテナの一覧を送る。
-コントロールプレーンは Node リソースを作るか更新し、そのノードが担当する GameServer の一覧を送り返す。
-以後は、変更のたびに差分を送る。
+### エージェントとの通信
 
-この通信の定義は `proto/node/v1` に置く。
-接続は 1 本の双方向ストリームで、エージェントからは報告が、コントロールプレーンからは担当の変更が流れる。
+通信の定義は `proto/node/v1` に置く。
+エージェントが呼び出す操作は 6 つある。
+
+| 操作 | 内容 |
+|---|---|
+| Register | ノードの名前、公開アドレス、容量、ポート範囲を知らせる。10 秒ごとに繰り返し、生存の合図を兼ねる |
+| Watch | そのノードが担当する GameServer を受け取る。最初に全件、続いて変更のたびに差分が届く |
+| Report | GameServer に起きた出来事を報告する |
+| SetMetadata | SDK で付けられたラベルとアノテーションを伝える |
+| UpdateCounts | SDK で変えられたカウンタとリストを伝え、変更後の GameServer を受け取る |
+| Logs | 求められたログを送る |
+
+Watch は開いたままのストリームである。
+コントロールプレーンは、このストリームが開いている間、ノードを接続中とみなす。
+
+エージェントは、最初の全件を受け取り終えるまで、コンテナに手を付けない。
+受け取り終える前に「担当一覧にないコンテナ」を片付けてしまうと、再起動のたびに稼働中のゲームサーバを止めることになる。
+接続が切れている間も同じ理由で何もせず、sidecar への応答だけを続ける。
+
+コントロールプレーンからエージェントへ頼みごとをする経路は、Watch のストリームしかない。
+ログの取得はこれを使う。
+コントロールプレーンがストリームに依頼を流し、エージェントが Logs を呼んで応える。
+
+設計の初期には、これらを 1 本の双方向ストリームにまとめる案だった。
+操作ごとに呼び出しを分けたほうが、定義もコードも読みやすいので、この形にした。
+通信の向き（エージェントから接続する）は変わらない。
 
 ### 接続が切れたとき
 
@@ -722,69 +830,135 @@ Webhook の呼び出しだけは、純粋関数にできない。
 
 Reserved の GameServer は、割り当て前として扱う。
 
+切断は、Watch のストリームが終わったことで検知する。
+相手が黙って消えた場合に備えて、双方が 10 秒ごとに確認の信号を送り、5 秒応答がなければ切断とみなす。
+
 ノードが復帰すると、エージェントは担当一覧を受け取り直す。
 記録が残っている Allocated の GameServer は、コンテナが生きていればそのまま続く。
 記録が消えた GameServer のコンテナは、担当一覧にないので、エージェントが止めて撤去する。
 
 運用者が Node を削除した場合は、時間を待たずに、そのノードの GameServer をすべて失われたものとして扱う。
 
+### コントロールプレーンが再起動したとき
+
+コントロールプレーンは、起動するたびに、記録にあるすべてのノードを Disconnected にする。
+止まっていた間に何が起きたかは分からず、記録に「接続中」と残っていても、そのマシンがまだあるとは限らないためである。
+生きているエージェントは数秒のうちに接続し直し、ノードは Ready に戻る。
+戻ってこないノードは、起動の時点から数えて、上の表のとおりに扱う。
+
+この扱いには代償がある。
+再起動してからエージェントが接続し直すまでの数秒は、割り当てに応じられない。
+エージェントは、接続を試みる間隔を最長 5 秒に抑えている。
+gRPC の既定では、長く止まっていた相手への再接続が最長 2 分遅れる。
+
+同じプロセスで動くエージェントは、起動と同時に登録し直すので、この間は生じない。
+
 ### cordon と drain
 
 **cordon** は、Node の `spec.unschedulable` を真にする。
 そのノードは新規の配置と Allocation の対象から外れるが、動いているゲームサーバには何もしない。
 
-**drain** は、cordon したうえで、そのノードの Allocated でも Reserved でもない GameServer を Shutdown にする。
+**drain** は、それに加えて `spec.drain` を真にする。
+drain 中のノードでは、対戦のないゲームサーバ（Allocated でも Reserved でもないもの）を Shutdown にし続ける。
 GameServerSet が他のノードで補充する。
-Allocated と Reserved の GameServer は、対戦が終わるのを待つ。
+Allocated と Reserved のゲームサーバは、対戦が終わるのを待つ。
+対戦を終えて待機に戻ったゲームサーバも、その時点で Shutdown になるので、ノードはいずれ空になる。
 CLI の drain は、ノードが空になるまで待ってから戻る。
+
+元に戻す操作（uncordon）は、両方を偽にする。
 
 ## API
 
 コントロールプレーンは 4 つの口を持つ。
-ポート番号は仮の既定値である。
 
-| 口 | 既定のポート | プロトコル | 利用者 |
+| 口 | 既定の待ち受け | プロトコル | 利用者 |
 |---|---|---|---|
-| 管理 API | 9443 | HTTPS（REST/JSON） | CLI、運用の自動化 |
-| Allocation API | 9444 | gRPC と REST | マッチメイカ |
-| ノード用 API | 9445 | gRPC | エージェント |
-| メトリクス | 9446 | HTTP | Prometheus |
+| 管理 API | `127.0.0.1:9443` | HTTPS（REST/JSON） | CLI、運用の自動化 |
+| Allocation API | `127.0.0.1:9444` | HTTPS（gRPC と REST） | マッチメイカ |
+| ノード用 API | なし（指定すると有効） | gRPC（TLS） | 別のマシンのエージェント |
+| メトリクス | `127.0.0.1:9446` | HTTP | Prometheus |
+
+既定では、どの口も同じマシンの中からしか届かない。
+外から使う口は、待ち受けるアドレスを明示して開ける。
+ノード用 API は、エージェントを別のマシンで動かすときにだけ有効にする。
 
 ### 管理 API
 
 管理 API は、標準ライブラリの HTTP サーバで書く。
 リソースの中身は本家互換の JSON で、YAML も受け付ける。
+一覧、取得、作成、更新、削除の処理は、種類を型引数に取る形で 1 回だけ書いてある（`pkg/apiserver/resource.go`）。
 
 | メソッドとパス | 動作 |
 |---|---|
-| `GET /v1/namespaces/{ns}/{resource}` | 一覧。`?watch=true` を付けると、現在の一覧に続けて変更を Server-Sent Events で流す |
-| `POST /v1/namespaces/{ns}/{resource}` | 作成 |
+| `GET /v1/{resource}` | 全 namespace の一覧 |
+| `GET /v1/namespaces/{ns}/{resource}` | 一覧。`?watch=true` を付けると、変更の購読になる |
+| `POST /v1/namespaces/{ns}/{resource}` | 作成。`generateName` を使える |
 | `GET /v1/namespaces/{ns}/{resource}/{name}` | 取得 |
 | `PUT /v1/namespaces/{ns}/{resource}/{name}` | 作成または更新。`resourceVersion` があれば一致を確かめる |
 | `DELETE /v1/namespaces/{ns}/{resource}/{name}` | 削除 |
 | `PUT /v1/namespaces/{ns}/fleets/{name}/scale` | Fleet の台数だけを変える |
-| `GET /v1/namespaces/{ns}/gameservers/{name}/logs` | コンテナのログ。`?follow=true` で流し続ける |
-| `GET /v1/namespaces/{ns}/events` | イベント履歴 |
+| `GET /v1/namespaces/{ns}/gameservers/{name}/logs` | コンテナのログ。`follow`、`tail`、`container` を指定できる |
+| `GET /v1/namespaces/{ns}/events` | イベント履歴。`kind` と `name` で対象を選ぶ |
 | `GET /v1/nodes`、`GET /v1/nodes/{name}` | ノードの一覧と取得 |
 | `POST /v1/nodes/{name}/cordon`、`uncordon`、`drain` | ノードの保守 |
 | `DELETE /v1/nodes/{name}` | ノードの削除 |
+| `GET /healthz` | 稼働の確認。トークンは要らない |
 
 `{resource}` は `gameservers`、`gameserversets`、`fleets`、`fleetautoscalers` のいずれかである。
-GameServerSet は Fleet の制御が作るものなので、管理 API からは参照だけを受け付ける。
+種類によって、受け付ける操作が違う。
 
-未対応の項目を無視した場合は、応答のヘッダに警告を載せる。
+| 種類 | 作成と削除 | 更新 |
+|---|---|---|
+| GameServer | できる | できない |
+| GameServerSet | できない（Fleet の制御が作る） | できない |
+| Fleet | できる | できる |
+| FleetAutoscaler | できる | できる |
+
+未対応の項目を無視した場合は、応答の `Warning` ヘッダに警告を載せる。
 CLI はそれを表示する。
+
+### 変更の購読
+
+一覧の URL に `?watch=true` を付けると、応答は終わらないストリーム（Server-Sent Events）になる。
+最初に、いまあるリソースを 1 件ずつ `Added` として送る。
+全部を送り終えたら `Synced` を送る。
+その後は、変更のたびに `Added`、`Modified`、`Deleted` のいずれかを、リソースの JSON を付けて送る。
+
+```text
+event: Added
+data: {"apiVersion":"agones.dev/v1","kind":"Fleet","metadata":{"name":"simple", ...}}
+
+event: Synced
+data: {}
+
+event: Modified
+data: {"apiVersion":"agones.dev/v1","kind":"Fleet","metadata":{"name":"simple", ...}}
+```
+
+一覧と購読の開始は、store の中で 1 つの操作として行う（`ListAndWatch`）。
+別々に行うと、その間に起きた変更を取りこぼすか、古い状態を後から受け取ることになる。
+
+受け取りが遅いクライアントは、変更を取りこぼすことがある。
+store は、遅い購読者のために書き込みを待たせず、たまった通知が 1,024 件を超えると捨てる。
+取りこぼしが困る用途では、ときどき購読をやり直す。
 
 ## 認証と暗号化
 
-コントロールプレーンは、初めて起動したときに次のものを作ってデータディレクトリに保存する。
+コントロールプレーンは、初めて起動したときに次のものを作ってデータディレクトリに保存する（`pkg/auth`）。
 
-- 自己署名の CA と、それで署名したサーバ証明書
-- 管理用トークン
-- Allocation 専用トークン
-- 参加トークン
+| ファイル | 内容 |
+|---|---|
+| `tls/ca.crt`、`tls/ca.key` | 自己署名の CA |
+| `tls/server.crt`、`tls/server.key` | その CA で署名したサーバ証明書 |
+| `tokens/admin` | 管理用トークン |
+| `tokens/allocator` | Allocation 専用トークン |
+| `tokens/join` | 参加トークンの秘密の部分 |
 
-各 API の認証は次のとおりである。
+サーバ証明書には、`localhost`、ホスト名、設定で与えた名前とアドレスを入れる。
+設定を変えて名前が増えたら、次の起動で証明書を作り直す。
+CA は変わらないので、参加済みのエージェントはそのまま使える。
+
+各口の認証は次のとおりである。
 
 | 口 | 暗号化 | 認証 |
 |---|---|---|
@@ -794,10 +968,17 @@ CLI はそれを表示する。
 | メトリクス | なし | なし。既定では `localhost` だけで待ち受ける |
 | エージェントと sidecar の間 | なし | GameServer ごとのトークン |
 
+トークンは `Authorization: Bearer` ヘッダで渡す。
+gRPC の呼び出しでも同じヘッダになるので、Allocation API は gRPC と REST を 1 か所で認証している。
+
 Allocation API のクライアント証明書による認証は、本家の allocator と同じ方式である。
 信頼する CA を置くディレクトリを設定すると有効になり、本家向けに証明書で組まれたクライアントをそのまま使える。
 
-トークンは、SQLite にはハッシュだけを保存する。
+トークンは、所有者だけが読めるファイルとして置く。
+設計の初期には、SQLite にハッシュだけを保存する案だった。
+運用者がトークンを読み出す先がどのみち同じディレクトリのファイルになるので、ファイルだけにした。
+`agones-lite token rotate` でトークンを取り替えると、稼働中のコントロールプレーンは 5 秒以内に新しいトークンに切り替わる。
+
 エージェントと sidecar の間は同じノードの中の通信なので、暗号化しない。
 
 ## CLI
@@ -807,15 +988,16 @@ CLI は、本体と同じバイナリのサブコマンドである。
 
 ```text
 agones-lite server                        コントロールプレーンを起動する
-agones-lite agent                         エージェントを起動する
+agones-lite agent                         別のマシンでエージェントを起動する
 
 agones-lite apply -f FILE                 YAML を適用する
-agones-lite get KIND [NAME]               一覧または取得 (-n, -o yaml|json, -w)
-agones-lite describe KIND NAME            詳細とイベント履歴を表示する
+agones-lite get KIND [NAME]               一覧、または 1 件を YAML で表示する
+agones-lite get KIND -w                   一覧のあと、変更を表示し続ける
+agones-lite describe KIND NAME            1 件の内容とイベント履歴を表示する
 agones-lite delete KIND NAME              削除する
 agones-lite scale fleet NAME --replicas N Fleet の台数を変える
-agones-lite logs GAMESERVER               コンテナのログを表示する (-c, -f)
-agones-lite allocate -f FILE              Allocation を 1 回試す
+agones-lite logs GAMESERVER               コンテナのログを表示する (-c, -f, --tail)
+agones-lite allocate --fleet NAME         Allocation を 1 回試す (-f で要求を指定)
 
 agones-lite node cordon|uncordon|drain|delete NAME
 agones-lite token show|rotate admin|allocator|join
@@ -823,81 +1005,106 @@ agones-lite version
 ```
 
 `KIND` には `gameserver`（`gs`）、`gameserverset`（`gss`）、`fleet`（`flt`）、`fleetautoscaler`（`fas`）、`node` を指定できる。
-接続先とトークンは、設定ファイルか環境変数で与える。
+フラグは、位置引数の前にも後ろにも書ける。
+
+接続先、トークン、CA 証明書は、フラグか環境変数（`AGONES_LITE_SERVER`、`AGONES_LITE_TOKEN`、`AGONES_LITE_CA_FILE`）で与える。
+どちらもなければ、同じマシンにあるコントロールプレーンのデータディレクトリから読む。
+コントロールプレーンと同じマシンで使うかぎり、何も指定しなくてよい。
 
 ## 可観測性
 
 ### メトリクス
 
-メトリクスは Prometheus の形式で公開する。
-名前は本家に揃え、本家向けのダッシュボードを流用しやすくする。
+メトリクスは Prometheus の形式で公開する（`pkg/metrics`）。
+名前とラベルは本家に揃え、本家向けのダッシュボードを流用しやすくする。
 
 | メトリクス | 内容 |
 |---|---|
-| `agones_gameservers_count` | 状態ごとの GameServer の台数 |
-| `agones_gameservers_total` | 状態ごとの GameServer の累計 |
-| `agones_gameserver_state_duration` | 各状態にとどまった時間 |
-| `agones_fleets_replicas_count` | Fleet の台数 |
+| `agones_gameservers_count` | 状態ごと、Fleet ごとの GameServer の台数 |
+| `agones_gameservers_total` | GameServer が各状態に入った回数 |
+| `agones_fleets_replicas_count` | Fleet の台数（合計、目標、Ready、Allocated、Reserved） |
 | `agones_fleet_counters`、`agones_fleet_lists` | Fleet のカウンタとリストの集計 |
-| `agones_fleet_autoscalers_*` | FleetAutoscaler の現在の台数、望ましい台数、制限の有無など |
+| `agones_fleet_autoscalers_*` | FleetAutoscaler の現在の台数、望ましい台数、スケールできるか、制限されたか |
 | `agones_gameserver_allocations_duration_seconds` | Allocation の所要時間 |
-| `agones_gameservers_node_count`、`agones_nodes_count` | ノードあたりの台数とノード数 |
+| `agones_nodes_count` | ゲームサーバのあるノードと、空のノードの数 |
+
+台数のように「いまの値」を表すメトリクスは、どこにも溜めない。
+Prometheus が取りに来るたびに、store から数える。
+回数と所要時間だけは後から数え直せないので、起きたときに記録する。
+
+本家にあって agones-lite にないのは、ノードあたりの台数の分布、各状態にとどまった時間、Kubernetes のクライアントに関するものである。
 
 ### イベント履歴
 
-状態の遷移と失敗の理由を、イベントとして SQLite に記録する。
-配置を待っている理由、コンテナを作成できなかった理由、ヘルス失敗、ノードの切断などが対象である。
+状態の遷移と失敗の理由を、イベントとして SQLite に記録する（`pkg/events`）。
+配置を待っている理由、状態の遷移、台数の増減、自動スケール、ノードを失ったことなどが対象である。
 CLI の `describe` が、対象のリソースのイベントを新しい順に表示する。
-既定で 24 時間たったものを消す。
+24 時間たったものを消す。
+
+イベントは人が読むための記録で、制御はこれを読まない。
 
 ### ログの取得
 
 ゲームサーバのログは、コントロールプレーン経由で取得する。
-管理 API がログの要求を受けると、コントロールプレーンは担当のエージェントに要求を伝える。
+管理 API がログの要求を受けると、コントロールプレーンはその GameServer があるノードのエージェントに頼む。
 エージェントは Docker からログを読み、コントロールプレーンに送り返す。
 運用者は、ノードに SSH で入らずにログを読める。
+
+同じプロセスにいるエージェントには、関数の呼び出しで直接頼む。
+別のマシンのエージェントには、Watch のストリームで依頼を伝える。
 
 agones-lite 自身のログは、標準ライブラリの `slog` で標準エラー出力に書く。
 
 ## 設定
 
-設定は 1 つの YAML ファイルで与え、同じ項目を起動フラグで上書きできる。
+設定は起動フラグで与える。
+同じ項目を YAML ファイルに書いて `--config` で渡すこともでき、その場合はフラグで指定したものが優先される。
+ファイルのキーは、フラグの名前と同じである。
 
-コントロールプレーンの例を示す。
-
-```yaml
-dataDir: /var/lib/agones-lite
-listen:
-  api: ":9443"
-  allocation: ":9444"
-  node: ":9445"
-  metrics: "127.0.0.1:9446"
-tls:
-  sans: ["cp.example.com"]      # サーバ証明書に含める名前
-allocation:
-  clientCADir: ""               # 指定するとクライアント証明書で認証する
-agent:
-  enabled: true                 # 同じプロセスでエージェントを動かす
-nodeLost:
-  gracePeriod: 5m               # 割り当て前の GameServer を失われたとみなすまで
-  allocatedGracePeriod: 24h     # Allocated の GameServer を失われたとみなすまで
-events:
-  retention: 24h
-```
-
-エージェントの例を示す。
+コントロールプレーンの例を示す（`deploy/server.yaml`）。
 
 ```yaml
-server: https://cp.example.com:9445
-token: "<参加トークン>"
-nodeName: node-1
-advertiseAddress: 203.0.113.10  # 省略すると自動で検出する
-ports: {min: 7000, max: 8000}
-maxGameServers: 100
-capacity:                       # 省略するとホストの値を使う
-  cpu: "8"
-  memory: 16Gi
+data-dir: /var/lib/agones-lite
+
+# 運用者、マッチメイカ、別のマシンのエージェントが接続する先
+listen: 0.0.0.0:9443
+allocation-listen: 0.0.0.0:9444
+node-listen: 0.0.0.0:9445
+# このマシンを指す名前とアドレス。サーバ証明書に入れる
+tls-san: cp.example.com,203.0.113.10
+
+# 同じプロセスで動かすノード
+node-name: node-1
+address: 203.0.113.10
+min-port: 7000
+max-port: 8000
 ```
+
+エージェントの例を示す（`deploy/agent.yaml`）。
+
+```yaml
+server: cp.example.com:9445
+token-file: /etc/agones-lite/join-token
+
+node-name: node-2
+address: 203.0.113.11
+min-port: 7000
+max-port: 8000
+```
+
+主なフラグは次のとおりである。
+全体は `agones-lite server --help` と `agones-lite agent --help` で見られる。
+
+| フラグ | 既定 | 内容 |
+|---|---|---|
+| `--data-dir` | `agones-lite-data` | 状態、証明書、トークンの置き場所 |
+| `--node-listen` | なし | 別のマシンのエージェントを受け付けるアドレス |
+| `--no-agent` | 偽 | このマシンではゲームサーバを動かさない |
+| `--node-lost-grace` | 5 分 | 切断されたノードの、割り当て前のゲームサーバを待つ時間 |
+| `--node-lost-allocated-grace` | 24 時間 | 同じく、割り当て済みのゲームサーバを待つ時間 |
+| `--address` | `127.0.0.1` | プレイヤーがこのノードのゲームサーバに接続するアドレス |
+| `--max-gameservers` | 0（制限なし） | このノードに置く台数の上限 |
+| `--docker-host` | `$DOCKER_HOST`、なければ標準のソケット | Docker の接続先 |
 
 ## パッケージ構成
 
@@ -911,6 +1118,7 @@ cmd/
 pkg/
   store/                状態の保存と変更の通知
   queue/                重複を除く作業キュー
+  control/              どの制御にも共通のループ
   gameservers/          GameServer の状態遷移と制御
   scheduling/           ノードの選択
   portallocator/        ポートの割り当て
@@ -918,56 +1126,74 @@ pkg/
   fleets/               Fleet の制御
   fleetautoscalers/     FleetAutoscaler の制御
   gameserverallocations/ Allocation
-  nodes/                ノードの参加、切断、cordon、drain
+  nodes/                エージェントとの通信、切断、cordon、drain
   agent/                エージェント。あるべき状態と Docker の差を埋める
   docker/               Docker Engine API の薄いクライアント
   podspec/              Pod 定義からコンテナ設定への変換と、未対応項目の検査
   sdkserver/            sidecar の SDK サーバ
   apiserver/            管理 API
-  auth/                 トークンと証明書
+  auth/                 証明書とトークン
   events/               イベント履歴
   metrics/              メトリクス
+  controlplane/         上の部品をつなぎ合わせる
   cli/                  CLI のサブコマンド
+  agones/               本家の型を Kubernetes なしで使うための準備
+  apis/lite/v1/         agones-lite 独自のリソース（Node）
+  version/              バージョン
 proto/
   node/v1/              エージェントとコントロールプレーンの通信
   sidecar/v1/           sidecar とエージェントの通信
+test/
+  conformance/          SDK の適合テスト
+deploy/                 systemd のユニットと設定ファイルの例
 ```
+
+制御を持つパッケージ（`gameserversets`、`fleets`、`fleetautoscalers`、`gameserverallocations`、`nodes`）は、どれも同じ分け方をしている。
+判断の純粋関数が先にあり、それを実行する薄い層が `controller.go`（Allocation は `service.go`）にある。
 
 本家との対応は次のとおりである。
 
 | agones-lite | 本家（`third_party/agones` からのパス） |
 |---|---|
-| `pkg/gameservers` | `pkg/gameservers/controller.go`、`health.go`、`missing.go`、`migration.go`、`succeeded.go` |
+| `pkg/gameservers` | `pkg/gameservers/controller.go`、`health.go`、`missing.go`、`migration.go`、`succeeded.go`、`pernodecounter.go` |
 | `pkg/portallocator` | `pkg/portallocator/portallocator.go` |
 | `pkg/gameserversets` | `pkg/gameserversets/controller.go`、`gameserversets.go` |
 | `pkg/fleets` | `pkg/fleets/controller.go`、`controller_rollingupdatefix.go` |
 | `pkg/fleetautoscalers` | `pkg/fleetautoscalers/fleetautoscalers.go`、`controller.go` |
 | `pkg/gameserverallocations` | `pkg/gameserverallocations/allocator.go`、`find.go`、`allocation_cache.go`、`cmd/allocator/main.go` |
 | `pkg/sdkserver` | `pkg/sdkserver/sdkserver.go`、`localsdk.go`、`sdk.go`、`cmd/sdk-server/main.go` |
-| `pkg/scheduling` | 対応するパッケージはない。kube-scheduler の仕事。台数の数え方は `pkg/gameservers/pernodecounter.go` |
+| `pkg/metrics` | `pkg/metrics`、`pkg/gameserverallocations/metrics.go` |
+| `pkg/scheduling` | 対応するパッケージはない。kube-scheduler の仕事 |
 | `pkg/agent`、`pkg/docker`、`pkg/podspec` | 対応するパッケージはない。kubelet の仕事。Pod の組み立ては `pkg/apis/agones/v1/gameserver.go` の `Pod()` |
-| `pkg/store`、`pkg/queue` | 対応するパッケージはない。API サーバと client-go の仕事 |
+| `pkg/store`、`pkg/queue`、`pkg/control` | 対応するパッケージはない。API サーバと client-go の仕事 |
 | `pkg/nodes` | 対応するパッケージはない。Kubernetes のノード管理の仕事 |
+| `pkg/auth`、`pkg/apiserver` | 対応するパッケージはない。API サーバと RBAC の仕事 |
 
-各パッケージには `doc.go` を置き、そのパッケージの役割と、本家の対応箇所を数行で書く。
+各パッケージの冒頭には、そのパッケージの役割と、読み始める場所と、本家の対応箇所を書いてある。
 
 ## コードの読み方
 
 次の順に読むと、前に読んだものだけを前提にして読み進められる。
 
 1. **`pkg/store`**：すべての状態がどこにあり、どう書き換わるかを知る。他のパッケージはすべてここを通る。
-2. **`pkg/gameservers`**：状態遷移の関数 `Next` から読む。GameServer の一生がこの 1 つの表に収まっている。
-3. **`pkg/scheduling` と `pkg/portallocator`**：GameServer がどのノードのどのポートに置かれるかを読む。どちらも純粋関数だけでできている。
-4. **`pkg/agent`、`pkg/podspec`、`pkg/docker`**：置き場所の決まった GameServer が、実際のコンテナになるまでを読む。
-5. **`pkg/sdkserver`**：ゲームサーバから見た世界を読む。ここまでで、GameServer 1 台が起動して Ready になり、終了するまでがつながる。
-6. **`pkg/gameserversets`、`pkg/fleets`**：台数を保つ仕組みを、内側の GameServerSet から外側の Fleet の順に読む。
-7. **`pkg/gameserverallocations`**：待機中の 1 台を選んで渡す処理を読む。
-8. **`pkg/fleetautoscalers`**：台数を自動で決める計算を、ポリシーごとに読む。
-9. **`pkg/nodes`**：ノードの参加と切断、cordon と drain を読む。
-10. **`pkg/apiserver`、`pkg/cli`**：外から操作する入口を読む。
+2. **`pkg/control`**：どの制御も回しているループを知る。短い。
+3. **`pkg/gameservers`**：状態遷移の関数 `Next` から読む。GameServer の一生がこの 1 つの表に収まっている。
+4. **`pkg/scheduling` と `pkg/portallocator`**：GameServer がどのノードのどのポートに置かれるかを読む。どちらも純粋関数だけでできている。
+5. **`pkg/agent`、`pkg/podspec`、`pkg/docker`**：置き場所の決まった GameServer が、実際のコンテナになるまでを読む。
+6. **`pkg/sdkserver`**：ゲームサーバから見た世界を読む。ここまでで、GameServer 1 台が起動して Ready になり、終了するまでがつながる。
+7. **`pkg/gameserversets`、`pkg/fleets`**：台数を保つ仕組みを、内側の GameServerSet から外側の Fleet の順に読む。
+8. **`pkg/gameserverallocations`**：待機中の 1 台を選んで渡す処理を読む。
+9. **`pkg/fleetautoscalers`**：台数を自動で決める計算を、ポリシーごとに読む。
+10. **`pkg/nodes`**：別のマシンのエージェントとの通信、切断、cordon と drain を読む。
+11. **`pkg/controlplane`**：ここまでの部品がどうつながるかを確かめる。
+12. **`pkg/apiserver`、`pkg/auth`、`pkg/cli`**：外から操作する入口を読む。
 
-各パッケージでは、判断の関数（`Plan` や `Next`）を先に読み、実行の層を後に読むとよい。
+各パッケージでは、判断の関数（`Plan`、`Next`、`Find`、`Desired`）を先に読み、実行の層を後に読むとよい。
 判断の関数は引数だけで動くので、テストを横に置けば、入力と出力の例をそのまま確かめられる。
+
+`pkg/controlplane` のテストは、全体を通した物語になっている。
+疑似ノードを使って、Fleet の適用から、割り当て、スケール、ローリング更新、自動スケール、削除までを順にたどる。
+部品のつながりを知りたいときは、ここから読むのが早い。
 
 本家と読み比べるときは、前の節の対応表から本家のファイルを開く。
 本家では 1 つの関数に入っている処理が、agones-lite では判断と実行に分かれていることが多い。
@@ -1019,29 +1245,51 @@ linters:
 
 ## テスト
 
-テストは 4 種類を用意する。
+テストは 7 種類ある。
 
 **純粋ロジックの単体テスト**：判断の関数を表形式のテストで検証する。
-本家のテストケースを参考にし、同じ入力で同じ結果になることを確かめる。
+本家のテストケースを移し、同じ入力で同じ結果になることを確かめている。
 store も Docker も要らないので、数秒で終わる。
 
-**SDK の適合テスト**：公式 SDK のクライアントから、sidecar の全 RPC を gRPC と REST の両方で呼び、応答を確かめる。
-本家にも SDK ごとの適合テストがある（`test/sdk`）。
-これを参考に、同じ呼び出しの並びを使う。
+**本家との突き合わせ**：GameServerSet、Fleet、Allocation、FleetAutoscaler の判断ロジックは、移植の際に、本家の関数をそのまま写したものと乱数の入力で突き合わせた。
+入力の数は、合わせておよそ 100 万通りである。
+この突き合わせはリポジトリには入れていない。
+本家の関数は Kubernetes のクライアントに依存していて、取り込むと依存が大きくなるためである。
 
-**実際の Docker での結合テスト**：本家のサンプルのゲームサーバ（simple-game-server）のイメージを使い、Fleet の作成から Ready、Allocation、Shutdown、補充までを通す。
-CI でも Docker を使って実行する。
+**部品をつないだ結合テスト**：コントロールプレーンの全部品を実物でつなぎ、ノードだけを疑似のものにして、Fleet の一生をたどる（`pkg/controlplane`）。
+疑似ノードは、コンテナを作る代わりに、作ったことにして報告を返す。
 
-**障害注入テスト**：エージェントの切断、コンテナの強制終了、コントロールプレーンの再起動を自動で起こし、状態が収束することを確かめる。
+**実際の Docker でのテスト**：Docker のクライアントは、実際のデーモンに対してコンテナを起動して確かめる（`pkg/docker`）。
+デーモンに届かない環境では、このテストは飛ばされる。
+
+**SDK の適合テスト**：ゲームサーバの立場から sidecar を使い、本家向けのゲームサーバがそのまま動くことを確かめる（`test/conformance`）。
+公式の Go SDK で、stable と beta のすべての RPC を呼ぶ。
+REST でも同じ操作を行い、JSON の項目名と値の形を確かめる。
+WatchGameServer は、HTTP のストリームと WebSocket の両方で受ける。
+sidecar の先は、エージェント、コントロールプレーン、store まで実物である。
+Docker だけを代役にし、その代役は「sidecar コンテナの起動」を、本物の SDK サーバの起動に置き換える。
+
+**障害注入**：わざと壊して、その後を確かめる（`pkg/controlplane/fault_test.go`）。
+疑似ノードを、別のマシンのエージェントと同じくネットワーク越しに接続させ、次の 2 つを起こす。
+
+- ノードが黙る。そのノードは割り当ての対象から外れ、対戦のないゲームサーバは他のノードで補充され、Allocated のものは残る。ノードが戻れば、また使われる。
+- コントロールプレーンが異常終了し、止まっている間にノードが 1 つ失われる。再起動後、残ったノードのゲームサーバは同じものが続き、失われたノードのものは補充される。
+
+**負荷試験**：10 ノード、1,000 台、毎秒 50 件の割り当てという目安を、疑似ノードで確かめる。
+時間がかかるので、指定したときだけ走る。
+
+```sh
+AGONES_LITE_LOAD=1 go test ./pkg/controlplane/ -run TestLoad -v
+```
+
+開発機での結果は、1,000 台が Ready になるまで約 1 秒、割り当ての所要時間は中央値が約 3 ミリ秒、99 パーセンタイルが約 6 ミリ秒だった。
+
 時間に依存する処理（5 分と 24 時間の猶予など）は、時計を引数で渡す設計にしてあるので、実際には待たずに検証できる。
-
-負荷の目安（10 ノード、1,000 台、毎秒 50 件）は、Docker を使わない疑似エージェントで確かめる。
-疑似エージェントは、コンテナを作る代わりに、作ったことにして報告を返す。
 
 ## 配布と導入
 
 本体は、Linux と macOS 向けのバイナリとして配布する。
-Linux 向けには systemd のユニットの例を付ける。
+Linux 向けには systemd のユニットの例を付ける（`deploy/systemd`）。
 本体はホストの上の普通のプロセスとして動き、Docker のソケットに接続する。
 
 sidecar はコンテナイメージとして配布する。
@@ -1050,64 +1298,71 @@ sidecar はコンテナイメージとして配布する。
 本体を更新しても、動いているゲームサーバの sidecar は古いままである。
 そのため、エージェントと sidecar の間の通信は、項目の追加だけで変更し、古い sidecar とも通信できる状態を保つ。
 
+systemd のユニットは、サービスを止めてもコンテナを止めない設定にしてある。
+本体を止めたり入れ替えたりしても、ゲームサーバは動き続ける。
+
 導入の手順は次のようになる。
 
 1. コントロールプレーンにする VM に本体を置き、`agones-lite server` を起動する。
-2. 表示された管理用トークンを手元の CLI に設定する。
-3. ノードを増やすなら、追加の VM に本体を置き、参加トークンを指定して `agones-lite agent` を起動する。
-4. `agones-lite apply -f fleet.yaml` で Fleet を作る。
+2. 同じ VM で `agones-lite apply -f fleet.yaml` を実行して Fleet を作る。
+3. ノードを増やすなら、`--node-listen` を指定してコントロールプレーンを起動し、`agones-lite token show join` で参加トークンを表示する。
+4. 追加の VM に本体を置き、参加トークンを指定して `agones-lite agent` を起動する。
 
 バックアップは、SQLite のファイルを複製して取る。
 稼働中に安全に複製する手順を、運用の文書に書く。
 
-## 各段階で作るもの
+## 各段階で作ったもの
 
 実装の順序は企画書に書いた。
-ここでは、各段階で手を付けるパッケージを示す。
+実際には、M2 と M4、M3 と M5 を並行して進めた。
 
 | 段階 | パッケージ |
 |---|---|
-| M1 | `store`、`queue`、`gameservers`、`scheduling`、`portallocator`、`agent`、`docker`、`podspec`、`sdkserver`、`nodes` の同居用の接続、`apiserver` と `cli` の最小限 |
-| M2 | `gameserversets`、`fleets`、`gameserverallocations` |
-| M3 | `sdkserver` のカウンタとリスト、`gameserverallocations` のカウンタとリストの条件、`fleetautoscalers` |
-| M4 | `proto/node/v1` によるエージェントの分離、`auth`、`nodes` |
-| M5 | `metrics`、`events`、ログの取得、負荷試験、配布物 |
+| M1 | `store`、`queue`、`gameservers`、`scheduling`、`portallocator`、`agent`、`docker`、`podspec`、`sdkserver`、`apiserver` と `cli` の最小限 |
+| M2 | `gameserversets`、`fleets`、`gameserverallocations`、`control`、`controlplane`、`events` |
+| M3 | `sdkserver` のカウンタとリスト、`fleetautoscalers` |
+| M4 | `proto/node/v1`、`nodes`、`auth`、`cli` の `agent`、`node`、`token` |
+| M5 | `metrics`、ログの取得、負荷試験、設定ファイル、配布物 |
 
-M1 から M3 では、エージェントをコントロールプレーンと同じプロセスで動かし、関数呼び出しで直接つなぐ。
-両者の間のインタフェースは M1 で決め、M4 でその実装をネットワーク越しのものに置き換える。
+## 現時点での制限
 
-## M1 の時点での制限
+設計のうち、次の部分はまだ入っていない。
 
-M1 の実装には、設計のうち次の部分がまだ入っていない。
-
-- 管理 API は、GameServer の作成、取得、一覧、削除と、Node の一覧だけを持つ。暗号化と認証はなく、既定では `localhost` だけで待ち受ける（M4 で入れる）。
+- Node の変更は購読できない。`get nodes -w` は使えない。
+- GameServer の更新。作成と削除だけができる。
 - エージェントは Docker のイベントを購読していない。2 秒ごとの確認と、担当の変更通知で動く。
 - コンテナの作成に失敗すると、原因を問わず GameServer を Error にする。イメージの取得に一時的に失敗した場合の再試行はしない。
-- beta の SDK（Counter と List）は、未実装のエラーを返す（M3 で入れる）。
-- イベント履歴とメトリクスはない（M5 で入れる）。ログは標準エラー出力に出る。
-- 公式 SDK の全 RPC を叩く適合テストは、まだ書いていない。M1 では、本家のサンプルのゲームサーバ（Go の SDK、gRPC）と、REST の手動確認で動作を確かめた。
+- ノードの容量の自動検出。CPU とメモリの容量は、設定しなければ制限なしとして扱う。
+- sidecar が止まると、その GameServer は Allocated でも Unhealthy になる。
+- 適合テストは Go の SDK だけで行った。他の言語の SDK は、同じ gRPC と REST を使うので動くはずだが、確かめていない。
+- 配布の自動化。リリース用のワークフローは書いたが、実行していない。
 
-## 実装時に確かめること
+## 実装時に確かめたこと
 
-次の点は、設計の時点では確かめていなかった。
-M1 で確かめたものには結果を書いた。
-残りは、該当する段階の最初に確かめる。
+設計の時点では確かめていなかった点と、その結果を記す。
 
-### M1 で確かめたこと
+### 確かめたこと
 
-- **本家のモジュールを取り込んだときの重さ**：本体のバイナリは約 35 MB（デバッグ情報を含めると約 51 MB）、初回のビルドは約 20 秒だった。許容できると判断し、本家の型を取り込む方針を続ける。
+- **本家のモジュールを取り込んだときの重さ**：本体のバイナリは約 35 MB（デバッグ情報を含めると約 51 MB）、初回のビルドは約 20 秒だった。許容できると判断し、本家の型を取り込む方針を続けた。
 - **sidecar の大きさ**：バイナリは約 13 MB、イメージは約 19 MB だった。Kubernetes の型ライブラリは含まない。取り込んでいるのは、ラベルの検証に使う小さなユーティリティだけである。
 - **macOS での経路**：Colima で、sidecar からホスト上のエージェントへ接続できること、ネットワーク名前空間の共有とポートの公開が動くことを確かめた。
-- **Docker Engine API の薄いクライアント**：コンテナの作成、開始、停止、削除、一覧と、イメージの取得が動くことを、実際の Docker で確かめた。
+- **Docker Engine API の薄いクライアント**：コンテナの作成、開始、停止、削除、一覧、イメージの取得、ログの読み出しが動くことを、実際の Docker で確かめた。
 - **golangci-lint の設定**：複雑度 10、関数長 50 行、nestif の設定値 4 で、すべてのコードが検査を通っている。
 - **コントロールプレーンの停止と再起動**：止めている間もゲームサーバが動き続けること、その間に SDK から出した要求が再起動後に反映されること、コンテナが再起動されずに引き取られることを確かめた。
+- **複数ノード**：1 台のマシンでエージェントを 2 つ動かし、分散配置、割り当て、スケール、ローリング更新、ノードの切断と復帰、drain を確かめた。
+- **性能**：負荷試験で、設計の目安を満たすことを確かめた。最初の実装は満たさず、store に読み取り専用のビューを加えて解決した。
+- **カウンタとリスト、自動スケール**：本家のサンプルのゲームサーバから、カウンタとリストを読み書きできた。割り当てで変えた値がゲームサーバから見えること、割り当て済みで空きのあるサーバが先に選ばれること、Counter ポリシーで台数が増えることを、実際の Docker で確かめた。
+- **WebSocket**：REST の WatchGameServer を WebSocket で受けられることを、適合テストで確かめた。
+- **メモリ使用量**：sidecar は 1 台あたり約 3.7 MiB だった。1,000 台なら合計で約 3.7 GiB、10 ノードに分ければ 1 ノードあたり約 370 MiB になる。コントロールプレーンは、ゲームサーバ 4 台のとき約 34 MB だった。台数が多いときの値は測っていない。
+- **変更の購読**：`get gameservers -w` で、Fleet の適用から削除までの状態の移り変わりを、TLS とトークンを通して受け取れた。
+- **開発機の負荷とヘルス判定**：本家のサンプルの Fleet は、ゲームサーバの CPU を 1 コアの 2% に制限している。開発機でビルドやテストを同時に走らせると、Colima の VM が CPU を取れず、ゲームサーバのヘルス報告が 10 秒以上止まることがあった。15 秒を超えると Unhealthy になり、GameServerSet が作り直す。本家と同じ判定による挙動で、負荷のない状態では起きなかった。
 
 ### まだ確かめていないこと
 
-- **Linux での動作**：M1 の確認は macOS と Colima だけで行った。Linux では、エージェントが Docker のブリッジのゲートウェイで待ち受ける経路を通る。
+- **Linux での動作**：確認は macOS と Colima だけで行った。Linux では、エージェントが Docker のブリッジのゲートウェイで待ち受ける経路を通る。
 - **Docker Desktop での動作**：Colima と同じ仕組みで動くはずだが、確かめていない。
-- **sidecar のメモリ使用量**：ゲームサーバ 1 台ごとに常駐するので、1,000 台での合計を見積もる。
-- **Docker Engine API の残りの操作**：ログのストリームの形式と、イメージ取得時の認証の渡し方を確かめる。手に負えなければ公式のクライアントライブラリを使う。
-- **公式 SDK の再接続**：sidecar が再起動したとき、各言語の SDK のクライアントがどう振る舞うかは確かめていない。Health のストリームが切れた後の挙動を、適合テストに加える。
-- **WebSocket**：REST の WatchGameServer を WebSocket で受ける経路は、実装したが動かして確かめていない。
+- **別のマシンのエージェント**：2 つのエージェントは同じマシンで動かした。マシンをまたぐ接続は確かめていない。
+- **イメージ取得時の認証**：非公開のレジストリからの取得は確かめていない。
+- **ホストからの UDP**：macOS の Colima は UDP のポートを転送しないので、ゲームサーバへの UDP は、同じネットワーク名前空間に入れたコンテナから送って確かめた。公開したポートに外から UDP が届くことは、Linux で確かめる必要がある。
 - **Reserved の扱い**：ノードとの接続が切れたとき、Reserved の GameServer を割り当て前として扱うと決めた。対戦の直前に予約したサーバを失うことになるので、実際の使い方に照らして見直す余地がある。
+

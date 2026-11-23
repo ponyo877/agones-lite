@@ -63,13 +63,13 @@ func (c *collector) Describe(out chan<- *prometheus.Desc) {
 
 // Collect implements prometheus.Collector.
 func (c *collector) Collect(out chan<- prometheus.Metric) {
-	servers := c.servers.List("")
+	servers := c.servers.View("")
 	c.gameServers(out, servers)
 	c.nodeCounts(out, servers)
-	for _, fleet := range c.fleets.List("") {
+	for _, fleet := range c.fleets.View("") {
 		c.fleet(out, fleet)
 	}
-	for _, fas := range c.scalers.List("") {
+	for _, fas := range c.scalers.View("") {
 		c.scaler(out, fas)
 	}
 }
@@ -97,7 +97,7 @@ func (c *collector) nodeCounts(out chan<- prometheus.Metric, servers []*agonesv1
 		busy[gs.Status.NodeName] = true
 	}
 	counts := map[bool]float64{true: 0, false: 0}
-	for _, node := range c.nodes.List("") {
+	for _, node := range c.nodes.View("") {
 		counts[!busy[node.Name]]++
 	}
 	for empty, count := range counts {

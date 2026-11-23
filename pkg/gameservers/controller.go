@@ -25,6 +25,10 @@ const (
 	// LastAllocatedAnnotation records when a GameServer was last allocated.
 	// Same key as upstream's gameserverallocations.LastAllocatedAnnotationKey.
 	LastAllocatedAnnotation = "agones.dev/last-allocated"
+	// LastCountsChangeAnnotation names the last change to Counters and Lists
+	// made through the SDK. The sidecar sends a change again when the answer
+	// got lost; the name keeps it from being made twice.
+	LastCountsChangeAnnotation = "agones-lite/last-counts-change"
 )
 
 // Report is an Event that an agent or a sidecar saw happen to a GameServer.
@@ -83,7 +87,7 @@ func (c *Controller) afterServerChange(e store.Event) []store.Key {
 
 func (c *Controller) all() []store.Key {
 	var keys []store.Key
-	for _, gs := range c.servers.List("") {
+	for _, gs := range c.servers.View("") {
 		keys = append(keys, store.KeyOf(store.GameServers, gs))
 	}
 	return keys
@@ -148,7 +152,7 @@ func (c *Controller) reachable(nodeName string) bool {
 
 func (c *Controller) place(gs *agonesv1.GameServer) error {
 	key := store.KeyOf(store.GameServers, gs)
-	placed, ok := scheduling.Place(gs, c.nodes.List(""), c.servers.List(""))
+	placed, ok := scheduling.Place(gs, c.nodes.View(""), c.servers.View(""))
 	if !ok {
 		if !c.waiting[key] {
 			c.waiting[key] = true
@@ -270,6 +274,26 @@ func ignoreNotFound(err error) error {
 // SDKPrefix goes in front of every label and annotation set through the SDK,
 // so a game server cannot overwrite anything else. Same as upstream.
 const SDKPrefix = "agones.dev/sdk-"
+
+// UpdateCounts changes Counters and Lists as a game server asked through the
+// SDK. It returns the GameServer afterwards, or nil when it is gone. A change
+// that arrives a second time, under the same name, is made only once.
+func (c *Controller) UpdateCounts(namespace, name, change string, counters []CounterUpdate, lists []ListUpdate) (*agonesv1.GameServer, error) {
+	err := c.servers.Change(namespace, name, func(gs *agonesv1.GameServer) bool {
+		made := change != "" && gs.Annotations[LastCountsChangeAnnotation] == change
+		if made || gs.DeletionTimestamp != nil {
+			return false
+		}
+		ApplyCounts(gs, counters, lists)
+		metav1.SetMetaDataAnnotation(&gs.ObjectMeta, LastCountsChangeAnnotation, change)
+		return true
+	})
+	if err != nil {
+		return nil, err
+	}
+	gs, _ := c.servers.Get(namespace, name)
+	return gs, nil
+}
 
 // SetMetadata adds labels and annotations a game server set through the SDK.
 func (c *Controller) SetMetadata(namespace, name string, labels, annotations map[string]string) error {

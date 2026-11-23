@@ -55,7 +55,7 @@ func (c *Controller) Run(ctx context.Context) {
 
 func (c *Controller) all() []store.Key {
 	var keys []store.Key
-	for _, set := range c.sets.List("") {
+	for _, set := range c.sets.View("") {
 		keys = append(keys, store.KeyOf(store.GameServerSets, set))
 	}
 	return keys
@@ -79,7 +79,7 @@ func (c *Controller) sync(_ context.Context, key store.Key) error {
 	if set.DeletionTimestamp != nil {
 		return c.dissolve(set, owned)
 	}
-	actions := Plan(set, owned, gameservers.CountByNode(c.servers.List("")), c.now())
+	actions := Plan(set, owned, gameservers.CountByNode(c.servers.View("")), c.now())
 	if err := c.carryOut(set, actions); err != nil {
 		return err
 	}
@@ -89,7 +89,7 @@ func (c *Controller) sync(_ context.Context, key store.Key) error {
 // owned returns the GameServers that set controls.
 func (c *Controller) owned(set *agonesv1.GameServerSet) []*agonesv1.GameServer {
 	var out []*agonesv1.GameServer
-	for _, gs := range c.servers.List(set.Namespace) {
+	for _, gs := range c.servers.View(set.Namespace) {
 		if metav1.IsControlledBy(gs, set) {
 			out = append(out, gs)
 		}

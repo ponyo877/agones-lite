@@ -1,0 +1,6 @@
+# The released sidecar image, for both architectures. The binaries come from
+# `make dist`; buildx picks the one that matches each platform.
+FROM scratch
+ARG TARGETARCH
+COPY sidecar-linux-${TARGETARCH} /sidecar
+ENTRYPOINT ["/sidecar"]

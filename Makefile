@@ -1,7 +1,20 @@
-.PHONY: build test lint
+.PHONY: build test lint dist
+
+VERSION ?= dev
+LDFLAGS := -s -w -X github.com/ponyo877/agones-lite/pkg/version.Version=$(VERSION)
 
 build:
 	go build -o bin/agones-lite ./cmd/agones-lite
+
+# Release binaries for every supported platform, into dist/.
+# Usage: make dist VERSION=v1.0.0
+dist:
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o dist/agones-lite-linux-amd64 ./cmd/agones-lite
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o dist/agones-lite-linux-arm64 ./cmd/agones-lite
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o dist/agones-lite-darwin-amd64 ./cmd/agones-lite
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o dist/agones-lite-darwin-arm64 ./cmd/agones-lite
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o dist/sidecar-linux-amd64 ./cmd/sidecar
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o dist/sidecar-linux-arm64 ./cmd/sidecar
 
 test:
 	go test ./...

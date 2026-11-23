@@ -11,6 +11,7 @@ import (
 
 	"github.com/ponyo877/agones-lite/pkg/apiserver"
 	"github.com/ponyo877/agones-lite/pkg/events"
+	"github.com/ponyo877/agones-lite/pkg/fleetautoscalers"
 	"github.com/ponyo877/agones-lite/pkg/fleets"
 	"github.com/ponyo877/agones-lite/pkg/gameserverallocations"
 	"github.com/ponyo877/agones-lite/pkg/gameservers"
@@ -26,6 +27,7 @@ type ControlPlane struct {
 	GameServers    *gameservers.Controller
 	GameServerSets *gameserversets.Controller
 	Fleets         *fleets.Controller
+	Autoscalers    *fleetautoscalers.Controller
 	Nodes          *nodes.Controller
 
 	// The three ways in.
@@ -36,22 +38,28 @@ type ControlPlane struct {
 
 // New wires a control plane to s. History goes to recorder and measurements
 // to measure; either may be nil.
-func New(s *store.Store, recorder *events.Recorder, measure *metrics.Metrics, graces nodes.Graces) *ControlPlane {
+//
+// The nodes s remembers all start out Disconnected: see StartOver.
+func New(s *store.Store, recorder *events.Recorder, measure *metrics.Metrics, graces nodes.Graces) (*ControlPlane, error) {
 	servers := gameservers.NewController(s, recorder)
 	servers.Entered = measure.GameServerEntered
 	allocation := gameserverallocations.NewService(s, recorder)
 	allocation.Observe = measure.Allocated
 	nodeController := nodes.NewController(s, servers, recorder, graces)
+	if err := nodeController.StartOver(); err != nil {
+		return nil, err
+	}
 	agents := nodes.NewLocal(s, servers)
 	return &ControlPlane{
 		GameServers:    servers,
 		GameServerSets: gameserversets.NewController(s, servers, recorder),
 		Fleets:         fleets.NewController(s, recorder),
+		Autoscalers:    fleetautoscalers.NewController(s, recorder, fleetautoscalers.Post),
 		Nodes:          nodeController,
 		API:            apiserver.New(s, recorder, nodeController, agents),
 		Allocation:     allocation,
 		Agents:         agents,
-	}
+	}, nil
 }
 
 // Run runs every controller until ctx is done.
@@ -60,6 +68,7 @@ func (cp *ControlPlane) Run(ctx context.Context) {
 		cp.GameServers.Run,
 		cp.GameServerSets.Run,
 		cp.Fleets.Run,
+		cp.Autoscalers.Run,
 		cp.Nodes.Run,
 	}
 	var running sync.WaitGroup

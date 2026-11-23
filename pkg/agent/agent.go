@@ -19,6 +19,8 @@ import (
 	"github.com/ponyo877/agones-lite/pkg/docker"
 	"github.com/ponyo877/agones-lite/pkg/gameservers"
 	"github.com/ponyo877/agones-lite/pkg/podspec"
+	"github.com/ponyo877/agones-lite/pkg/version"
+	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
 )
 
 const (
@@ -47,6 +49,10 @@ type ControlPlane interface {
 	Report(gameservers.Report) error
 	// SetMetadata adds labels and annotations set through the SDK.
 	SetMetadata(namespace, name string, labels, annotations map[string]string) error
+	// UpdateCounts changes Counters and Lists as a game server asked through
+	// the SDK. It returns the GameServer afterwards, or nil when it is gone.
+	// change names the change, so that one sent twice is made once.
+	UpdateCounts(namespace, name, change string, counters []*sidecarv1.CounterUpdate, lists []*sidecarv1.ListUpdate) (*agonesv1.GameServer, error)
 }
 
 // Docker is the part of the Docker client the agent uses.
@@ -144,6 +150,7 @@ func (a *Agent) node() *litev1.Node {
 		Capacity:       a.cfg.Capacity,
 		MaxGameServers: a.cfg.MaxGameServers,
 		PortRange:      a.cfg.PortRange,
+		Version:        version.Version,
 	}
 	return node
 }

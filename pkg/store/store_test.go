@@ -139,3 +139,37 @@ func names(servers []*agonesv1.GameServer) []string {
 	}
 	return out
 }
+
+func TestViewSharesWhatIsStoredAndUpdatesDoNotDisturbIt(t *testing.T) {
+	servers := GameServersOf(open(t, filepath.Join(t.TempDir(), "state.db")))
+	created, err := servers.Create(gameServer("a"))
+	require.NoError(t, err)
+
+	before := servers.View("default")
+	require.Len(t, before, 1)
+
+	created.Status.State = agonesv1.GameServerStateReady
+	_, err = servers.Update(created)
+	require.NoError(t, err)
+
+	assert.Empty(t, before[0].Status.State, "a view taken earlier keeps showing the object as it was")
+	assert.Equal(t, agonesv1.GameServerStateReady, servers.View("default")[0].Status.State)
+	assert.Empty(t, servers.View("elsewhere"))
+}
+
+func TestListAndWatchStartsTheEventsWhereTheListEnds(t *testing.T) {
+	servers := GameServersOf(open(t, filepath.Join(t.TempDir(), "state.db")))
+	_, err := servers.Create(gameServer("before"))
+	require.NoError(t, err)
+
+	listed, events, cancel := servers.ListAndWatch("default")
+	defer cancel()
+	_, err = servers.Create(gameServer("after"))
+	require.NoError(t, err)
+
+	require.Len(t, listed, 1)
+	assert.Equal(t, "before", listed[0].Name)
+	change := <-events
+	assert.Equal(t, Added, change.Type)
+	assert.Equal(t, "after", change.Key.Name, "what was listed is not told again")
+}

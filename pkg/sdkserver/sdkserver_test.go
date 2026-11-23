@@ -3,6 +3,7 @@ package sdkserver
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
 )
@@ -23,6 +25,13 @@ type fakeAgent struct {
 	mu       sync.Mutex
 	told     []*sidecarv1.TellRequest
 	refusals int
+	// losses is how many answers get lost on their way back: the request
+	// was taken, but the sidecar hears an error.
+	losses int
+	made   map[string]bool // the changes to stored, by name
+	// stored stands in for the control plane's GameServer. When it is set,
+	// changes to Counters and Lists are made to it and answered with it.
+	stored *sdk.GameServer
 }
 
 func (f *fakeAgent) Tell(_ context.Context, req *sidecarv1.TellRequest, _ ...grpc.CallOption) (*sidecarv1.TellResponse, error) {
@@ -33,7 +42,31 @@ func (f *fakeAgent) Tell(_ context.Context, req *sidecarv1.TellRequest, _ ...grp
 		return nil, errors.New("agent is restarting")
 	}
 	f.told = append(f.told, req)
-	return &sidecarv1.TellResponse{}, nil
+	if f.stored == nil || req.GetEvent() != sidecarv1.Event_EVENT_UPDATE_COUNTS {
+		return &sidecarv1.TellResponse{}, nil
+	}
+	f.store(req)
+	if f.losses > 0 {
+		f.losses--
+		return nil, errors.New("the answer got lost")
+	}
+	data, err := proto.Marshal(f.stored)
+	return &sidecarv1.TellResponse{GameServer: data}, err
+}
+
+// store makes a change to stored the way the control plane does: once,
+// however often it arrives.
+func (f *fakeAgent) store(req *sidecarv1.TellRequest) {
+	if f.made[req.GetChangeId()] {
+		return
+	}
+	if f.made == nil {
+		f.made = map[string]bool{}
+	}
+	f.made[req.GetChangeId()] = true
+	f.stored = WithPending(f.stored, []*sidecarv1.TellRequest{req})
+	version, _ := strconv.Atoi(f.stored.GetObjectMeta().GetResourceVersion())
+	f.stored.ObjectMeta.ResourceVersion = strconv.Itoa(version + 1)
 }
 
 func (f *fakeAgent) Watch(context.Context, *sidecarv1.WatchRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[sidecarv1.WatchResponse], error) {

@@ -14,6 +14,8 @@ import (
 	"io"
 	"sort"
 	"strings"
+
+	"github.com/ponyo877/agones-lite/pkg/version"
 )
 
 // command runs one subcommand with its arguments, writing results to out.
@@ -31,6 +33,12 @@ var commands = map[string]command{
 	"delete":   runDelete,
 	"scale":    runScale,
 	"allocate": runAllocate,
+	"version":  runVersion,
+}
+
+func runVersion(_ context.Context, _ []string, out io.Writer) error {
+	_, err := fmt.Fprintln(out, "agones-lite", version.Version)
+	return err
 }
 
 // Main runs the command named by args[0].

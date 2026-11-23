@@ -5,6 +5,7 @@ import (
 	"time"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
 	"github.com/ponyo877/agones-lite/pkg/control"
@@ -91,6 +92,22 @@ func NewController(s *store.Store, gameServers *gameservers.Controller, recorder
 	}
 }
 
+// StartOver marks every node Disconnected. A control plane that has just
+// started has not heard from any agent yet, whatever the store remembers:
+// it may have been down for a while, and a machine may have died meanwhile.
+// Agents that are still there say so within seconds. The others are waited
+// for like any node that went quiet, counting from this moment.
+func (c *Controller) StartOver() error {
+	for _, node := range c.nodes.List("") {
+		node.Status.Phase = litev1.NodeDisconnected
+		node.Status.LastHeartbeatTime = metav1.NewTime(c.now())
+		if _, err := c.nodes.Update(node); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Run watches over the nodes until ctx is done.
 func (c *Controller) Run(ctx context.Context) {
 	loop := control.Loop{Sync: c.sync, All: c.all, Resync: resyncPeriod}
@@ -104,10 +121,10 @@ func (c *Controller) Run(ctx context.Context) {
 // The second group matters after a node was deleted.
 func (c *Controller) all() []store.Key {
 	names := map[string]bool{}
-	for _, node := range c.nodes.List("") {
+	for _, node := range c.nodes.View("") {
 		names[node.Name] = true
 	}
-	for _, gs := range c.servers.List("") {
+	for _, gs := range c.servers.View("") {
 		if gs.Status.NodeName != "" {
 			names[gs.Status.NodeName] = true
 		}
@@ -143,7 +160,7 @@ func (c *Controller) sync(_ context.Context, key store.Key) error {
 
 func (c *Controller) onNode(name string) []*agonesv1.GameServer {
 	var out []*agonesv1.GameServer
-	for _, gs := range c.servers.List("") {
+	for _, gs := range c.servers.View("") {
 		if gs.Status.NodeName == name {
 			out = append(out, gs)
 		}

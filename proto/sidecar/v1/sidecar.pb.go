@@ -186,8 +186,12 @@ type TellRequest struct {
 	Annotations map[string]string `protobuf:"bytes,4,rep,name=annotations,proto3" json:"annotations,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// For EVENT_UPDATE_COUNTS: changes to Counters and Lists, in the order
 	// the game server made them.
-	Counters      []*CounterUpdate `protobuf:"bytes,5,rep,name=counters,proto3" json:"counters,omitempty"`
-	Lists         []*ListUpdate    `protobuf:"bytes,6,rep,name=lists,proto3" json:"lists,omitempty"`
+	Counters []*CounterUpdate `protobuf:"bytes,5,rep,name=counters,proto3" json:"counters,omitempty"`
+	Lists    []*ListUpdate    `protobuf:"bytes,6,rep,name=lists,proto3" json:"lists,omitempty"`
+	// For EVENT_UPDATE_COUNTS: a name no other change has. A request is sent
+	// again when its answer was lost, and the name lets the control plane see
+	// that it is the same change and not a second one.
+	ChangeId      string `protobuf:"bytes,7,opt,name=change_id,json=changeId,proto3" json:"change_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -262,6 +266,13 @@ func (x *TellRequest) GetLists() []*ListUpdate {
 		return x.Lists
 	}
 	return nil
+}
+
+func (x *TellRequest) GetChangeId() string {
+	if x != nil {
+		return x.ChangeId
+	}
+	return ""
 }
 
 // CounterUpdate changes one Counter. Capacity is applied first, then count,
@@ -461,14 +472,15 @@ const file_proto_sidecar_v1_sidecar_proto_rawDesc = "" +
 	"\fWatchRequest\"0\n" +
 	"\rWatchResponse\x12\x1f\n" +
 	"\vgame_server\x18\x01 \x01(\fR\n" +
-	"gameServer\"\xff\x03\n" +
+	"gameServer\"\x9c\x04\n" +
 	"\vTellRequest\x122\n" +
 	"\x05event\x18\x01 \x01(\x0e2\x1c.agoneslite.sidecar.v1.EventR\x05event\x12'\n" +
 	"\x0freserve_seconds\x18\x02 \x01(\x03R\x0ereserveSeconds\x12F\n" +
 	"\x06labels\x18\x03 \x03(\v2..agoneslite.sidecar.v1.TellRequest.LabelsEntryR\x06labels\x12U\n" +
 	"\vannotations\x18\x04 \x03(\v23.agoneslite.sidecar.v1.TellRequest.AnnotationsEntryR\vannotations\x12@\n" +
 	"\bcounters\x18\x05 \x03(\v2$.agoneslite.sidecar.v1.CounterUpdateR\bcounters\x127\n" +
-	"\x05lists\x18\x06 \x03(\v2!.agoneslite.sidecar.v1.ListUpdateR\x05lists\x1a9\n" +
+	"\x05lists\x18\x06 \x03(\v2!.agoneslite.sidecar.v1.ListUpdateR\x05lists\x12\x1b\n" +
+	"\tchange_id\x18\a \x01(\tR\bchangeId\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a>\n" +

@@ -18,6 +18,7 @@ import (
 	"github.com/ponyo877/agones-lite/pkg/docker"
 	"github.com/ponyo877/agones-lite/pkg/gameservers"
 	"github.com/ponyo877/agones-lite/pkg/podspec"
+	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
 )
 
 // fakeDocker records what the agent asks of Docker, in order.
@@ -83,6 +84,10 @@ func (f *fakeControlPlane) Assigned(string) ([]*agonesv1.GameServer, bool) { ret
 func (f *fakeControlPlane) Changes() (<-chan struct{}, func())             { return nil, func() {} }
 func (f *fakeControlPlane) SetMetadata(string, string, map[string]string, map[string]string) error {
 	return nil
+}
+
+func (f *fakeControlPlane) UpdateCounts(string, string, string, []*sidecarv1.CounterUpdate, []*sidecarv1.ListUpdate) (*agonesv1.GameServer, error) {
+	return nil, nil
 }
 
 func (f *fakeControlPlane) Report(r gameservers.Report) error {

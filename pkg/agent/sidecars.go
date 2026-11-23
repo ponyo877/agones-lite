@@ -164,10 +164,31 @@ func (s *sidecarServer) Tell(ctx context.Context, req *sidecarv1.TellRequest) (*
 	if err != nil {
 		return nil, err
 	}
+	if req.GetEvent() == sidecarv1.Event_EVENT_UPDATE_COUNTS {
+		return s.updateCounts(key, req)
+	}
 	if err := s.pass(key, req); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return &sidecarv1.TellResponse{}, nil
+}
+
+// updateCounts hands changes to Counters and Lists on to the control plane
+// and answers with the GameServer as it is afterwards. The sidecar shows the
+// game server its own prediction until this answer arrives.
+func (s *sidecarServer) updateCounts(key Key, req *sidecarv1.TellRequest) (*sidecarv1.TellResponse, error) {
+	gs, err := s.cp.UpdateCounts(key.Namespace, key.Name, req.GetChangeId(), req.GetCounters(), req.GetLists())
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	if gs == nil {
+		return &sidecarv1.TellResponse{}, nil // gone: there is nothing to show
+	}
+	data, err := proto.Marshal(sdkView(gs))
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &sidecarv1.TellResponse{GameServer: data}, nil
 }
 
 // pass hands the request on to the control plane.
