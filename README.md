@@ -18,7 +18,12 @@ Compatibility is pinned to Agones v1.62.0.
 ## Status
 
 Everything planned for the first version is in place and tested, but nothing
-has run in production yet, and it has only been tried on macOS with Colima.
+has run in production yet. It has been tried on macOS with Colima, and on
+Linux (Ubuntu 24.04, Docker 29, arm64 and amd64): five machines in two
+regions, a hundred real game servers, agents and the control plane killed
+and cut off on purpose. The sample images of the C++, Node.js, Rust and
+Unity SDKs run unchanged, and so do upstream's conformance clients for
+Python and C#.
 
 - `GameServer`, `Fleet` (with rolling updates), `GameServerSet`
 - Allocation over gRPC and REST, on the same API as the Agones allocator
@@ -28,6 +33,7 @@ has run in production yet, and it has only been tried on macOS with Colima.
 - Several nodes: agents on other machines join with a token; a node that
   goes quiet has its idle game servers replaced and its sessions kept
 - TLS and tokens, Prometheus metrics, an event history, logs through the CLI
+- Images from private registries, with the credentials `docker login` stored
 
 What is left out on purpose, and what Docker cannot express, is listed in
 [docs/planning.md](docs/planning.md).
@@ -96,6 +102,11 @@ bin/agones-lite agent --server cp.example.com:9445 --token-file join-token \
 `agones-lite node cordon`, `drain` and `delete` take a machine out of
 service. [deploy/](deploy) has systemd units and example configuration files.
 
+Two things have to get through firewalls: players to the game server ports
+of every machine (7000 to 8000 unless set otherwise), and agents to the
+control plane's `--node-listen` port. On Linux the sidecars reach their
+agent through a unix socket, so the host's own firewall is not in the way.
+
 ## Reading the code
 
 The code is meant to be read. Functions are kept small (cognitive complexity
@@ -108,6 +119,8 @@ has a full reading order.
 
 - [docs/planning.md](docs/planning.md): goals, scope and decisions (Japanese)
 - [docs/design.md](docs/design.md): architecture and reading guide (Japanese)
+- [formal/README.md](formal/README.md): what is proved about the port
+  allocator, Counters, the state machine and rolling updates (Japanese)
 
 ## Development
 
@@ -124,6 +137,22 @@ AGONES_LITE_LOAD=1 go test ./pkg/controlplane/ -run TestLoad -v
 `test/conformance` drives the sidecar with the official Go SDK and over
 REST; `pkg/controlplane` has the tests that tell the whole story, including
 the ones that break things on purpose.
+
+Beyond tests of examples there are three kinds that look for the input
+nobody thought of:
+
+```sh
+# Properties: what must hold for any input, tried on random ones.
+# The files are named property_test.go and model_test.go.
+go test ./pkg/fleets/ -run Rollout -rapid.checks=100000
+
+# Fuzzing: what comes in from outside, as bytes.
+go test ./pkg/apiserver/ -run '^$' -fuzz FuzzAdmit -fuzztime 5m
+
+# Proofs about models of the small pure functions, in Lean 4.
+# Go tests replay what the models answer against the real functions.
+cd formal && lake build
+```
 
 ## License
 
