@@ -106,14 +106,19 @@ func NewController(s *store.Store, recorder *events.Recorder) *Controller {
 	}
 }
 
+// Loop says what the controller looks at, and when. Run runs it; a test may
+// step through it with a control.Stepper instead.
+func (c *Controller) Loop() (control.Loop, []control.Watch) {
+	return control.Loop{Sync: c.sync, All: c.all, Resync: resyncPeriod}, []control.Watch{
+		{Subscribe: c.servers.Watch, Keys: c.afterServerChange},
+		// A new or changed node may have room for the servers that wait.
+		{Subscribe: c.nodes.Watch},
+	}
+}
+
 // Run keeps GameServers moving until ctx is done.
 func (c *Controller) Run(ctx context.Context) {
-	loop := control.Loop{Sync: c.sync, All: c.all, Resync: resyncPeriod}
-	loop.Run(ctx,
-		control.Watch{Subscribe: c.servers.Watch, Keys: c.afterServerChange},
-		// A new or changed node may have room for the servers that wait.
-		control.Watch{Subscribe: c.nodes.Watch},
-	)
+	control.Run(ctx, c)
 }
 
 // afterServerChange names what to look at after a GameServer changed. One

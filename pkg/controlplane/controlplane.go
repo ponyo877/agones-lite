@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/ponyo877/agones-lite/pkg/apiserver"
+	"github.com/ponyo877/agones-lite/pkg/control"
 	"github.com/ponyo877/agones-lite/pkg/events"
 	"github.com/ponyo877/agones-lite/pkg/fleetautoscalers"
 	"github.com/ponyo877/agones-lite/pkg/fleets"
@@ -62,18 +63,22 @@ func New(s *store.Store, recorder *events.Recorder, measure *metrics.Metrics, gr
 	}, nil
 }
 
+// controllers names the controllers, from the innermost resource outwards.
+func (cp *ControlPlane) controllers() map[string]control.Controller {
+	return map[string]control.Controller{
+		"gameservers":      cp.GameServers,
+		"gameserversets":   cp.GameServerSets,
+		"fleets":           cp.Fleets,
+		"fleetautoscalers": cp.Autoscalers,
+		"nodes":            cp.Nodes,
+	}
+}
+
 // Run runs every controller until ctx is done.
 func (cp *ControlPlane) Run(ctx context.Context) {
-	controllers := []func(context.Context){
-		cp.GameServers.Run,
-		cp.GameServerSets.Run,
-		cp.Fleets.Run,
-		cp.Autoscalers.Run,
-		cp.Nodes.Run,
-	}
 	var running sync.WaitGroup
-	for _, run := range controllers {
-		running.Go(func() { run(ctx) })
+	for _, c := range cp.controllers() {
+		running.Go(func() { control.Run(ctx, c) })
 	}
 	running.Wait()
 }

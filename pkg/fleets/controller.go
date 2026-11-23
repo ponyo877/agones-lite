@@ -42,13 +42,18 @@ func NewController(s *store.Store, recorder *events.Recorder) *Controller {
 	}
 }
 
+// Loop says what the controller looks at, and when. Run runs it; a test may
+// step through it with a control.Stepper instead.
+func (c *Controller) Loop() (control.Loop, []control.Watch) {
+	return control.Loop{Sync: c.sync, All: c.all, Resync: resyncPeriod}, []control.Watch{
+		{Subscribe: c.fleets.Watch, Keys: control.Self},
+		{Subscribe: c.sets.Watch, Keys: ownerOf},
+	}
+}
+
 // Run keeps every Fleet's GameServerSets in shape until ctx is done.
 func (c *Controller) Run(ctx context.Context) {
-	loop := control.Loop{Sync: c.sync, All: c.all, Resync: resyncPeriod}
-	loop.Run(ctx,
-		control.Watch{Subscribe: c.fleets.Watch, Keys: control.Self},
-		control.Watch{Subscribe: c.sets.Watch, Keys: ownerOf},
-	)
+	control.Run(ctx, c)
 }
 
 func (c *Controller) all() []store.Key {

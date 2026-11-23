@@ -43,6 +43,18 @@ type Loop struct {
 	Resync time.Duration
 }
 
+// Controller is anything that has a Loop: something to look at, and
+// changes that say when.
+type Controller interface {
+	Loop() (Loop, []Watch)
+}
+
+// Run runs a controller's Loop until ctx is done.
+func Run(ctx context.Context, c Controller) {
+	loop, watches := c.Loop()
+	loop.Run(ctx, watches...)
+}
+
 // Run works until ctx is done.
 func (l Loop) Run(ctx context.Context, watches ...Watch) {
 	q := queue.New[store.Key]()

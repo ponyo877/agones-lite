@@ -59,10 +59,17 @@ func NewController(s *store.Store, recorder *events.Recorder, call Webhook) *Con
 	}
 }
 
+// Loop says what the controller looks at, and when. Run runs it; a test may
+// step through it with a control.Stepper instead.
+func (c *Controller) Loop() (control.Loop, []control.Watch) {
+	return control.Loop{Sync: c.sync, All: c.all, Resync: tick}, []control.Watch{
+		{Subscribe: c.scalers.Watch, Keys: control.Self},
+	}
+}
+
 // Run applies the FleetAutoscalers until ctx is done.
 func (c *Controller) Run(ctx context.Context) {
-	loop := control.Loop{Sync: c.sync, All: c.all, Resync: tick}
-	loop.Run(ctx, control.Watch{Subscribe: c.scalers.Watch, Keys: control.Self})
+	control.Run(ctx, c)
 }
 
 func (c *Controller) all() []store.Key {

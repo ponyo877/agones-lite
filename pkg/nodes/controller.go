@@ -124,13 +124,18 @@ func (c *Controller) StartOver() error {
 	return nil
 }
 
+// Loop says what the controller looks at, and when. Run runs it; a test may
+// step through it with a control.Stepper instead.
+func (c *Controller) Loop() (control.Loop, []control.Watch) {
+	return control.Loop{Sync: c.sync, All: c.all, Resync: resyncPeriod}, []control.Watch{
+		{Subscribe: c.nodes.Watch, Keys: control.Self},
+		{Subscribe: c.servers.Watch, Keys: nodeOf},
+	}
+}
+
 // Run watches over the nodes until ctx is done.
 func (c *Controller) Run(ctx context.Context) {
-	loop := control.Loop{Sync: c.sync, All: c.all, Resync: resyncPeriod}
-	loop.Run(ctx,
-		control.Watch{Subscribe: c.nodes.Watch, Keys: control.Self},
-		control.Watch{Subscribe: c.servers.Watch, Keys: nodeOf},
-	)
+	control.Run(ctx, c)
 }
 
 // all names every node that exists or that a GameServer still points to.

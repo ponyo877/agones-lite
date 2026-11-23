@@ -48,6 +48,12 @@ type feed struct {
 	cancel func()
 }
 
+// Take puts a controller under the Stepper's control, in place of Run.
+func (s *Stepper) Take(name string, c Controller) {
+	loop, watches := c.Loop()
+	s.Add(name, loop, watches...)
+}
+
 // Add puts a loop under the Stepper's control. Like Loop.Run, it begins by
 // queueing everything.
 func (s *Stepper) Add(name string, l Loop, watches ...Watch) {
