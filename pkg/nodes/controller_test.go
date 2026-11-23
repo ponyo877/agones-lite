@@ -130,6 +130,50 @@ func TestALongDisconnectMakesIdleServersUnhealthy(t *testing.T) {
 	assert.Equal(t, agonesv1.GameServerStateAllocated, f.state("allocated"), "the session is given a day")
 }
 
+// A control plane that was down for longer than the grace finds every node
+// that was Disconnected before long overdue, although their agents may all
+// be there and are only still dialling.
+func TestNothingIsGivenUpRightAfterTheControlPlaneStarted(t *testing.T) {
+	f := newControllerFixture(t)
+	_, err := f.nodes.Create(disconnectedFor(time.Hour))
+	require.NoError(t, err)
+	f.add(inState("ready", agonesv1.GameServerStateReady), inState("allocated", agonesv1.GameServerStateAllocated))
+	_, err = f.servers.Create(placed("orphan", "deleted-node"))
+	require.NoError(t, err)
+	require.NoError(t, f.StartOver())
+
+	f.sync()
+	assert.Equal(t, agonesv1.GameServerStateReady, f.state("ready"), "its agent has had no time to dial again")
+
+	f.now = func() time.Time { return noon.Add(29 * time.Second) }
+	f.sync()
+	assert.Equal(t, agonesv1.GameServerStateReady, f.state("ready"))
+
+	f.now = func() time.Time { return noon.Add(30 * time.Second) }
+	f.sync()
+	assert.Equal(t, agonesv1.GameServerStateUnhealthy, f.state("ready"), "an agent that is there has said so by now")
+	assert.Equal(t, agonesv1.GameServerStateAllocated, f.state("allocated"), "the session is still given a day")
+
+	// A node the operator deleted has no agent to wait for.
+	require.NoError(t, f.StartOver())
+	require.NoError(t, f.Controller.sync(context.Background(), store.Key{Kind: store.Nodes, Name: "deleted-node"}))
+	assert.Equal(t, agonesv1.GameServerStateUnhealthy, f.state("orphan"))
+}
+
+func TestTheWaitAfterAStartIsNeverLongerThanTheGrace(t *testing.T) {
+	f := newControllerFixture(t)
+	f.graces = Graces{Unallocated: time.Second, Allocated: time.Minute}
+	_, err := f.nodes.Create(disconnectedFor(time.Hour))
+	require.NoError(t, err)
+	f.add(inState("ready", agonesv1.GameServerStateReady))
+	require.NoError(t, f.StartOver())
+
+	f.now = func() time.Time { return noon.Add(time.Second) }
+	f.sync()
+
+	assert.Equal(t, agonesv1.GameServerStateUnhealthy, f.state("ready"), "whoever sets a grace of a second means it")
+}
+
 func TestStartingOverKeepsCountingForANodeThatWasAlreadyGone(t *testing.T) {
 	f := newControllerFixture(t)
 	_, err := f.nodes.Create(disconnectedFor(4 * time.Minute))
@@ -143,6 +187,7 @@ func TestStartingOverKeepsCountingForANodeThatWasAlreadyGone(t *testing.T) {
 		f.now = func() time.Time { return noon.Add(time.Duration(minute) * time.Minute) }
 		require.NoError(t, f.StartOver())
 	}
+	f.now = func() time.Time { return noon.Add(3*time.Minute + warmUp) }
 	f.sync()
 
 	assert.Equal(t, agonesv1.GameServerStateUnhealthy, f.state("ready"), "seven minutes out of reach, restarts or not")

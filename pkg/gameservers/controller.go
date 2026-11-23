@@ -3,11 +3,14 @@ package gameservers
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
 	"github.com/ponyo877/agones-lite/pkg/control"
@@ -35,9 +38,46 @@ const (
 type Report struct {
 	Namespace string
 	Name      string
-	Event     Event
+	// UID, when set, says which GameServer of that name is meant. One made
+	// later under the same name is another GameServer: what an agent saw
+	// happen to the first one's containers says nothing about it.
+	UID   types.UID
+	Event Event
 	// Reserve is how long an SDKReserve lasts. Zero means until told otherwise.
 	Reserve time.Duration
+	// Detail is what the reporter knows of the cause, for the event history:
+	// for CreateFailed, what Docker said. It may be empty.
+	Detail string
+}
+
+// about reports whether gs is the GameServer the Report speaks of.
+func (r Report) about(gs *agonesv1.GameServer) bool {
+	return r.UID == "" || r.UID == gs.UID
+}
+
+// maxDetail is how much of a Report's detail the event history keeps.
+const maxDetail = 300
+
+// message is the line the event history gets for a move out of from.
+func (r Report) message(from agonesv1.GameServerState) string {
+	message := fmt.Sprintf("%s: was %s", r.Event, from)
+	if detail := brief(r.Detail); detail != "" {
+		message += ": " + detail
+	}
+	return message
+}
+
+// brief makes a detail fit one line of the event history. It comes from
+// another machine, which had it from Docker, so it may be long and have line
+// breaks. Of a long one the two ends are kept: an error names what was tried
+// first and the cause last.
+func brief(detail string) string {
+	line := []rune(strings.Join(strings.Fields(detail), " "))
+	if len(line) <= maxDetail {
+		return string(line)
+	}
+	half := maxDetail / 2
+	return string(line[:half]) + " ... " + string(line[len(line)-half:])
 }
 
 // Controller owns the state of every GameServer.
@@ -179,13 +219,13 @@ func (c *Controller) Delete(namespace, name string) error {
 // GameServer's current state are ignored.
 func (c *Controller) Report(r Report) error {
 	if r.Event == ContainersRemoved {
-		return c.forgetDeleted(r.Namespace, r.Name)
+		return c.forgetDeleted(r)
 	}
 	var from, to agonesv1.GameServerState
 	var moved *agonesv1.GameServer
 	err := c.servers.Change(r.Namespace, r.Name, func(gs *agonesv1.GameServer) bool {
 		next, ok := Next(gs.Status.State, r.Event)
-		if !ok || gs.DeletionTimestamp != nil {
+		if !ok || gs.DeletionTimestamp != nil || !r.about(gs) {
 			return false
 		}
 		from, to, moved = gs.Status.State, next, gs
@@ -196,7 +236,7 @@ func (c *Controller) Report(r Report) error {
 	if err != nil || moved == nil {
 		return err
 	}
-	c.events.Record(Kind, r.Namespace, r.Name, severity(to), string(to), "%s: was %s", r.Event, from)
+	c.events.Record(Kind, r.Namespace, r.Name, severity(to), string(to), "%s", r.message(from))
 	if c.Entered != nil {
 		c.Entered(moved, to)
 	}
@@ -212,12 +252,12 @@ func severity(s agonesv1.GameServerState) events.Type {
 }
 
 // forgetDeleted drops the record of a GameServer whose containers are gone.
-func (c *Controller) forgetDeleted(namespace, name string) error {
-	gs, ok := c.servers.Get(namespace, name)
-	if !ok || gs.DeletionTimestamp == nil {
+func (c *Controller) forgetDeleted(r Report) error {
+	gs, ok := c.servers.Get(r.Namespace, r.Name)
+	if !ok || gs.DeletionTimestamp == nil || !r.about(gs) {
 		return nil
 	}
-	return ignoreNotFound(c.servers.Delete(namespace, name))
+	return ignoreNotFound(c.servers.Delete(r.Namespace, r.Name))
 }
 
 // apply moves gs to next and records what comes with the move.

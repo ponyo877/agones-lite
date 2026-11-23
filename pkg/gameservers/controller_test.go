@@ -3,6 +3,7 @@ package gameservers
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 
 	"github.com/ponyo877/agones-lite/pkg/agones"
 	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
+	"github.com/ponyo877/agones-lite/pkg/events"
 	"github.com/ponyo877/agones-lite/pkg/store"
 )
 
@@ -224,6 +226,103 @@ func TestReserveAndAllocateRecordTheirTime(t *testing.T) {
 	assert.Equal(t, allocated, gs.Status.State)
 	assert.Nil(t, gs.Status.ReservedUntil, "leaving Reserved clears the deadline")
 	assert.Equal(t, "2026-11-23T12:00:00Z", gs.Annotations[LastAllocatedAnnotation])
+}
+
+// The sidecar's timer may fire just as the game server allocates itself,
+// and what the timer says may then arrive after the allocation.
+func TestAReservationThatRunsOutDoesNotEndASession(t *testing.T) {
+	f := newFixture(t)
+	f.addNode()
+	f.addServer()
+	f.sync()
+	f.report(ContainersCreated)
+	f.report(ContainersRunning)
+
+	f.report(SDKReserve)
+	f.report(SDKAllocate)
+	f.report(ReserveExpired)
+	f.sync()
+	assert.Equal(t, allocated, f.server().Status.State, "the session goes on")
+
+	// Without a session in the way, the server goes back to the pool.
+	f.report(SDKReserve)
+	f.report(ReserveExpired)
+	f.sync()
+	assert.Equal(t, ready, f.server().Status.State)
+}
+
+// history gives the fixture an event history to write to and returns what
+// the latest line about the GameServer says.
+func (f fixture) history() (latest func() string) {
+	f.t.Helper()
+	recorder, err := events.Open(filepath.Join(f.t.TempDir(), "events.db"))
+	require.NoError(f.t, err)
+	f.t.Cleanup(func() { _ = recorder.Close() })
+	f.events = recorder
+	return func() string {
+		lines, err := recorder.For(Kind, "default", "gs")
+		require.NoError(f.t, err)
+		require.NotEmpty(f.t, lines)
+		return lines[0].Message
+	}
+}
+
+func TestAReportsDetailIsWrittenIntoTheHistoryOnOneLine(t *testing.T) {
+	f := newFixture(t)
+	latest := f.history()
+	f.addNode()
+	f.addServer()
+	f.sync()
+
+	f.report(ContainersCreated)
+	assert.Equal(t, "ContainersCreated: was Creating", latest(), "without a detail the line is as short as before")
+
+	require.NoError(t, f.Report(Report{
+		Namespace: "default", Name: "gs", Event: CreateFailed,
+		Detail: "start gs_game: docker: driver failed programming external connectivity:\n\tBind for 0.0.0.0:7000 failed: port is already allocated (HTTP 500)\n",
+	}))
+	assert.Equal(t, "CreateFailed: was Starting: start gs_game: docker: driver failed programming external connectivity: "+
+		"Bind for 0.0.0.0:7000 failed: port is already allocated (HTTP 500)", latest())
+}
+
+func TestALongDetailIsCutInTheMiddle(t *testing.T) {
+	f := newFixture(t)
+	latest := f.history()
+	f.addNode()
+	f.addServer()
+	f.sync()
+
+	rambling := "pull example/game:1: " + strings.Repeat("layer after layer ", 1000) + "denied: no access"
+	require.NoError(t, f.Report(Report{Namespace: "default", Name: "gs", Event: CreateFailed, Detail: rambling}))
+
+	line := latest()
+	assert.Less(t, len(line), 400)
+	assert.Contains(t, line, "CreateFailed: was Creating: pull example/game:1: ", "an error names what was tried first")
+	assert.True(t, strings.HasSuffix(line, "denied: no access"), "and the cause last")
+}
+
+// A GameServer was deleted and another made under its name. An agent that
+// was cut off meanwhile still reports about the first one.
+func TestAReportAboutAnEarlierGameServerOfTheSameNameIsIgnored(t *testing.T) {
+	f := newFixture(t)
+	f.addNode()
+	f.addServer()
+	f.sync()
+	current := f.server().UID
+	require.NotEmpty(t, current)
+
+	for _, event := range []Event{ContainersCreated, CreateFailed, SDKShutdown} {
+		require.NoError(t, f.Report(Report{Namespace: "default", Name: "gs", UID: "of-an-earlier-one", Event: event}))
+	}
+	assert.Equal(t, agonesv1.GameServerStateCreating, f.server().Status.State, "none of that was about this GameServer")
+
+	require.NoError(t, f.Report(Report{Namespace: "default", Name: "gs", UID: current, Event: ContainersCreated}))
+	assert.Equal(t, agonesv1.GameServerStateStarting, f.server().Status.State)
+
+	// Nor do the earlier one's containers going away remove this one.
+	require.NoError(t, f.Delete("default", "gs"))
+	require.NoError(t, f.Report(Report{Namespace: "default", Name: "gs", UID: "of-an-earlier-one", Event: ContainersRemoved}))
+	assert.NotNil(t, f.server(), "still waiting for its own containers to be removed")
 }
 
 func TestDecide(t *testing.T) {

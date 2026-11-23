@@ -41,6 +41,10 @@ const (
 	Event_EVENT_HEALTH_FAILED Event = 5
 	Event_EVENT_SET_METADATA  Event = 6
 	Event_EVENT_UPDATE_COUNTS Event = 7
+	// The time of a Reserve is up. Unlike EVENT_READY it only takes a game
+	// server that is still Reserved back to Ready: one that has allocated
+	// itself in the meantime keeps its session.
+	Event_EVENT_RESERVE_EXPIRED Event = 8
 )
 
 // Enum value maps for Event.
@@ -54,16 +58,18 @@ var (
 		5: "EVENT_HEALTH_FAILED",
 		6: "EVENT_SET_METADATA",
 		7: "EVENT_UPDATE_COUNTS",
+		8: "EVENT_RESERVE_EXPIRED",
 	}
 	Event_value = map[string]int32{
-		"EVENT_UNSPECIFIED":   0,
-		"EVENT_READY":         1,
-		"EVENT_ALLOCATE":      2,
-		"EVENT_SHUTDOWN":      3,
-		"EVENT_RESERVE":       4,
-		"EVENT_HEALTH_FAILED": 5,
-		"EVENT_SET_METADATA":  6,
-		"EVENT_UPDATE_COUNTS": 7,
+		"EVENT_UNSPECIFIED":     0,
+		"EVENT_READY":           1,
+		"EVENT_ALLOCATE":        2,
+		"EVENT_SHUTDOWN":        3,
+		"EVENT_RESERVE":         4,
+		"EVENT_HEALTH_FAILED":   5,
+		"EVENT_SET_METADATA":    6,
+		"EVENT_UPDATE_COUNTS":   7,
+		"EVENT_RESERVE_EXPIRED": 8,
 	}
 )
 
@@ -504,7 +510,7 @@ const file_proto_sidecar_v1_sidecar_proto_rawDesc = "" +
 	"\t_capacity\"/\n" +
 	"\fTellResponse\x12\x1f\n" +
 	"\vgame_server\x18\x01 \x01(\fR\n" +
-	"gameServer*\xb4\x01\n" +
+	"gameServer*\xcf\x01\n" +
 	"\x05Event\x12\x15\n" +
 	"\x11EVENT_UNSPECIFIED\x10\x00\x12\x0f\n" +
 	"\vEVENT_READY\x10\x01\x12\x12\n" +
@@ -513,7 +519,8 @@ const file_proto_sidecar_v1_sidecar_proto_rawDesc = "" +
 	"\rEVENT_RESERVE\x10\x04\x12\x17\n" +
 	"\x13EVENT_HEALTH_FAILED\x10\x05\x12\x16\n" +
 	"\x12EVENT_SET_METADATA\x10\x06\x12\x17\n" +
-	"\x13EVENT_UPDATE_COUNTS\x10\a2\xae\x01\n" +
+	"\x13EVENT_UPDATE_COUNTS\x10\a\x12\x19\n" +
+	"\x15EVENT_RESERVE_EXPIRED\x10\b2\xae\x01\n" +
 	"\x05Agent\x12T\n" +
 	"\x05Watch\x12#.agoneslite.sidecar.v1.WatchRequest\x1a$.agoneslite.sidecar.v1.WatchResponse0\x01\x12O\n" +
 	"\x04Tell\x12\".agoneslite.sidecar.v1.TellRequest\x1a#.agoneslite.sidecar.v1.TellResponseB<Z:github.com/ponyo877/agones-lite/proto/sidecar/v1;sidecarv1b\x06proto3"

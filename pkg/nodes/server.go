@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"math"
 	"slices"
 	"sync"
 	"time"
@@ -14,11 +13,13 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
 	"github.com/ponyo877/agones-lite/pkg/gameservers"
 	"github.com/ponyo877/agones-lite/pkg/store"
 	nodev1 "github.com/ponyo877/agones-lite/proto/node/v1"
+	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
 )
 
 // reportable lists the Events an agent may report. The others are the
@@ -28,7 +29,7 @@ var reportable = []gameservers.Event{
 	gameservers.ExitedCleanly, gameservers.ExitedWithError,
 	gameservers.ContainersMissing, gameservers.ContainersRemoved,
 	gameservers.SDKReady, gameservers.SDKAllocate, gameservers.SDKReserve,
-	gameservers.SDKShutdown, gameservers.HealthFailed,
+	gameservers.SDKShutdown, gameservers.HealthFailed, gameservers.ReserveExpired,
 }
 
 // errFellBehind ends the Watch call of an agent that the store stopped
@@ -186,22 +187,15 @@ func (s *Server) Report(_ context.Context, req *nodev1.ReportRequest) (*nodev1.R
 	err := s.local.Report(gameservers.Report{
 		Namespace: req.GetNamespace(),
 		Name:      req.GetName(),
+		UID:       types.UID(req.GetUid()),
 		Event:     event,
-		Reserve:   reserveFor(req.GetReserveSeconds()),
+		Reserve:   sidecarv1.ReserveFor(req.GetReserveSeconds()),
+		Detail:    req.GetDetail(),
 	})
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return &nodev1.ReportResponse{}, nil
-}
-
-// reserveFor turns the seconds of a Reserve into a Duration. More of them
-// than a Duration holds (292 years) would wrap around into a short or a
-// negative time, so they count as the longest one. Zero or less means
-// "until told otherwise".
-func reserveFor(seconds int64) time.Duration {
-	const longest = int64(math.MaxInt64 / time.Second)
-	return time.Duration(min(max(seconds, 0), longest)) * time.Second
 }
 
 // UpdateCounts implements the UpdateCounts call of the protocol.

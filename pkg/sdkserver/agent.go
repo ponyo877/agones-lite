@@ -77,6 +77,11 @@ func (s *Server) deliver(ctx context.Context) {
 
 // send hands one request to the agent, however many tries that takes, and
 // takes in the agent's answer.
+//
+// One kind of failure is not tried again: a request the agent says it
+// cannot make sense of, such as an event from a sidecar newer than itself.
+// It will not make sense of it later either, and everything queued behind
+// it would wait for ever.
 func (s *Server) send(ctx context.Context, req *sidecarv1.TellRequest) {
 	for ctx.Err() == nil {
 		resp, err := s.agent.Tell(ctx, req)
@@ -84,9 +89,19 @@ func (s *Server) send(ctx context.Context, req *sidecarv1.TellRequest) {
 			s.settle(req, answer(resp))
 			return
 		}
+		if refusedForGood(err) {
+			slog.Error("the agent refuses the request; dropping it", "event", req.GetEvent().String(), "error", err)
+			s.settle(req, nil)
+			return
+		}
 		slog.Warn("agent did not take the request, retrying", "event", req.GetEvent().String(), "error", err)
 		sleep(ctx, retryDelay)
 	}
+}
+
+func refusedForGood(err error) bool {
+	code := status.Code(err)
+	return code == codes.InvalidArgument || code == codes.Unimplemented
 }
 
 // answer reads the GameServer the agent sends back after it changed Counters

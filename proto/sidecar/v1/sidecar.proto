@@ -38,6 +38,10 @@ enum Event {
   EVENT_HEALTH_FAILED = 5;
   EVENT_SET_METADATA = 6;
   EVENT_UPDATE_COUNTS = 7;
+  // The time of a Reserve is up. Unlike EVENT_READY it only takes a game
+  // server that is still Reserved back to Ready: one that has allocated
+  // itself in the meantime keeps its session.
+  EVENT_RESERVE_EXPIRED = 8;
 }
 
 message TellRequest {

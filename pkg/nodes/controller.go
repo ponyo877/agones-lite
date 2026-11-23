@@ -21,6 +21,10 @@ const Kind = "Node"
 // not by an event.
 const resyncPeriod = 10 * time.Second
 
+// warmUp is how long a control plane that has just started gives nothing
+// up, so that the agents get to dial again first. See StartOver.
+const warmUp = 30 * time.Second
+
 // Graces is how long a disconnected node's GameServers are waited for.
 //
 // A lost connection may mean a dead machine or only a broken network, and
@@ -78,6 +82,7 @@ type Controller struct {
 	events      *events.Recorder
 	graces      Graces
 	now         func() time.Time
+	started     time.Time // when StartOver ran; the warm-up counts from here
 }
 
 // NewController returns a Controller working on s.
@@ -100,7 +105,12 @@ func NewController(s *store.Store, gameServers *gameservers.Controller, recorder
 // begins now. One that was Disconnected already keeps the time it was last
 // heard from: were it to begin again with every start, a control plane
 // restarting more often than the grace lasts would never give a node up.
+//
+// That time may lie further back than the grace, when the control plane
+// was down for long. Its agent may be there all the same and only needs a
+// moment to dial again, so for warmUp nothing is given up: see givenUp.
 func (c *Controller) StartOver() error {
+	c.started = c.now()
 	for _, node := range c.nodes.List("") {
 		if node.Status.Phase == litev1.NodeDisconnected {
 			continue
@@ -158,10 +168,21 @@ func (c *Controller) sync(_ context.Context, key store.Key) error {
 		// The operator deleted the node: nothing on it will be heard of again.
 		return c.report(key.Name, onNode, gameservers.NodeLost, "its node was deleted")
 	}
-	if err := c.report(key.Name, GivenUp(node, onNode, c.graces, c.now()), gameservers.NodeLost, "its node has been out of reach for too long"); err != nil {
+	if err := c.report(key.Name, c.givenUp(node, onNode), gameservers.NodeLost, "its node has been out of reach for too long"); err != nil {
 		return err
 	}
 	return c.report(key.Name, Drained(node, onNode), gameservers.ScaledDown, "its node is being drained")
+}
+
+// givenUp is GivenUp, except during the warm-up after a start. The warm-up
+// is never longer than the shorter grace: whoever sets that to seconds
+// does not want to wait half a minute.
+func (c *Controller) givenUp(node *litev1.Node, onNode []*agonesv1.GameServer) []*agonesv1.GameServer {
+	now := c.now()
+	if now.Sub(c.started) < min(warmUp, c.graces.Unallocated) {
+		return nil
+	}
+	return GivenUp(node, onNode, c.graces, now)
 }
 
 func (c *Controller) onNode(name string) []*agonesv1.GameServer {

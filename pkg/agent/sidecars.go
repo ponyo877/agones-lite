@@ -4,11 +4,10 @@ import (
 	"context"
 	"crypto/subtle"
 	"log/slog"
-	"math"
+	"maps"
 	"net"
 	"strings"
 	"sync"
-	"time"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	"google.golang.org/grpc"
@@ -16,6 +15,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/ponyo877/agones-lite/pkg/docker"
 	"github.com/ponyo877/agones-lite/pkg/gameservers"
@@ -30,9 +30,18 @@ type sidecarServer struct {
 	cp ControlPlane
 
 	mu      sync.Mutex
-	tokens  map[Key]string                   // the secret each sidecar must show
+	tickets map[Key]ticket                   // what lets each sidecar in
 	views   map[Key]view                     // each GameServer as the SDK shows it
 	streams map[Key]map[chan []byte]struct{} // open Watch calls
+}
+
+// ticket lets one sidecar in: the secret it must show, and the GameServer
+// its containers were made for. A GameServer made later under the same
+// name is another one. Its sidecar gets another ticket, and until then the
+// old sidecar, should it still run, speaks for nobody.
+type ticket struct {
+	token string
+	uid   types.UID
 }
 
 // view is a serialized sdk.GameServer and the resourceVersion it was made from.
@@ -44,7 +53,7 @@ type view struct {
 func newSidecarServer(cp ControlPlane) *sidecarServer {
 	return &sidecarServer{
 		cp:      cp,
-		tokens:  map[Key]string{},
+		tickets: map[Key]ticket{},
 		views:   map[Key]view{},
 		streams: map[Key]map[chan []byte]struct{}{},
 	}
@@ -62,26 +71,43 @@ func (s *sidecarServer) serve(ctx context.Context, listener net.Listener) {
 	}
 }
 
-// allow lets a sidecar that is about to start connect with token.
-func (s *sidecarServer) allow(key Key, token string) {
+// allow lets a sidecar that is about to start connect.
+func (s *sidecarServer) allow(key Key, t ticket) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.tokens[key] = token
+	s.tickets[key] = t
 }
 
-// update takes in the result of one reconcile pass. Tokens are read back
+// update takes in the result of one reconcile pass. Tickets are read back
 // from container labels, so they survive a restart of the agent.
 func (s *sidecarServer) update(desired []*agonesv1.GameServer, actual []docker.Container) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, c := range actual {
-		if token := c.Labels[podspec.LabelToken]; token != "" {
-			s.tokens[Key{Namespace: c.Labels[podspec.LabelNamespace], Name: c.Labels[podspec.LabelGameServer]}] = token
-		}
-	}
+	wanted := map[Key]types.UID{}
 	for _, gs := range desired {
+		wanted[Key{Namespace: gs.Namespace, Name: gs.Name}] = gs.UID
 		s.refresh(gs)
 	}
+	for _, c := range actual {
+		key := Key{Namespace: c.Labels[podspec.LabelNamespace], Name: c.Labels[podspec.LabelGameServer]}
+		if token := c.Labels[podspec.LabelToken]; token != "" {
+			s.tickets[key] = ticket{token: token, uid: types.UID(c.Labels[podspec.LabelUID])}
+		}
+	}
+	s.forget(wanted)
+}
+
+// forget drops what is kept for GameServers that are not placed here any
+// more. An agent runs for months, and would otherwise keep something for
+// every GameServer it ever had.
+//
+// The ticket of a sidecar goes with its GameServer, also while its
+// containers are still there: what it says would be passed on under a name
+// that may by now belong to another GameServer, here or on another node.
+// Called with the lock held.
+func (s *sidecarServer) forget(wanted map[Key]types.UID) {
+	maps.DeleteFunc(s.tickets, func(key Key, t ticket) bool { return wanted[key] != t.uid })
+	maps.DeleteFunc(s.views, func(key Key, _ view) bool { _, placed := wanted[key]; return !placed })
 }
 
 // refresh publishes gs to its watchers if it changed. Called with the lock held.
@@ -113,7 +139,7 @@ func offer(stream chan []byte, data []byte) {
 
 // Watch implements the Watch call of the protocol.
 func (s *sidecarServer) Watch(_ *sidecarv1.WatchRequest, stream grpc.ServerStreamingServer[sidecarv1.WatchResponse]) error {
-	key, err := s.authenticate(stream.Context())
+	key, _, err := s.authenticate(stream.Context())
 	if err != nil {
 		return err
 	}
@@ -147,31 +173,45 @@ func (s *sidecarServer) subscribe(key Key) (<-chan []byte, func()) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		delete(s.streams[key], stream)
+		if len(s.streams[key]) == 0 {
+			delete(s.streams, key) // or the map would grow with every GameServer
+		}
 	}
 }
 
 // sdkEvents maps what a sidecar tells us to the control plane's Events.
 var sdkEvents = map[sidecarv1.Event]gameservers.Event{
-	sidecarv1.Event_EVENT_READY:         gameservers.SDKReady,
-	sidecarv1.Event_EVENT_ALLOCATE:      gameservers.SDKAllocate,
-	sidecarv1.Event_EVENT_SHUTDOWN:      gameservers.SDKShutdown,
-	sidecarv1.Event_EVENT_RESERVE:       gameservers.SDKReserve,
-	sidecarv1.Event_EVENT_HEALTH_FAILED: gameservers.HealthFailed,
+	sidecarv1.Event_EVENT_READY:           gameservers.SDKReady,
+	sidecarv1.Event_EVENT_ALLOCATE:        gameservers.SDKAllocate,
+	sidecarv1.Event_EVENT_SHUTDOWN:        gameservers.SDKShutdown,
+	sidecarv1.Event_EVENT_RESERVE:         gameservers.SDKReserve,
+	sidecarv1.Event_EVENT_HEALTH_FAILED:   gameservers.HealthFailed,
+	sidecarv1.Event_EVENT_RESERVE_EXPIRED: gameservers.ReserveExpired,
 }
 
 // Tell implements the Tell call of the protocol.
 func (s *sidecarServer) Tell(ctx context.Context, req *sidecarv1.TellRequest) (*sidecarv1.TellResponse, error) {
-	key, err := s.authenticate(ctx)
+	key, uid, err := s.authenticate(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if req.GetEvent() == sidecarv1.Event_EVENT_UPDATE_COUNTS {
 		return s.updateCounts(key, req)
 	}
-	if err := s.pass(key, req); err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+	if err := s.pass(key, uid, req); err != nil {
+		return nil, refusal(err)
 	}
 	return &sidecarv1.TellResponse{}, nil
+}
+
+// refusal is the answer to a request that could not be passed on. The
+// sidecar tries again after any error but InvalidArgument, so that code is
+// kept for the requests that will never work, and kept apart from the rest.
+func refusal(err error) error {
+	if status.Code(err) == codes.InvalidArgument {
+		return err
+	}
+	return status.Error(codes.Internal, err.Error())
 }
 
 // updateCounts hands changes to Counters and Lists on to the control plane
@@ -193,7 +233,7 @@ func (s *sidecarServer) updateCounts(key Key, req *sidecarv1.TellRequest) (*side
 }
 
 // pass hands the request on to the control plane.
-func (s *sidecarServer) pass(key Key, req *sidecarv1.TellRequest) error {
+func (s *sidecarServer) pass(key Key, uid types.UID, req *sidecarv1.TellRequest) error {
 	if req.GetEvent() == sidecarv1.Event_EVENT_SET_METADATA {
 		return s.cp.SetMetadata(key.Namespace, key.Name, req.GetLabels(), req.GetAnnotations())
 	}
@@ -204,36 +244,28 @@ func (s *sidecarServer) pass(key Key, req *sidecarv1.TellRequest) error {
 	return s.cp.Report(gameservers.Report{
 		Namespace: key.Namespace,
 		Name:      key.Name,
+		UID:       uid,
 		Event:     event,
-		Reserve:   reserveFor(req.GetReserveSeconds()),
+		Reserve:   sidecarv1.ReserveFor(req.GetReserveSeconds()),
 	})
-}
-
-// reserveFor turns the seconds of a Reserve into a Duration. More of them
-// than a Duration holds (292 years) would wrap around into a short or a
-// negative time, so they count as the longest one. Zero or less means
-// "until told otherwise".
-func reserveFor(seconds int64) time.Duration {
-	const longest = int64(math.MaxInt64 / time.Second)
-	return time.Duration(min(max(seconds, 0), longest)) * time.Second
 }
 
 // authenticate works out which GameServer is calling and checks its token.
 // A game container shares the sidecar's network and could dial the agent
 // too; it does not know the token, so it cannot pose as the sidecar.
-func (s *sidecarServer) authenticate(ctx context.Context) (Key, error) {
+func (s *sidecarServer) authenticate(ctx context.Context) (Key, types.UID, error) {
 	md, _ := metadata.FromIncomingContext(ctx)
 	namespace, name, _ := strings.Cut(first(md, "gameserver"), "/")
 	token := strings.TrimPrefix(first(md, "authorization"), "Bearer ")
 	key := Key{Namespace: namespace, Name: name}
 
 	s.mu.Lock()
-	want, known := s.tokens[key]
+	want, known := s.tickets[key]
 	s.mu.Unlock()
-	if !known || subtle.ConstantTimeCompare([]byte(token), []byte(want)) != 1 {
-		return Key{}, status.Error(codes.Unauthenticated, "unknown game server or wrong token")
+	if !known || subtle.ConstantTimeCompare([]byte(token), []byte(want.token)) != 1 {
+		return Key{}, "", status.Error(codes.Unauthenticated, "unknown game server or wrong token")
 	}
-	return key, nil
+	return key, want.uid, nil
 }
 
 func first(md metadata.MD, name string) string {

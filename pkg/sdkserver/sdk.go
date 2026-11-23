@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"math"
 	"strings"
 	"time"
 
@@ -18,54 +17,66 @@ import (
 
 // Ready asks for the game server to be marked Ready.
 func (s *Server) Ready(context.Context, *sdk.Empty) (*sdk.Empty, error) {
-	s.stopReserveTimer()
-	return s.tell(&sidecarv1.TellRequest{Event: sidecarv1.Event_EVENT_READY})
+	return s.ask(sidecarv1.Event_EVENT_READY, 0)
 }
 
 // Allocate lets a game server allocate itself.
 func (s *Server) Allocate(context.Context, *sdk.Empty) (*sdk.Empty, error) {
-	s.stopReserveTimer()
-	return s.tell(&sidecarv1.TellRequest{Event: sidecarv1.Event_EVENT_ALLOCATE})
+	return s.ask(sidecarv1.Event_EVENT_ALLOCATE, 0)
 }
 
 // Shutdown asks for the game server to be shut down and removed.
 func (s *Server) Shutdown(context.Context, *sdk.Empty) (*sdk.Empty, error) {
-	s.stopReserveTimer()
-	return s.tell(&sidecarv1.TellRequest{Event: sidecarv1.Event_EVENT_SHUTDOWN})
+	return s.ask(sidecarv1.Event_EVENT_SHUTDOWN, 0)
 }
 
-// longestReserve is as many seconds as a time.Duration holds: 292 years.
-const longestReserve = int64(math.MaxInt64 / time.Second)
-
-// Reserve marks the game server Reserved. After d it asks for Ready again;
+// Reserve marks the game server Reserved. After d it goes back to Ready;
 // zero seconds means Reserved until the game server says otherwise, and so
 // does a negative number, as upstream has it.
-//
-// More seconds than a Duration holds are cut down to the longest one.
-// Upstream lets them wrap around, to a time that is up at once.
 func (s *Server) Reserve(_ context.Context, d *sdk.Duration) (*sdk.Empty, error) {
-	s.stopReserveTimer()
-	seconds := min(max(d.GetSeconds(), 0), longestReserve)
-	if seconds > 0 {
-		s.startReserveTimer(time.Duration(seconds) * time.Second)
-	}
-	return s.tell(&sidecarv1.TellRequest{Event: sidecarv1.Event_EVENT_RESERVE, ReserveSeconds: seconds})
+	return s.ask(sidecarv1.Event_EVENT_RESERVE, sidecarv1.ReserveFor(d.GetSeconds()))
 }
 
-func (s *Server) startReserveTimer(d time.Duration) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.reserve = time.AfterFunc(d, func() {
-		_, _ = s.tell(&sidecarv1.TellRequest{Event: sidecarv1.Event_EVENT_READY})
-	})
-}
-
-func (s *Server) stopReserveTimer() {
+// ask queues one of the four requests that change the game server's state.
+// Each ends the reservation that came before, and a Reserve with a time
+// begins one.
+//
+// Ending the old reservation and queueing the request happen under one
+// lock, and so does the timer's own message. "The time is up" is therefore
+// queued before the request or not at all. Were it queued after a new
+// Reserve, it would end the reservation the game server has just made.
+func (s *Server) ask(event sidecarv1.Event, reserve time.Duration) (*sdk.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.reserve != nil {
 		s.reserve.Stop()
-		s.reserve = nil
+	}
+	s.reserve = nil
+	if reserve > 0 {
+		s.reserve = s.expireAfter(reserve)
+	}
+	return s.tell(&sidecarv1.TellRequest{Event: event, ReserveSeconds: int64(reserve / time.Second)})
+}
+
+// expireAfter returns a timer that says when the time of a Reserve is up.
+// It does not ask for Ready, which is what upstream does
+// (resetReserveAfter). A timer that has fired cannot be stopped, so a game
+// server that allocates itself at that moment would be taken back to Ready,
+// session and all. Whether the time ran out on a Reserved game server is
+// for the control plane to say.
+func (s *Server) expireAfter(d time.Duration) *time.Timer {
+	var timer *time.Timer
+	timer = time.AfterFunc(d, func() { s.expired(timer) })
+	return timer
+}
+
+// expired is what a reservation's timer does when it fires. A timer that
+// was stopped too late finds another reservation, or none, and says nothing.
+func (s *Server) expired(timer *time.Timer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reserve == timer {
+		_, _ = s.tell(&sidecarv1.TellRequest{Event: sidecarv1.Event_EVENT_RESERVE_EXPIRED})
 	}
 }
 

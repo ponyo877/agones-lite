@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/ponyo877/agones-lite/pkg/docker"
 	"github.com/ponyo877/agones-lite/pkg/gameservers"
@@ -14,7 +15,7 @@ import (
 )
 
 func server(name string, state agonesv1.GameServerState) *agonesv1.GameServer {
-	gs := &agonesv1.GameServer{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: name}}
+	gs := &agonesv1.GameServer{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: name, UID: types.UID("uid-of-" + name)}}
 	gs.Status.State = state
 	return gs
 }
@@ -27,9 +28,19 @@ func container(gs, role, state string, exitCode int) docker.Container {
 		Labels: map[string]string{
 			podspec.LabelNamespace:  "default",
 			podspec.LabelGameServer: gs,
+			podspec.LabelUID:        "uid-of-" + gs,
 			podspec.LabelRole:       role,
 		},
 	}
+}
+
+// ofAnEarlier relabels containers as those of a GameServer that had the
+// same name before and is gone.
+func ofAnEarlier(containers []docker.Container) []docker.Container {
+	for _, c := range containers {
+		c.Labels[podspec.LabelUID] = "uid-of-an-earlier-one"
+	}
+	return containers
 }
 
 func running(gs string) []docker.Container {
@@ -62,17 +73,20 @@ func TestPlanForOneGameServer(t *testing.T) {
 		event      gameservers.Event
 		nothing    bool
 	}{
-		"placed, nothing exists yet":         {state: agonesv1.GameServerStateCreating, kind: Create},
-		"placed, leftovers from a crash":     {state: agonesv1.GameServerStateCreating, containers: running("gs"), kind: Discard},
-		"starting and the game runs":         {state: agonesv1.GameServerStateStarting, containers: running("gs"), kind: Tell, event: gameservers.ContainersRunning},
-		"starting but nothing was started":   {state: agonesv1.GameServerStateStarting, containers: created("gs"), kind: Start},
-		"starting and a container is gone":   {state: agonesv1.GameServerStateStarting, containers: created("gs")[:1], kind: Tell, event: gameservers.ContainersMissing},
-		"ready and running":                  {state: agonesv1.GameServerStateReady, containers: running("gs"), nothing: true},
-		"ready but the containers are gone":  {state: agonesv1.GameServerStateReady, kind: Tell, event: gameservers.ContainersMissing},
-		"the game exited cleanly":            {state: agonesv1.GameServerStateAllocated, containers: gameExited(0), kind: Tell, event: gameservers.ExitedCleanly},
-		"the game crashed":                   {state: agonesv1.GameServerStateAllocated, containers: gameExited(2), kind: Tell, event: gameservers.ExitedWithError},
-		"unhealthy is left for inspection":   {state: agonesv1.GameServerStateUnhealthy, containers: gameExited(2), nothing: true},
-		"shutdown waits for the delete mark": {state: agonesv1.GameServerStateShutdown, containers: running("gs"), nothing: true},
+		"placed, nothing exists yet":          {state: agonesv1.GameServerStateCreating, kind: Create},
+		"placed, a creation was cut short":    {state: agonesv1.GameServerStateCreating, containers: created("gs"), kind: Discard},
+		"placed, an earlier one's leftovers":  {state: agonesv1.GameServerStateCreating, containers: ofAnEarlier(running("gs")), kind: Discard},
+		"placed, yet its own containers run":  {state: agonesv1.GameServerStateCreating, containers: running("gs"), kind: Tell, event: gameservers.ContainersCreated},
+		"starting and the game runs":          {state: agonesv1.GameServerStateStarting, containers: running("gs"), kind: Tell, event: gameservers.ContainersRunning},
+		"starting but nothing was started":    {state: agonesv1.GameServerStateStarting, containers: created("gs"), kind: Start},
+		"starting and a container is gone":    {state: agonesv1.GameServerStateStarting, containers: created("gs")[:1], kind: Tell, event: gameservers.ContainersMissing},
+		"ready and running":                   {state: agonesv1.GameServerStateReady, containers: running("gs"), nothing: true},
+		"ready but the containers are gone":   {state: agonesv1.GameServerStateReady, kind: Tell, event: gameservers.ContainersMissing},
+		"ready, in containers that never ran": {state: agonesv1.GameServerStateReady, containers: created("gs"), kind: Tell, event: gameservers.ContainersMissing},
+		"the game exited cleanly":             {state: agonesv1.GameServerStateAllocated, containers: gameExited(0), kind: Tell, event: gameservers.ExitedCleanly},
+		"the game crashed":                    {state: agonesv1.GameServerStateAllocated, containers: gameExited(2), kind: Tell, event: gameservers.ExitedWithError},
+		"unhealthy is left for inspection":    {state: agonesv1.GameServerStateUnhealthy, containers: gameExited(2), nothing: true},
+		"shutdown waits for the delete mark":  {state: agonesv1.GameServerStateShutdown, containers: running("gs"), nothing: true},
 		"the sidecar died": {
 			state: agonesv1.GameServerStateReady,
 			containers: []docker.Container{
@@ -94,6 +108,28 @@ func TestPlanForOneGameServer(t *testing.T) {
 			assert.Equal(t, tc.event, actions[0].Event)
 			assert.Equal(t, Key{Namespace: "default", Name: "gs"}, actions[0].Key)
 		})
+	}
+}
+
+// An agent on another machine works from a copy of its GameServers, and
+// the copy is always a moment behind what the agent itself has reported.
+func TestPlanKeepsItsHandsOffContainersThatWereStartedWhenTheCopyIsBehind(t *testing.T) {
+	behind := []*agonesv1.GameServer{server("gs", agonesv1.GameServerStateCreating)}
+	halfway := []docker.Container{
+		container("gs", podspec.RoleGame, "created", 0),
+		container("gs", podspec.RoleSidecar, "running", 0),
+	}
+	crashed := []docker.Container{
+		container("gs", podspec.RoleSidecar, "running", 0),
+		container("gs", podspec.RoleGame, "exited", 2),
+	}
+
+	for name, containers := range map[string][]docker.Container{"running": running("gs"), "halfway": halfway, "crashed": crashed} {
+		actions := Plan(behind, containers)
+
+		require.Len(t, actions, 1, name)
+		assert.Equal(t, Tell, actions[0].Kind, "%s: a start is proof that the control plane heard of the creation", name)
+		assert.Equal(t, gameservers.ContainersCreated, actions[0].Event, "%s: said again, should it have been forgotten", name)
 	}
 }
 

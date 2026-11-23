@@ -16,7 +16,11 @@ import (
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
 	"github.com/ponyo877/agones-lite/pkg/docker"
@@ -103,7 +107,9 @@ func (f *fakeDocker) RemoveVolumes(_ context.Context, prefix string) error {
 type fakeControlPlane struct {
 	placed  []*agonesv1.GameServer
 	events  []gameservers.Event
-	reserve time.Duration // of the last report
+	reserve time.Duration     // of the last report
+	detail  string            // of the last report
+	deaf    gameservers.Event // a report it does not take, as when the network fails
 }
 
 func (f *fakeControlPlane) Register(*litev1.Node) error                    { return nil }
@@ -118,8 +124,11 @@ func (f *fakeControlPlane) UpdateCounts(string, string, string, []*sidecarv1.Cou
 }
 
 func (f *fakeControlPlane) Report(r gameservers.Report) error {
+	if r.Event == f.deaf {
+		return errors.New("deadline exceeded")
+	}
 	f.events = append(f.events, r.Event)
-	f.reserve = r.Reserve
+	f.reserve, f.detail = r.Reserve, r.Detail
 	return nil
 }
 
@@ -151,7 +160,7 @@ func TestCreateBringsTheContainersUpInOrder(t *testing.T) {
 		"start agones-lite_default_gs_game",
 	}, d.calls)
 	assert.Equal(t, []gameservers.Event{gameservers.ContainersCreated, gameservers.ContainersRunning}, cp.events)
-	assert.NotEmpty(t, a.sidecars.tokens[key], "the sidecar must be let in before it starts")
+	assert.NotEmpty(t, a.sidecars.tickets[key].token, "the sidecar must be let in before it starts")
 }
 
 func TestCreateReportsFailure(t *testing.T) {
@@ -161,6 +170,7 @@ func TestCreateReportsFailure(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Equal(t, []gameservers.Event{gameservers.CreateFailed}, cp.events)
+	assert.Equal(t, "no such image", cp.detail, "what Docker said goes along, or it stays in a log on this machine")
 }
 
 func TestStartFinishesWhatACreateLeftUnstarted(t *testing.T) {
@@ -184,6 +194,22 @@ func TestStartReportsFailure(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Equal(t, []gameservers.Event{gameservers.CreateFailed}, cp.events, "or it would be tried again for ever")
+}
+
+// The containers are up and only the news did not get through. Saying
+// CreateFailed next would be both wrong and final.
+func TestAReportThatDoesNotGetThroughDoesNotFailWhatWasBroughtUp(t *testing.T) {
+	for _, lost := range []gameservers.Event{gameservers.ContainersCreated, gameservers.ContainersRunning} {
+		t.Run(string(lost), func(t *testing.T) {
+			a, cp := newAgent(&fakeDocker{images: map[string]bool{"sidecar:dev": true, "example/game:1": true}})
+			cp.deaf = lost
+
+			err := a.execute(context.Background(), Action{Kind: Create, Key: key, GameServer: placed()})
+
+			assert.Error(t, err, "so that the pass is tried again")
+			assert.NotContains(t, cp.events, gameservers.CreateFailed)
+		})
+	}
 }
 
 func TestACreateCutShortByShutdownIsNotReportedAsFailed(t *testing.T) {
@@ -310,10 +336,25 @@ func TestACreateThatFindsItsContainersThereAlreadyFailsNothing(t *testing.T) {
 	assert.Equal(t, []gameservers.Event{gameservers.CreateFailed}, cp.events)
 }
 
-func TestAPlanMadeWhileAnActionRanWaitsForTheNextPass(t *testing.T) {
-	// What a pass saw: the GameServer still Creating, and containers.
-	// Taken alone that means leftovers of a crash, to be cleared away.
+// An agent on another machine learns of its GameServers from a copy, which
+// still says Creating for a moment after the agent has started them.
+func TestACopyThatIsBehindDoesNotTakeDownWhatWasJustStarted(t *testing.T) {
 	d := &fakeDocker{containers: running("gs")}
+	a, cp := newAgent(d)
+	cp.placed = []*agonesv1.GameServer{placed()}
+
+	a.reconcile(context.Background())
+	settle(t, a)
+
+	assert.Empty(t, d.calls, "they are its own containers, and they run")
+	assert.Equal(t, []gameservers.Event{gameservers.ContainersCreated}, cp.events, "said again, which the control plane ignores")
+}
+
+func TestAPlanMadeWhileAnActionRanWaitsForTheNextPass(t *testing.T) {
+	// What a pass saw: the GameServer still Creating, and containers that
+	// were never started. Taken alone that means a creation that was cut
+	// short, to be cleared away.
+	d := &fakeDocker{containers: created("gs")}
 	a, cp := newAgent(d)
 	cp.placed = []*agonesv1.GameServer{placed()}
 	// But a create was under way, and it finished while Docker was asked.
@@ -322,7 +363,7 @@ func TestAPlanMadeWhileAnActionRanWaitsForTheNextPass(t *testing.T) {
 
 	a.reconcile(context.Background())
 	settle(t, a)
-	assert.Empty(t, d.calls, "the containers the create has just started must not be taken down")
+	assert.Empty(t, d.calls, "the containers the create was about to start must not be taken down")
 
 	// A pass that looks with nothing else going on can trust what it sees.
 	d.onList = nil
@@ -331,26 +372,22 @@ func TestAPlanMadeWhileAnActionRanWaitsForTheNextPass(t *testing.T) {
 	assert.Contains(t, d.calls, "remove gs-game")
 }
 
-func TestAReserveTooLongForADurationIsPassedOnAsTheLongest(t *testing.T) {
+func TestTheSecondsOfAReserveArePassedOnAsADuration(t *testing.T) {
 	const longest = time.Duration(math.MaxInt64/int64(time.Second)) * time.Second // 292 years
 	tests := map[string]struct {
 		seconds int64
 		want    time.Duration
 	}{
-		"a minute":                    {seconds: 60, want: time.Minute},
-		"until told otherwise":        {seconds: 0, want: 0},
-		"negative counts as zero":     {seconds: -5, want: 0},
-		"the last second that fits":   {seconds: 9_223_372_036, want: longest},
-		"one more wraps to minus":     {seconds: 9_223_372_037, want: longest},
-		"enough more wraps to 0.3s":   {seconds: 18_446_744_074, want: longest},
-		"far enough below wraps too":  {seconds: -10_000_000_000, want: 0},
-		"as many as an int64 can say": {seconds: math.MaxInt64, want: longest},
+		"a minute":                {seconds: 60, want: time.Minute},
+		"until told otherwise":    {seconds: 0, want: 0},
+		"enough to wrap around":   {seconds: 18_446_744_074, want: longest}, // see sidecarv1.ReserveFor
+		"negative counts as zero": {seconds: -5, want: 0},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			a, cp := newAgent(&fakeDocker{})
 
-			err := a.sidecars.pass(key, &sidecarv1.TellRequest{Event: sidecarv1.Event_EVENT_RESERVE, ReserveSeconds: tc.seconds})
+			err := a.sidecars.pass(key, "", &sidecarv1.TellRequest{Event: sidecarv1.Event_EVENT_RESERVE, ReserveSeconds: tc.seconds})
 
 			require.NoError(t, err)
 			assert.Equal(t, []gameservers.Event{gameservers.SDKReserve}, cp.events)
@@ -359,15 +396,105 @@ func TestAReserveTooLongForADurationIsPassedOnAsTheLongest(t *testing.T) {
 	}
 }
 
+// The sidecar tries again after an error, except after this one.
+func TestAnEventTheAgentDoesNotKnowIsRefusedForGood(t *testing.T) {
+	a, cp := newAgent(&fakeDocker{})
+
+	err := refusal(a.sidecars.pass(key, "", &sidecarv1.TellRequest{Event: sidecarv1.Event(999)}))
+
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Empty(t, cp.events)
+	assert.Equal(t, codes.Internal, status.Code(refusal(errors.New("the control plane is away"))), "anything else is worth another try")
+}
+
+func TestAReserveThatRanOutIsPassedOnAsThatAndNotAsReady(t *testing.T) {
+	a, cp := newAgent(&fakeDocker{})
+
+	err := a.sidecars.pass(key, "", &sidecarv1.TellRequest{Event: sidecarv1.Event_EVENT_RESERVE_EXPIRED})
+
+	require.NoError(t, err)
+	assert.Equal(t, []gameservers.Event{gameservers.ReserveExpired}, cp.events)
+}
+
 func TestSidecarTokensComeBackFromLabels(t *testing.T) {
 	a, _ := newAgent(&fakeDocker{})
 	sidecar := container("gs", podspec.RoleSidecar, "running", 0)
 	sidecar.Labels[podspec.LabelToken] = "secret"
 
 	// As after a restart of the agent: nothing in memory, containers running.
-	a.sidecars.update(nil, []docker.Container{sidecar})
+	a.sidecars.update([]*agonesv1.GameServer{server("gs", agonesv1.GameServerStateReady)}, []docker.Container{sidecar})
 
-	assert.Equal(t, "secret", a.sidecars.tokens[key])
+	assert.Equal(t, ticket{token: "secret", uid: "uid-of-gs"}, a.sidecars.tickets[key])
+}
+
+// What a sidecar says is passed on under its GameServer's name. Once the
+// name belongs to another GameServer, or to none placed here, the sidecar
+// of the old one must not be heard, although its containers may still run.
+func TestASidecarWhoseGameServerIsNoLongerPlacedHereIsNotLetIn(t *testing.T) {
+	sidecarOf := func(uid string) docker.Container {
+		c := container("gs", podspec.RoleSidecar, "running", 0)
+		c.Labels[podspec.LabelToken], c.Labels[podspec.LabelUID] = "secret", uid
+		return c
+	}
+	calling := metadata.NewIncomingContext(context.Background(), metadata.Pairs("gameserver", "default/gs", "authorization", "Bearer secret"))
+	tests := map[string]struct {
+		placed []*agonesv1.GameServer
+		uid    string
+		letIn  bool
+	}{
+		"its own GameServer is placed here":         {placed: []*agonesv1.GameServer{server("gs", agonesv1.GameServerStateReady)}, uid: "uid-of-gs", letIn: true},
+		"another GameServer has the name now":       {placed: []*agonesv1.GameServer{server("gs", agonesv1.GameServerStateCreating)}, uid: "uid-of-an-earlier-one"},
+		"no GameServer of that name is placed here": {uid: "uid-of-gs"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			a, _ := newAgent(&fakeDocker{})
+
+			a.sidecars.update(tc.placed, []docker.Container{sidecarOf(tc.uid)})
+			_, uid, err := a.sidecars.authenticate(calling)
+
+			if !tc.letIn {
+				assert.Equal(t, codes.Unauthenticated, status.Code(err))
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, types.UID(tc.uid), uid, "what it says is said of that GameServer and no other")
+		})
+	}
+}
+
+// An agent runs for months and sees game servers come and go by the
+// thousand. What it keeps for each of them has to go with them.
+func TestWhatIsKeptForAGameServerGoesWithIt(t *testing.T) {
+	a, _ := newAgent(&fakeDocker{})
+	sidecar := container("gs", podspec.RoleSidecar, "running", 0)
+	sidecar.Labels[podspec.LabelToken] = "secret"
+	gs, next := server("gs", agonesv1.GameServerStateReady), server("next", agonesv1.GameServerStateCreating)
+	gs.ResourceVersion, next.ResourceVersion = "7", "8"
+	a.sidecars.allow(Key{Namespace: "default", Name: "next"}, ticket{token: "another-secret", uid: next.UID}) // being created: wanted, no container yet
+	wanted := []*agonesv1.GameServer{gs, next}
+	kept := func() (tokens, views, streams int) {
+		a.sidecars.mu.Lock()
+		defer a.sidecars.mu.Unlock()
+		return len(a.sidecars.tickets), len(a.sidecars.views), len(a.sidecars.streams)
+	}
+
+	a.sidecars.update(wanted, []docker.Container{sidecar})
+	_, hangUp := a.sidecars.subscribe(key)
+	tokens, views, streams := kept()
+	assert.Equal(t, []int{2, 2, 1}, []int{tokens, views, streams})
+
+	// The GameServer is not placed here any more. What is kept for it goes
+	// at once, though its containers are still being cleared away.
+	a.sidecars.update(wanted[1:], []docker.Container{sidecar})
+	tokens, views, streams = kept()
+	assert.Equal(t, []int{1, 1, 1}, []int{tokens, views, streams})
+
+	// Then the containers are gone too, and the sidecar's call ends.
+	a.sidecars.update(wanted[1:], nil)
+	hangUp()
+	tokens, views, streams = kept()
+	assert.Equal(t, []int{1, 1, 0}, []int{tokens, views, streams}, "only the one still wanted is left")
 }
 
 func TestLogsReadTheMainContainerUnlessAnotherIsNamed(t *testing.T) {

@@ -110,6 +110,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 	go a.sidecars.serve(ctx, listener)
 	go a.announce(ctx)
+	a.warnOfUnmanaged(ctx)
 
 	changes, cancel := a.cp.Changes()
 	defer cancel()
@@ -223,37 +224,58 @@ func (a *Agent) release(key Key) {
 func (a *Agent) execute(ctx context.Context, action Action) error {
 	switch action.Kind {
 	case Create:
-		return a.orCreateFailed(ctx, action.Key, a.bringUp(ctx, action.Key, action.GameServer))
+		return a.orCreateFailed(ctx, action, a.bringUp(ctx, action))
 	case Start:
-		return a.orCreateFailed(ctx, action.Key, a.startAll(ctx, action.Key, ids(action.Containers)))
+		return a.orCreateFailed(ctx, action, a.startAll(ctx, action, ids(action.Containers)))
 	case Remove:
 		prefix := podspec.Prefix(action.Key.Namespace, action.Key.Name)
 		if err := a.takeDown(ctx, action.Containers, podspec.GracePeriod(action.GameServer), prefix); err != nil {
 			return err
 		}
-		return a.tell(action.Key, gameservers.ContainersRemoved)
+		return a.tell(action, gameservers.ContainersRemoved)
 	case Discard:
 		prefix := podspec.Prefix(action.Key.Namespace, action.Key.Name)
 		return a.takeDown(ctx, action.Containers, discardGrace, prefix)
 	case Tell:
-		return a.tell(action.Key, action.Event)
+		return a.tell(action, action.Event)
 	}
 	return nil
 }
 
-func (a *Agent) tell(key Key, event gameservers.Event) error {
-	return a.cp.Report(gameservers.Report{Namespace: key.Namespace, Name: key.Name, Event: event})
+// tell reports event of the GameServer the action is about: of that very
+// one, should another have taken its name meanwhile.
+func (a *Agent) tell(about Action, event gameservers.Event) error {
+	if err := a.cp.Report(about.report(event, "")); err != nil {
+		return unreported{err}
+	}
+	return nil
 }
 
+func (a Action) report(event gameservers.Event, detail string) gameservers.Report {
+	return gameservers.Report{Namespace: a.Key.Namespace, Name: a.Key.Name, UID: a.UID, Event: event, Detail: detail}
+}
+
+// unreported is a failure to reach the control plane, as opposed to a
+// failure to do the work. The work stands, and the next pass reports it.
+type unreported struct{ error }
+
+func (u unreported) Unwrap() error { return u.error }
+
 // orCreateFailed reports CreateFailed when the containers could not be
-// brought up, which is what err says. Two things are not that. An agent
-// that is stopping was only interrupted, and one that found its containers
-// there already came too late. The next pass carries on from what it finds.
-func (a *Agent) orCreateFailed(ctx context.Context, key Key, err error) error {
-	if err == nil || ctx.Err() != nil || a.alreadyThere(ctx, key, err) {
+// brought up, which is what err says. Three things are not that. An agent
+// that is stopping was only interrupted, one that found its containers
+// there already came too late, and one that could not tell the control
+// plane how far it got has containers that are fine. The next pass carries
+// on from what it finds. CreateFailed is final, so it must not be said of a
+// GameServer that may yet come up.
+//
+// What Docker said goes along. The operator reads the event history; this
+// machine's log may be far away.
+func (a *Agent) orCreateFailed(ctx context.Context, about Action, err error) error {
+	if err == nil || ctx.Err() != nil || errors.As(err, &unreported{}) || a.alreadyThere(ctx, about.Key, err) {
 		return err
 	}
-	return errors.Join(err, a.tell(key, gameservers.CreateFailed))
+	return errors.Join(err, a.cp.Report(about.report(gameservers.CreateFailed, err.Error())))
 }
 
 // alreadyThere reports whether err is Docker refusing a name while the
@@ -269,7 +291,8 @@ func (a *Agent) alreadyThere(ctx context.Context, key Key, err error) bool {
 	return err == nil && len(group(actual)[key]) > 0
 }
 
-func (a *Agent) bringUp(ctx context.Context, key Key, gs *agonesv1.GameServer) error {
+func (a *Agent) bringUp(ctx context.Context, about Action) error {
+	gs := about.GameServer
 	token, err := newToken()
 	if err != nil {
 		return err
@@ -283,11 +306,11 @@ func (a *Agent) bringUp(ctx context.Context, key Key, gs *agonesv1.GameServer) e
 	if err != nil {
 		return err
 	}
-	a.sidecars.allow(key, token) // before the sidecar starts and dials in
-	if err := a.tell(key, gameservers.ContainersCreated); err != nil {
+	a.sidecars.allow(about.Key, ticket{token: token, uid: gs.UID}) // before the sidecar starts and dials in
+	if err := a.tell(about, gameservers.ContainersCreated); err != nil {
 		return err
 	}
-	return a.startAll(ctx, key, ids)
+	return a.startAll(ctx, about, ids)
 }
 
 func (a *Agent) createAll(ctx context.Context, specs []docker.Spec) ([]string, error) {
@@ -305,13 +328,13 @@ func (a *Agent) createAll(ctx context.Context, specs []docker.Spec) ([]string, e
 // startAll starts the containers in the order given, which must have the
 // sidecar first, and reports that they run. An agent that stops half way
 // leaves containers that Plan hands to the next one as a Start.
-func (a *Agent) startAll(ctx context.Context, key Key, ids []string) error {
+func (a *Agent) startAll(ctx context.Context, about Action, ids []string) error {
 	for _, id := range ids {
 		if err := a.docker.Start(ctx, id); err != nil {
 			return err
 		}
 	}
-	return a.tell(key, gameservers.ContainersRunning)
+	return a.tell(about, gameservers.ContainersRunning)
 }
 
 func ids(containers []docker.Container) []string {

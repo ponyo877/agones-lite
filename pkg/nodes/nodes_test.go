@@ -23,6 +23,7 @@ import (
 	"github.com/ponyo877/agones-lite/pkg/agones"
 	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
 	"github.com/ponyo877/agones-lite/pkg/auth"
+	"github.com/ponyo877/agones-lite/pkg/events"
 	"github.com/ponyo877/agones-lite/pkg/gameservers"
 	"github.com/ponyo877/agones-lite/pkg/store"
 	nodev1 "github.com/ponyo877/agones-lite/proto/node/v1"
@@ -32,6 +33,7 @@ import (
 // controlPlane is a store with the node API served over TLS on a local port.
 type controlPlane struct {
 	store   *store.Store
+	history *events.Recorder
 	local   *Local
 	server  *Server
 	secrets *auth.Secrets
@@ -46,17 +48,20 @@ func newControlPlane(t *testing.T) controlPlane {
 	t.Cleanup(func() { _ = s.Close() })
 	secrets, err := auth.Load(t.TempDir(), nil)
 	require.NoError(t, err)
+	history, err := events.Open(filepath.Join(t.TempDir(), "events.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = history.Close() })
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	options := append(auth.RequireGRPC(secrets, auth.Node), grpc.Creds(credentials.NewTLS(secrets.ServerTLS())))
 	server := grpc.NewServer(options...)
-	local := NewLocal(s, gameservers.NewController(s, nil))
+	local := NewLocal(s, gameservers.NewController(s, history))
 	agents := NewServer(s, local)
 	nodev1.RegisterNodesServer(server, agents)
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(server.Stop)
-	return controlPlane{store: s, local: local, server: agents, secrets: secrets, address: listener.Addr().String()}
+	return controlPlane{store: s, history: history, local: local, server: agents, secrets: secrets, address: listener.Addr().String()}
 }
 
 func node(name string) *litev1.Node {
@@ -139,6 +144,25 @@ func TestReportsFromAnAgentChangeTheGameServer(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, status.Code(err), "granting Ready is the control plane's decision")
 }
 
+func TestWhyACreationFailedTravelsWithTheReport(t *testing.T) {
+	cp := newControlPlane(t)
+	_, err := store.GameServersOf(cp.store).Create(placed("gs", "node-1"))
+	require.NoError(t, err)
+	remote, err := Dial(cp.address, cp.secrets.Token(auth.Node))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = remote.Close() })
+
+	require.NoError(t, remote.Report(gameservers.Report{
+		Namespace: "default", Name: "gs", Event: gameservers.CreateFailed, Detail: "pull example/game:1: pull access denied",
+	}))
+
+	lines, err := cp.history.For(gameservers.Kind, "default", "gs")
+	require.NoError(t, err)
+	require.Len(t, lines, 1)
+	assert.Equal(t, "CreateFailed: was Creating: pull example/game:1: pull access denied", lines[0].Message,
+		"the operator reads it here, not in a log on the node")
+}
+
 func TestAReserveTooLongForADurationLastsAsLongAsOneCan(t *testing.T) {
 	cp := newControlPlane(t)
 	servers := store.GameServersOf(cp.store)
@@ -155,6 +179,28 @@ func TestAReserveTooLongForADurationLastsAsLongAsOneCan(t *testing.T) {
 	assert.Equal(t, agonesv1.GameServerStateReserved, gs.Status.State)
 	require.NotNil(t, gs.Status.ReservedUntil)
 	assert.Greater(t, time.Until(gs.Status.ReservedUntil.Time), 200*365*24*time.Hour)
+}
+
+// The sidecar's timer may fire just as the game server allocates itself.
+func TestAReserveThatRanOutTakesBackOnlyAReservedGameServer(t *testing.T) {
+	cp := newControlPlane(t)
+	servers := store.GameServersOf(cp.store)
+	_, err := servers.Create(inState("reserved", agonesv1.GameServerStateReserved))
+	require.NoError(t, err)
+	_, err = servers.Create(inState("allocated", agonesv1.GameServerStateAllocated))
+	require.NoError(t, err)
+	remote, err := Dial(cp.address, cp.secrets.Token(auth.Node))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = remote.Close() })
+
+	for _, name := range []string{"reserved", "allocated"} {
+		require.NoError(t, remote.Report(gameservers.Report{Namespace: "default", Name: name, Event: gameservers.ReserveExpired}))
+	}
+
+	gs, _ := servers.Get("default", "reserved")
+	assert.Equal(t, agonesv1.GameServerStateRequestReady, gs.Status.State)
+	gs, _ = servers.Get("default", "allocated")
+	assert.Equal(t, agonesv1.GameServerStateAllocated, gs.Status.State, "the session goes on")
 }
 
 func TestTheNodeIsDisconnectedOnceItsAgentIsGone(t *testing.T) {
@@ -204,6 +250,28 @@ func TestARemoteNodeIsOnlyReadyWhileItWatches(t *testing.T) {
 	// The agent's last heartbeat was still on its way.
 	require.NoError(t, remote.Register(node("node-1")))
 	assert.Equal(t, litev1.NodeDisconnected, phase(), "or the node would be Ready for ever")
+}
+
+// An agent whose calls get through but whose Watch does not, behind a proxy
+// that cuts streams for example, registers every ten seconds and is never
+// connected. Its GameServers are out of reach all the same.
+func TestRegisteringWithoutWatchingDoesNotPutOffTheDayANodeIsGivenUp(t *testing.T) {
+	cp := newControlPlane(t)
+	remote, err := Dial(cp.address, cp.secrets.Token(auth.Node))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = remote.Close() })
+	require.NoError(t, remote.Register(node("node-1")))
+	longAgo := metav1.NewTime(time.Now().Add(-time.Hour).Truncate(time.Second))
+	require.NoError(t, store.NodesOf(cp.store).Change("", "node-1", func(n *litev1.Node) bool {
+		n.Status.LastHeartbeatTime = longAgo
+		return true
+	}))
+
+	require.NoError(t, remote.Register(node("node-1")))
+
+	n, _ := store.NodesOf(cp.store).Get("", "node-1")
+	assert.Equal(t, litev1.NodeDisconnected, n.Status.Phase)
+	assert.True(t, n.Status.LastHeartbeatTime.Equal(&longAgo), "last heard from at %s, not an hour ago", n.Status.LastHeartbeatTime)
 }
 
 func TestARemoteNodeThatWatchesBeforeItRegistersIsReady(t *testing.T) {

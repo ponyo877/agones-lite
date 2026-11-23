@@ -24,7 +24,7 @@ inductive Event where
   | containersCreated | createFailed | containersRunning
   | exitedCleanly | exitedWithError | containersMissing | containersRemoved
   -- reported by the sidecar
-  | sdkReady | sdkAllocate | sdkReserve | sdkShutdown | healthFailed
+  | sdkReady | sdkAllocate | sdkReserve | sdkShutdown | healthFailed | reserveExpired
   deriving DecidableEq, Repr
 
 open State Event
@@ -36,7 +36,8 @@ def State.all : List State :=
 def Event.all : List Event :=
   [placed, readied, scaledDown, nodeLost, containersCreated, createFailed,
    containersRunning, exitedCleanly, exitedWithError, containersMissing,
-   containersRemoved, sdkReady, sdkAllocate, sdkReserve, sdkShutdown, healthFailed]
+   containersRemoved, sdkReady, sdkAllocate, sdkReserve, sdkShutdown, healthFailed,
+   reserveExpired]
 
 /-- Go: `Final`. A state a GameServer never leaves. -/
 def final : State → Bool
@@ -68,6 +69,7 @@ def rule : Event → Option Rule
   | sdkAllocate => some (anywhere allocated)
   | sdkReserve => some (anywhere reserved)
   | sdkShutdown => some (anywhere shutdown)
+  | reserveExpired => some (only [reserved] requestReady)
   | exitedCleanly => some (anywhere shutdown)
   | exitedWithError => some (anywhere unhealthy)
   | containersMissing => some (anywhere unhealthy)
@@ -111,6 +113,14 @@ theorem what_ends_a_session (event : Event) (after : State)
     event ∈ [sdkReady, sdkReserve, sdkShutdown,
              exitedCleanly, exitedWithError, containersMissing, healthFailed, nodeLost] := by
   cases event <;> simp_all [next, rule, final, anywhere, only, beforeSession]
+
+/-- A reservation that runs out takes a GameServer back only while it is
+still Reserved. The sidecar's timer may fire just as the game server
+allocates itself; what the timer says then arrives too late to matter. -/
+theorem an_expired_reservation_ends_only_a_reservation (state after : State)
+    (h : next state reserveExpired = some after) :
+    state = reserved ∧ after = requestReady := by
+  cases state <;> simp_all [next, rule, final, only]
 
 /-- No state is a trap: a GameServer that is not finished can always be
 shut down, and can always be declared lost. -/

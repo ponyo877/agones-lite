@@ -37,7 +37,7 @@ func TestReserveWithoutAUsableTimeLastsUntilToldOtherwise(t *testing.T) {
 			_, err := s.Reserve(ctx, &sdk.Duration{Seconds: tc.seconds})
 			require.NoError(t, err)
 
-			returned := func() bool { return slices.Contains(agent.events(), sidecarv1.Event_EVENT_READY) }
+			returned := func() bool { return slices.Contains(agent.events(), sidecarv1.Event_EVENT_RESERVE_EXPIRED) }
 			assert.Never(t, returned, 200*time.Millisecond, 10*time.Millisecond, "the time must not be up at once")
 			require.Equal(t, []sidecarv1.Event{sidecarv1.Event_EVENT_RESERVE}, agent.events())
 			assert.Equal(t, tc.told, agent.told[0].GetReserveSeconds())

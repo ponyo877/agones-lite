@@ -37,8 +37,12 @@ const (
 
 // Action is one decision of Plan.
 type Action struct {
-	Kind       ActionKind
-	Key        Key
+	Kind ActionKind
+	Key  Key
+	// UID is the uid of the GameServer the Action is about, and goes into
+	// what is reported of it. Containers that belong to no GameServer have
+	// none.
+	UID        types.UID
 	GameServer *agonesv1.GameServer // set for Create and Remove
 	Containers []docker.Container   // set for Start, Remove and Discard
 	Event      gameservers.Event    // set for Tell
@@ -52,7 +56,7 @@ func Plan(desired []*agonesv1.GameServer, actual []docker.Container) []Action {
 	for _, gs := range desired {
 		key := Key{Namespace: gs.Namespace, Name: gs.Name}
 		if action, ok := planOne(gs, containers[key]); ok {
-			action.Key = key
+			action.Key, action.UID = key, gs.UID
 			actions = append(actions, action)
 		}
 		delete(containers, key)
@@ -68,20 +72,54 @@ func planOne(gs *agonesv1.GameServer, containers []docker.Container) (Action, bo
 		return Action{Kind: Remove, GameServer: gs, Containers: containers}, true
 	case creating && len(containers) == 0:
 		return Action{Kind: Create, GameServer: gs}, true
+	case creating && started(gs, containers):
+		// It is gs that is out of date, not the containers: see started.
+		// Saying it again is ignored by a control plane that knows.
+		return Action{Kind: Tell, Event: gameservers.ContainersCreated}, true
 	case creating:
-		// Left over from a creation that was interrupted. Clear them and
-		// start again on the next pass.
+		// Left over from a creation that was interrupted, or from an earlier
+		// GameServer of the same name. Clear them and start again on the
+		// next pass.
 		return Action{Kind: Discard, Containers: containers}, true
 	case gameservers.Final(gs.Status.State):
 		return Action{}, false // kept as they are until the GameServer is deleted
 	}
+	return watchOver(gs, containers)
+}
+
+// watchOver handles a GameServer whose containers the control plane has
+// taken note of: it says so when they are no longer what they should be.
+func watchOver(gs *agonesv1.GameServer, containers []docker.Container) (Action, bool) {
 	if event, ok := trouble(containers); ok {
 		return Action{Kind: Tell, Event: event}, true
 	}
 	if gs.Status.State == agonesv1.GameServerStateStarting {
 		return resume(containers)
 	}
+	if len(neverStarted(containers)) > 0 {
+		// Past Starting, all of its containers ran. Ones that never did are
+		// not those: they were made later, by an agent that did not know
+		// better, and what the game server ran in is gone. Nothing would
+		// ever start them, and the GameServer would wait for ever.
+		return Action{Kind: Tell, Event: gameservers.ContainersMissing}, true
+	}
 	return Action{}, false
+}
+
+// started reports whether a container of gs itself, and not of an earlier
+// GameServer of the same name, was ever started.
+//
+// The agent starts containers only once the control plane has taken
+// ContainersCreated. So when gs is Creating all the same, gs is behind. An
+// agent on another machine sees a copy of its GameServers that arrives
+// after its own reports are answered: a little later on every start.
+func started(gs *agonesv1.GameServer, containers []docker.Container) bool {
+	for _, c := range containers {
+		if c.Labels[podspec.LabelUID] == string(gs.UID) && c.State != "created" {
+			return true
+		}
+	}
+	return false
 }
 
 // trouble turns containers that are gone or have stopped into an Event.

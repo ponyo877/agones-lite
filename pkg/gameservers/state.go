@@ -26,12 +26,14 @@ const (
 	ContainersMissing Event = "ContainersMissing"
 	ContainersRemoved Event = "ContainersRemoved" // cleanup after deletion is done
 
-	// Reported by the sidecar, from what the game server asks through the SDK.
-	SDKReady     Event = "SDKReady"
-	SDKAllocate  Event = "SDKAllocate"
-	SDKReserve   Event = "SDKReserve"
-	SDKShutdown  Event = "SDKShutdown"
-	HealthFailed Event = "HealthFailed"
+	// Reported by the sidecar: what the game server asks through the SDK,
+	// and what the sidecar notices by itself.
+	SDKReady       Event = "SDKReady"
+	SDKAllocate    Event = "SDKAllocate"
+	SDKReserve     Event = "SDKReserve"
+	SDKShutdown    Event = "SDKShutdown"
+	HealthFailed   Event = "HealthFailed"
+	ReserveExpired Event = "ReserveExpired" // the time of an SDKReserve is up
 )
 
 // rule is one row of the state machine.
@@ -56,6 +58,9 @@ var rules = map[Event]rule{
 	SDKAllocate: {to: agonesv1.GameServerStateAllocated},
 	SDKReserve:  {to: agonesv1.GameServerStateReserved},
 	SDKShutdown: {to: agonesv1.GameServerStateShutdown},
+	// Only from Reserved, unlike SDKReady: the sidecar's timer may fire just
+	// as the game server allocates itself, and must not end that session.
+	ReserveExpired: {from: states(agonesv1.GameServerStateReserved), to: agonesv1.GameServerStateRequestReady},
 
 	ExitedCleanly:     {to: agonesv1.GameServerStateShutdown},
 	ExitedWithError:   {to: agonesv1.GameServerStateUnhealthy},

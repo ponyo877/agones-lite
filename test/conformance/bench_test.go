@@ -173,13 +173,15 @@ type container struct {
 	stop  context.CancelFunc // set while a sidecar's SDK server runs
 }
 
+// List filters as Docker does: "key=value" wants that value, "key" alone
+// wants the label to be there.
 func (c *containers) List(_ context.Context, label string) ([]docker.Container, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	key, value, _ := strings.Cut(label, "=")
+	key, value, valued := strings.Cut(label, "=")
 	var out []docker.Container
 	for _, held := range c.byID {
-		if held.Labels[key] == value {
+		if got, labelled := held.Labels[key]; labelled && (!valued || got == value) {
 			out = append(out, held.Container)
 		}
 	}

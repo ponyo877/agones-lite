@@ -104,6 +104,7 @@ def eventName : StateMachine.Event → String
   | .containersMissing => "ContainersMissing" | .containersRemoved => "ContainersRemoved"
   | .sdkReady => "SDKReady" | .sdkAllocate => "SDKAllocate" | .sdkReserve => "SDKReserve"
   | .sdkShutdown => "SDKShutdown" | .healthFailed => "HealthFailed"
+  | .reserveExpired => "ReserveExpired"
 
 def jsonString (text : String) : String := "\"" ++ text ++ "\""
 

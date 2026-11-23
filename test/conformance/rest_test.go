@@ -33,7 +33,7 @@ func (r rest) call(method, path, body string) (int, map[string]any) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return 0, nil // the SDK server is still starting
+		return 0, nil // no answer: the SDK server is still starting, or is gone
 	}
 	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(resp.Body)
@@ -124,8 +124,15 @@ func TestAGameServerLivesItsWholeLifeThroughREST(t *testing.T) {
 			assert.ObjectsAreEqual([]string{"bob"}, status.Lists["players"].Values)
 	}, "the control plane has the same numbers")
 
-	// The end.
-	game.ok(http.MethodPost, "/shutdown", "{}")
+	// The end. Shutdown is acknowledged before it takes effect, and its
+	// effect takes the sidecar away with everything else. Docker stops the
+	// game server first and needs a moment for all of it. The stand-in needs
+	// none, and this game server lives on to notice: the acknowledgement may
+	// be cut off. Upstream's sidecar does not finish such calls either.
+	if code, answer := game.call(http.MethodPost, "/shutdown", "{}"); code != 0 {
+		assert.Equal(t, http.StatusOK, code)
+		assert.Empty(t, answer)
+	}
 	b.soon(func() bool { return b.stored("rest") == nil }, "the GameServer is gone")
 }
 

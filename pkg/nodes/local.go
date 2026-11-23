@@ -54,7 +54,15 @@ func (l *Local) Register(node *litev1.Node) error {
 		return err
 	}
 	// Keep what the operator set, such as a cordon; take the rest from the agent.
+	lastHeard, wasGone := existing.Status.LastHeartbeatTime, existing.Status.Phase == litev1.NodeDisconnected
 	existing.Status = node.Status
+	if wasGone && node.Status.Phase == litev1.NodeDisconnected {
+		// Gone before and gone still: it was last heard from when its
+		// connection ended. An agent that manages to register but not to
+		// connect would otherwise put off for ever the day its GameServers
+		// are given up.
+		existing.Status.LastHeartbeatTime = lastHeard
+	}
 	_, err := l.nodes.Update(existing)
 	if errors.Is(err, store.ErrConflict) {
 		return l.Register(node)

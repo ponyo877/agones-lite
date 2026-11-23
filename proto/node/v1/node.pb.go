@@ -563,8 +563,15 @@ type ReportRequest struct {
 	Event string `protobuf:"bytes,3,opt,name=event,proto3" json:"event,omitempty"`
 	// For "SDKReserve": how long to stay Reserved. Zero means until told otherwise.
 	ReserveSeconds int64 `protobuf:"varint,4,opt,name=reserve_seconds,json=reserveSeconds,proto3" json:"reserve_seconds,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// What the agent knows of the cause, for the event history: for
+	// "CreateFailed", what Docker said. May be empty.
+	Detail string `protobuf:"bytes,5,opt,name=detail,proto3" json:"detail,omitempty"`
+	// The uid of the GameServer the report is about. A GameServer made later
+	// under the same name has another, and the report is not applied to it.
+	// Empty means whichever GameServer has the name.
+	Uid           string `protobuf:"bytes,6,opt,name=uid,proto3" json:"uid,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ReportRequest) Reset() {
@@ -623,6 +630,20 @@ func (x *ReportRequest) GetReserveSeconds() int64 {
 		return x.ReserveSeconds
 	}
 	return 0
+}
+
+func (x *ReportRequest) GetDetail() string {
+	if x != nil {
+		return x.Detail
+	}
+	return ""
+}
+
+func (x *ReportRequest) GetUid() string {
+	if x != nil {
+		return x.Uid
+	}
+	return ""
 }
 
 type ReportResponse struct {
@@ -923,12 +944,14 @@ const file_proto_node_v1_node_proto_rawDesc = "" +
 	"\aRemoved\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\"\b\n" +
-	"\x06Synced\"\x80\x01\n" +
+	"\x06Synced\"\xaa\x01\n" +
 	"\rReportRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x14\n" +
 	"\x05event\x18\x03 \x01(\tR\x05event\x12'\n" +
-	"\x0freserve_seconds\x18\x04 \x01(\x03R\x0ereserveSeconds\"\x10\n" +
+	"\x0freserve_seconds\x18\x04 \x01(\x03R\x0ereserveSeconds\x12\x16\n" +
+	"\x06detail\x18\x05 \x01(\tR\x06detail\x12\x10\n" +
+	"\x03uid\x18\x06 \x01(\tR\x03uid\"\x10\n" +
 	"\x0eReportResponse\"\xe8\x02\n" +
 	"\x12SetMetadataRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +

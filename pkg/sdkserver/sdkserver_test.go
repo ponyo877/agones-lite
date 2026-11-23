@@ -25,6 +25,9 @@ type fakeAgent struct {
 	mu       sync.Mutex
 	told     []*sidecarv1.TellRequest
 	refusals int
+	// unknown is an event this agent cannot make sense of, like an agent
+	// older than its sidecar.
+	unknown sidecarv1.Event
 	// losses is how many answers get lost on their way back: the request
 	// was taken, but the sidecar hears an error.
 	losses int
@@ -40,6 +43,9 @@ func (f *fakeAgent) Tell(_ context.Context, req *sidecarv1.TellRequest, _ ...grp
 	if f.refusals > 0 {
 		f.refusals--
 		return nil, errors.New("agent is restarting")
+	}
+	if f.unknown != 0 && req.GetEvent() == f.unknown {
+		return nil, status.Errorf(codes.InvalidArgument, "unknown event %v", req.GetEvent())
 	}
 	f.told = append(f.told, req)
 	if f.stored == nil || req.GetEvent() != sidecarv1.Event_EVENT_UPDATE_COUNTS {
@@ -114,7 +120,9 @@ func TestARequestSurvivesAnAgentRestart(t *testing.T) {
 	assert.Eventually(t, func() bool { return len(agent.events()) == 1 }, 3*retryDelay, 10*time.Millisecond)
 }
 
-func TestReserveAsksForReadyWhenTimeIsUp(t *testing.T) {
+// When the time is up the sidecar does not ask for Ready, as it would for
+// the game server: that could end a session the game server has just begun.
+func TestAReserveThatRunsOutSaysSoAndLeavesTheRestToTheControlPlane(t *testing.T) {
 	agent := &fakeAgent{}
 	s := New(agent)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -124,9 +132,54 @@ func TestReserveAsksForReadyWhenTimeIsUp(t *testing.T) {
 	_, err := s.Reserve(ctx, &sdk.Duration{Seconds: 1})
 	require.NoError(t, err)
 
-	want := []sidecarv1.Event{sidecarv1.Event_EVENT_RESERVE, sidecarv1.Event_EVENT_READY}
+	want := []sidecarv1.Event{sidecarv1.Event_EVENT_RESERVE, sidecarv1.Event_EVENT_RESERVE_EXPIRED}
 	assert.Eventually(t, func() bool { return assert.ObjectsAreEqual(want, agent.events()) }, 3*time.Second, 20*time.Millisecond)
 	assert.Equal(t, int64(1), agent.told[0].GetReserveSeconds())
+}
+
+// A timer that has fired cannot be stopped. If the game server reserves
+// again at that moment, the old timer's message must not end the new
+// reservation.
+func TestATimerThatFiredTooLateSaysNothingAboutTheNextReservation(t *testing.T) {
+	agent := &fakeAgent{}
+	s := New(agent)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.deliver(ctx)
+	timer := func() *time.Timer {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.reserve
+	}
+	_, err := s.Reserve(ctx, &sdk.Duration{Seconds: 3600})
+	require.NoError(t, err)
+	first := timer()
+	_, err = s.Reserve(ctx, &sdk.Duration{Seconds: 3600})
+	require.NoError(t, err)
+
+	s.expired(first) // the first timer, arriving after it was stopped
+	s.expired(timer())
+
+	want := []sidecarv1.Event{sidecarv1.Event_EVENT_RESERVE, sidecarv1.Event_EVENT_RESERVE, sidecarv1.Event_EVENT_RESERVE_EXPIRED}
+	assert.Eventually(t, func() bool { return assert.ObjectsAreEqual(want, agent.events()) }, 3*time.Second, 20*time.Millisecond)
+}
+
+// An agent that does not know an event will not know it on the next try
+// either. Trying for ever would keep every later request waiting behind it.
+func TestARequestTheAgentCannotMakeSenseOfDoesNotHoldUpTheRest(t *testing.T) {
+	agent := &fakeAgent{unknown: sidecarv1.Event_EVENT_RESERVE_EXPIRED}
+	s := New(agent)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.deliver(ctx)
+
+	_, err := s.tell(&sidecarv1.TellRequest{Event: sidecarv1.Event_EVENT_RESERVE_EXPIRED})
+	require.NoError(t, err)
+	_, err = s.Shutdown(ctx, &sdk.Empty{})
+	require.NoError(t, err)
+
+	want := []sidecarv1.Event{sidecarv1.Event_EVENT_SHUTDOWN}
+	assert.Eventually(t, func() bool { return assert.ObjectsAreEqual(want, agent.events()) }, 3*time.Second, 20*time.Millisecond)
 }
 
 func TestSetLabelValidatesLikeUpstream(t *testing.T) {

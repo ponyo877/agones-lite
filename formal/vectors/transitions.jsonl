@@ -14,6 +14,7 @@
 {"state":"PortAllocation","event":"SDKReserve","next":"Reserved"}
 {"state":"PortAllocation","event":"SDKShutdown","next":"Shutdown"}
 {"state":"PortAllocation","event":"HealthFailed","next":"Unhealthy"}
+{"state":"PortAllocation","event":"ReserveExpired","next":null}
 {"state":"Creating","event":"Placed","next":"Creating"}
 {"state":"Creating","event":"Readied","next":null}
 {"state":"Creating","event":"ScaledDown","next":"Shutdown"}
@@ -30,6 +31,7 @@
 {"state":"Creating","event":"SDKReserve","next":"Reserved"}
 {"state":"Creating","event":"SDKShutdown","next":"Shutdown"}
 {"state":"Creating","event":"HealthFailed","next":"Unhealthy"}
+{"state":"Creating","event":"ReserveExpired","next":null}
 {"state":"Starting","event":"Placed","next":null}
 {"state":"Starting","event":"Readied","next":null}
 {"state":"Starting","event":"ScaledDown","next":"Shutdown"}
@@ -46,6 +48,7 @@
 {"state":"Starting","event":"SDKReserve","next":"Reserved"}
 {"state":"Starting","event":"SDKShutdown","next":"Shutdown"}
 {"state":"Starting","event":"HealthFailed","next":"Unhealthy"}
+{"state":"Starting","event":"ReserveExpired","next":null}
 {"state":"Scheduled","event":"Placed","next":null}
 {"state":"Scheduled","event":"Readied","next":null}
 {"state":"Scheduled","event":"ScaledDown","next":"Shutdown"}
@@ -62,6 +65,7 @@
 {"state":"Scheduled","event":"SDKReserve","next":"Reserved"}
 {"state":"Scheduled","event":"SDKShutdown","next":"Shutdown"}
 {"state":"Scheduled","event":"HealthFailed","next":"Unhealthy"}
+{"state":"Scheduled","event":"ReserveExpired","next":null}
 {"state":"RequestReady","event":"Placed","next":null}
 {"state":"RequestReady","event":"Readied","next":"Ready"}
 {"state":"RequestReady","event":"ScaledDown","next":"Shutdown"}
@@ -78,6 +82,7 @@
 {"state":"RequestReady","event":"SDKReserve","next":"Reserved"}
 {"state":"RequestReady","event":"SDKShutdown","next":"Shutdown"}
 {"state":"RequestReady","event":"HealthFailed","next":"Unhealthy"}
+{"state":"RequestReady","event":"ReserveExpired","next":null}
 {"state":"Ready","event":"Placed","next":null}
 {"state":"Ready","event":"Readied","next":null}
 {"state":"Ready","event":"ScaledDown","next":"Shutdown"}
@@ -94,6 +99,7 @@
 {"state":"Ready","event":"SDKReserve","next":"Reserved"}
 {"state":"Ready","event":"SDKShutdown","next":"Shutdown"}
 {"state":"Ready","event":"HealthFailed","next":"Unhealthy"}
+{"state":"Ready","event":"ReserveExpired","next":null}
 {"state":"Reserved","event":"Placed","next":null}
 {"state":"Reserved","event":"Readied","next":null}
 {"state":"Reserved","event":"ScaledDown","next":null}
@@ -110,6 +116,7 @@
 {"state":"Reserved","event":"SDKReserve","next":"Reserved"}
 {"state":"Reserved","event":"SDKShutdown","next":"Shutdown"}
 {"state":"Reserved","event":"HealthFailed","next":"Unhealthy"}
+{"state":"Reserved","event":"ReserveExpired","next":"RequestReady"}
 {"state":"Allocated","event":"Placed","next":null}
 {"state":"Allocated","event":"Readied","next":null}
 {"state":"Allocated","event":"ScaledDown","next":null}
@@ -126,6 +133,7 @@
 {"state":"Allocated","event":"SDKReserve","next":"Reserved"}
 {"state":"Allocated","event":"SDKShutdown","next":"Shutdown"}
 {"state":"Allocated","event":"HealthFailed","next":"Unhealthy"}
+{"state":"Allocated","event":"ReserveExpired","next":null}
 {"state":"Shutdown","event":"Placed","next":null}
 {"state":"Shutdown","event":"Readied","next":null}
 {"state":"Shutdown","event":"ScaledDown","next":null}
@@ -142,6 +150,7 @@
 {"state":"Shutdown","event":"SDKReserve","next":null}
 {"state":"Shutdown","event":"SDKShutdown","next":null}
 {"state":"Shutdown","event":"HealthFailed","next":null}
+{"state":"Shutdown","event":"ReserveExpired","next":null}
 {"state":"Unhealthy","event":"Placed","next":null}
 {"state":"Unhealthy","event":"Readied","next":null}
 {"state":"Unhealthy","event":"ScaledDown","next":null}
@@ -158,6 +167,7 @@
 {"state":"Unhealthy","event":"SDKReserve","next":null}
 {"state":"Unhealthy","event":"SDKShutdown","next":null}
 {"state":"Unhealthy","event":"HealthFailed","next":null}
+{"state":"Unhealthy","event":"ReserveExpired","next":null}
 {"state":"Error","event":"Placed","next":null}
 {"state":"Error","event":"Readied","next":null}
 {"state":"Error","event":"ScaledDown","next":null}
@@ -174,3 +184,4 @@
 {"state":"Error","event":"SDKReserve","next":null}
 {"state":"Error","event":"SDKShutdown","next":null}
 {"state":"Error","event":"HealthFailed","next":null}
+{"state":"Error","event":"ReserveExpired","next":null}

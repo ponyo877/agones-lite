@@ -12,8 +12,10 @@ import (
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 	"k8s.io/apimachinery/pkg/types"
 
 	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
@@ -89,17 +91,35 @@ func (r *Remote) Close() error {
 // Run keeps the Watch call for node open until ctx is done, dialling again
 // whenever it breaks.
 func (r *Remote) Run(ctx context.Context, node string) {
+	refused := false // whether the last call ended over the join token
 	for ctx.Err() == nil {
 		err := r.watch(ctx, node) // only returns when the call ended
-		r.setCurrent(false)
+		if r.setCurrent(false) {
+			refused = false // the call had been working, so a refusal is news again
+		}
 		if ctx.Err() == nil {
-			slog.Warn("lost the control plane, reconnecting", "error", err)
+			refused = explain(err, refused)
 		}
 		select {
 		case <-ctx.Done():
 		case <-time.After(reconnectDelay):
 		}
 	}
+}
+
+// explain logs why a Watch call ended, and reports whether the control
+// plane refused the join token. Trying again does not mend that, so it is
+// said once, and not with every attempt that follows.
+func explain(err error, refusedBefore bool) (refused bool) {
+	if status.Code(err) != codes.Unauthenticated {
+		slog.Warn("lost the control plane, reconnecting", "error", err)
+		return false
+	}
+	if !refusedBefore {
+		slog.Error("the control plane refuses this agent's join token, which was probably rotated; " +
+			"start the agent again with the new one, which `agones-lite token show join` prints on the control plane")
+	}
+	return true
 }
 
 // watch runs one Watch call. What arrives before "synced" is collected
@@ -149,10 +169,13 @@ func (r *Remote) take(update *nodev1.WatchResponse, fresh map[types.NamespacedNa
 	return nil
 }
 
-func (r *Remote) setCurrent(current bool) {
+// setCurrent notes whether the copy is fed by a live call, and returns
+// whether it was before.
+func (r *Remote) setCurrent(current bool) (before bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.current = current
+	before, r.current = r.current, current
+	return before
 }
 
 // signal tells the agent to look again. Called with the lock held.
@@ -201,6 +224,8 @@ func (r *Remote) Report(report gameservers.Report) error {
 		Name:           report.Name,
 		Event:          string(report.Event),
 		ReserveSeconds: int64(report.Reserve / time.Second),
+		Detail:         report.Detail,
+		Uid:            string(report.UID),
 	})
 	return err
 }

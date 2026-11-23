@@ -106,6 +106,13 @@ message ReportRequest {
   string event = 3;
   // For "SDKReserve": how long to stay Reserved. Zero means until told otherwise.
   int64 reserve_seconds = 4;
+  // What the agent knows of the cause, for the event history: for
+  // "CreateFailed", what Docker said. May be empty.
+  string detail = 5;
+  // The uid of the GameServer the report is about. A GameServer made later
+  // under the same name has another, and the report is not applied to it.
+  // Empty means whichever GameServer has the name.
+  string uid = 6;
 }
 
 message ReportResponse {}
