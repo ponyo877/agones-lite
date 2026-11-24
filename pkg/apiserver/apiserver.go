@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"time"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	autoscalingv1 "agones.dev/agones/pkg/apis/autoscaling/v1"
@@ -53,6 +54,7 @@ type Server struct {
 	nodeOps NodeOperator
 	logs    LogSource
 	saved   func(context.Context) error // returns when the store's file has caught up
+	lag     func() time.Duration        // for how long the file has been behind
 }
 
 // LogSource reads a game server's log from the node it runs on.
@@ -76,6 +78,7 @@ func New(s *store.Store, recorder *events.Recorder, nodeOps NodeOperator, logs L
 		nodeOps: nodeOps,
 		logs:    logs,
 		saved:   s.Sync,
+		lag:     s.Lag,
 		servers: resource[*agonesv1.GameServer]{
 			typed: store.GameServersOf(s),
 			blank: func() *agonesv1.GameServer { return &agonesv1.GameServer{} },
@@ -103,10 +106,14 @@ func New(s *store.Store, recorder *events.Recorder, nodeOps NodeOperator, logs L
 	}
 }
 
+// unwell is how far behind the file may be before /healthz says so. It is
+// ten times what an allocation is refused for: a disk that hiccups is not
+// a control plane to restart.
+const unwell = 10 * time.Second
+
 // Handler returns the routes of the API.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { respond(w, http.StatusOK, "ok") })
 	mux.HandleFunc("GET /v1/nodes", s.listNodes)
 	mux.HandleFunc("GET /v1/nodes/{name}", s.getNode)
 	mux.HandleFunc("DELETE /v1/nodes/{name}", s.deleteNode)
@@ -118,7 +125,27 @@ func (s *Server) Handler() http.Handler {
 	s.scalers.mount(mux, "fleetautoscalers")
 	mux.HandleFunc("PUT /v1/namespaces/{namespace}/fleets/{name}/scale", s.scaleFleet)
 	mux.HandleFunc("GET /v1/namespaces/{namespace}/gameservers/{name}/logs", s.gameServerLogs)
-	return answerWhenSaved(mux, s.saved)
+	all := http.NewServeMux()
+	all.HandleFunc("GET /healthz", s.health)
+	all.Handle("/", answerWhenSaved(mux, s.saved))
+	return all
+}
+
+// health says whether the control plane can do its work, which is more than
+// being up. One that cannot save goes on deciding things that nobody will
+// be told: it answers its pings, and to whoever needs it, it is gone. That
+// is a gray failure, a fault that the check on a system does not see and
+// its users do (Huang et al., "Gray Failure: The Achilles' Heel of
+// Cloud-Scale Systems", HotOS 2017). So the check asks what the users would.
+//
+// Unlike every other route this one does not wait for the file: it is the
+// one that has to answer when the file is the trouble.
+func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
+	if lag := s.lag(); lag > unwell {
+		respond(w, http.StatusServiceUnavailable, fmt.Sprintf("nothing has been saved for %s", lag.Round(time.Second)))
+		return
+	}
+	respond(w, http.StatusOK, "ok")
 }
 
 func (s *Server) listNodes(w http.ResponseWriter, _ *http.Request) {
