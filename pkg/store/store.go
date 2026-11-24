@@ -182,7 +182,7 @@ func (s *Store) Create(kind Kind, obj Object) (Object, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	obj = clone(obj)
-	if err := s.prepare(obj); err != nil {
+	if err := s.prepare(kind, obj); err != nil {
 		return nil, err
 	}
 	key := KeyOf(kind, obj)
@@ -253,12 +253,12 @@ func (s *Store) hold(key Key, obj Object) {
 }
 
 // prepare fills in what the API server would on creation.
-func (s *Store) prepare(obj Object) error {
+func (s *Store) prepare(kind Kind, obj Object) error {
 	if obj.GetName() == "" {
 		if obj.GetGenerateName() == "" {
 			return errors.New("metadata.name or metadata.generateName is required")
 		}
-		obj.SetName(generatedName(obj.GetGenerateName(), s.Suffix()))
+		obj.SetName(s.freeName(kind, obj))
 	}
 	obj.SetUID(uuid.NewUUID())
 	obj.SetCreationTimestamp(metav1.NewTime(s.Now()))
@@ -272,7 +272,26 @@ func (s *Store) prepare(obj Object) error {
 const (
 	maxNameLength = 63
 	randomLength  = 5
+	// nameDraws is how often a generated name is drawn before Create gives
+	// up, as in Kubernetes (maxNameGenerationCreateAttempts).
+	nameDraws = 8
 )
+
+// freeName generates a name for obj that nothing of its kind has yet. Five
+// random characters make one name out of fourteen million, and among the
+// ten thousand GameServers of a large Fleet two of those meet now and then.
+// A name that is taken is drawn again; after nameDraws the last one is
+// returned as it is, and Create says that it exists.
+func (s *Store) freeName(kind Kind, obj Object) string {
+	var name string
+	for range nameDraws {
+		name = generatedName(obj.GetGenerateName(), s.Suffix())
+		if _, taken := s.objects[kind][Key{Kind: kind, Namespace: obj.GetNamespace(), Name: name}]; !taken {
+			break
+		}
+	}
+	return name
+}
 
 // generatedName makes a name from a generateName. Without the cut, the
 // GameServers of a Fleet with a long name would get names too long for a

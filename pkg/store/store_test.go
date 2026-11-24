@@ -321,3 +321,31 @@ func TestAChangeTheFileRefusesIsTakenBack(t *testing.T) {
 	assert.Equal(t, []*agonesv1.GameServer{kept}, servers.List(""))
 	assert.Empty(t, events, "nobody is told of a change that was taken back")
 }
+
+// Five random characters do not go far among ten thousand names. A name
+// that is taken is drawn again, and only one that keeps coming up is given
+// up on.
+func TestAGeneratedNameThatIsTakenIsDrawnAgain(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "state.db"))
+	draws := []string{"aaaaa", "aaaaa", "aaaaa", "bbbbb"}
+	s.Suffix = func() string {
+		next := draws[0]
+		draws = append(draws[1:], next) // the last one again and again
+		return next
+	}
+	servers := GameServersOf(s)
+	generated := func() (*agonesv1.GameServer, error) {
+		gs := gameServer("")
+		gs.GenerateName = "fleet-"
+		return servers.Create(gs)
+	}
+
+	first, err := generated()
+	require.NoError(t, err)
+	second, err := generated()
+	require.NoError(t, err)
+	_, err = generated()
+
+	assert.Equal(t, []string{"fleet-aaaaa", "fleet-bbbbb"}, []string{first.Name, second.Name})
+	assert.ErrorIs(t, err, ErrExists, "every draw gave a name that is taken")
+}
