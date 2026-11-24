@@ -6,7 +6,9 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -117,15 +119,34 @@ func (c client) stream(ctx context.Context, path string, out io.Writer) error {
 	return err
 }
 
-// events reads Server-Sent Events and hands each one to handle, until the
-// stream ends, handle fails, or the user has seen enough and ctx is done.
+// errWatchClosed is how a watch ends that the user did not stop. A watch
+// has no end of its own: the server closes it when it restarts, and when
+// this client has fallen so far behind that it gave up on it. What was
+// printed is then out of date without looking it, so the command says so
+// and fails instead of sitting there, or leaving quietly.
+var errWatchClosed = errors.New("the server closed the watch, as it does when it restarts or when this client falls too far behind: what is shown may be out of date, so run the command again")
+
+// events reads Server-Sent Events and hands each one to handle, until
+// handle fails or the user has seen enough and ctx is done. The stream
+// ending before that is an error: errWatchClosed when the server ended it,
+// and what broke it otherwise.
 func (c client) events(ctx context.Context, path string, handle func(event string, data []byte) error) error {
 	body, err := c.open(ctx, path)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = body.Close() }()
-	lines := bufio.NewScanner(body)
+	err = readEvents(body, handle)
+	if ctx.Err() != nil {
+		return nil // stopped by the user
+	}
+	return err
+}
+
+// readEvents reads a stream of Server-Sent Events to its end, which it
+// reports as errWatchClosed: see there.
+func readEvents(stream io.Reader, handle func(event string, data []byte) error) error {
+	lines := bufio.NewScanner(stream)
 	lines.Buffer(nil, 16<<20) // one line is one whole object
 	event := ""
 	for lines.Scan() {
@@ -140,10 +161,10 @@ func (c client) events(ctx context.Context, path string, handle func(event strin
 			return err
 		}
 	}
-	if ctx.Err() != nil {
-		return nil // stopped by the user
+	if err := lines.Err(); err != nil {
+		return fmt.Errorf("the watch broke off: %w", err)
 	}
-	return lines.Err()
+	return errWatchClosed
 }
 
 // failure reads why a request was refused. The management API says it under

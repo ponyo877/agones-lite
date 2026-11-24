@@ -23,15 +23,18 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	autoscalingv1 "agones.dev/agones/pkg/apis/autoscaling/v1"
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/yaml"
 
 	"github.com/ponyo877/agones-lite/pkg/agent"
 	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
 	"github.com/ponyo877/agones-lite/pkg/events"
+	"github.com/ponyo877/agones-lite/pkg/podspec"
 	"github.com/ponyo877/agones-lite/pkg/store"
 )
 
@@ -168,13 +171,18 @@ func (s *Server) operateNode(w http.ResponseWriter, r *http.Request) {
 func (s *Server) gameServerLogs(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	tail, _ := strconv.Atoi(query.Get("tail"))
-	log, err := s.logs.Logs(r.Context(), agent.LogRequest{
+	request := agent.LogRequest{
 		Namespace: r.PathValue("namespace"),
 		Name:      r.PathValue("name"),
 		Container: query.Get("container"),
 		Follow:    query.Get("follow") == "true",
 		Tail:      tail,
-	})
+	}
+	if err := s.hasLog(request); err != nil {
+		fail(w, err)
+		return
+	}
+	log, err := s.logs.Logs(r.Context(), request)
 	if err != nil {
 		fail(w, err)
 		return
@@ -182,6 +190,32 @@ func (s *Server) gameServerLogs(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = log.Close() }()
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	stream(w, log)
+}
+
+// hasLog says why there is no log to ask a node for: nothing by that name
+// could have written one, or it is not on a node yet. A node that is asked
+// anyway answers with an error of its own, and that would be passed on as
+// a fault of the server, which it is not.
+func (s *Server) hasLog(req agent.LogRequest) error {
+	gs, ok := s.servers.typed.Get(req.Namespace, req.Name)
+	switch {
+	case !ok:
+		return store.ErrNotFound
+	case req.Container != "" && !hasContainer(gs, req.Container):
+		return fmt.Errorf("container %q: %w", req.Container, store.ErrNotFound)
+	case gs.Status.NodeName == "":
+		return notYet{errors.New("the game server is not on a node yet, so it has no log")}
+	}
+	return nil
+}
+
+// hasContainer reports whether gs runs a container of that name: one of
+// its Pod, or the sidecar every GameServer gets.
+func hasContainer(gs *agonesv1.GameServer, name string) bool {
+	if name == podspec.SidecarName {
+		return true
+	}
+	return slices.ContainsFunc(gs.Spec.Template.Spec.Containers, func(c corev1.Container) bool { return c.Name == name })
 }
 
 // stream copies a log to the client as it arrives, instead of when the
@@ -256,14 +290,18 @@ func decode(r *http.Request, into any) (written map[string]any, err error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := yaml.UnmarshalStrict(body, into); err != nil {
+	if err := yaml.Unmarshal(body, &written); err != nil {
 		return nil, err
 	}
-	return written, yaml.Unmarshal(body, &written)
+	return written, yaml.UnmarshalStrict(body, into)
 }
 
 // invalid marks an error as the caller's mistake.
 type invalid struct{ error }
+
+// notYet marks an error as one that time will mend: what was asked for is
+// right, but the resource is not that far yet.
+type notYet struct{ error }
 
 func respond(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -277,9 +315,12 @@ func fail(w http.ResponseWriter, err error) {
 
 func statusOf(err error) int {
 	var bad invalid
+	var early notYet
 	switch {
 	case errors.As(err, &bad):
 		return http.StatusUnprocessableEntity
+	case errors.As(err, &early):
+		return http.StatusConflict
 	case errors.Is(err, store.ErrNotFound):
 		return http.StatusNotFound
 	case errors.Is(err, store.ErrExists), errors.Is(err, store.ErrConflict):

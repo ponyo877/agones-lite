@@ -28,6 +28,7 @@ func TestNegotiate(t *testing.T) {
 		"versions are numbers: 1.9 is before 1.41":        {"1.9", "1.9", "", "upgrade Docker"},
 		"a daemon that dropped everything we know":        {"1.60", "1.53", "", "upgrade agones-lite"},
 		"a next major version that dropped ours":          {"2.3", "2.0", "", "upgrade agones-lite"},
+		"a daemon whose oldest is newer than its newest":  {"1.45", "1.50", "", "no version at all"},
 		"no versions at all":                              {"", "", "", `""`},
 		"a newest version that is not one":                {"latest", "1.44", "", `"latest"`},
 		"an oldest version that is not one":               {"1.52", "", "", `""`},

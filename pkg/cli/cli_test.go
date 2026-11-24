@@ -82,6 +82,14 @@ func TestAConfigFileValueIsReadTheWayItWouldBeTyped(t *testing.T) {
 			content: "max-gameservers: 1000000\n",
 			check:   func(t *testing.T, o *serverOptions) { assert.Equal(t, int32(1000000), o.node.agent.MaxGameServers) },
 		},
+		"a number with an exponent is written out": {
+			content: "max-gameservers: 1e3\n",
+			check:   func(t *testing.T, o *serverOptions) { assert.Equal(t, int32(1000), o.node.agent.MaxGameServers) },
+		},
+		"a number of more digits than a float holds keeps them all": {
+			content: "node-name: 12345678901234567\n",
+			check:   func(t *testing.T, o *serverOptions) { assert.Equal(t, "12345678901234567", o.node.agent.NodeName) },
+		},
 		"an empty text is a value like any other": {
 			content: "listen: \"\"\n",
 			check:   func(t *testing.T, o *serverOptions) { assert.Empty(t, o.listen) },
@@ -153,31 +161,55 @@ func TestARefusalIsReadFromEitherAPI(t *testing.T) {
 	}
 }
 
+// watched is what the management API sends for "?watch=true": two fleets
+// that exist, the sign that this is all, and one change.
+func watched(w http.ResponseWriter) {
+	for _, event := range []string{
+		`Added {"metadata": {"name": "a"}}`,
+		`Added {"metadata": {"name": "a-much-longer-name"}}`,
+		`Synced {}`,
+		`Deleted {"metadata": {"name": "a"}}`,
+	} {
+		name, data, _ := strings.Cut(event, " ")
+		_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, data)
+	}
+	_ = http.NewResponseController(w).Flush()
+}
+
+type named struct {
+	Metadata struct{ Name string }
+}
+
+func nameAndYes(n named) string { return n.Metadata.Name + "\tyes" }
+
+// printed is a table that tells when its last row is there.
+type printed struct {
+	strings.Builder
+	last     string
+	complete func()
+}
+
+func (p *printed) Write(row []byte) (int, error) {
+	n, err := p.Builder.Write(row)
+	if strings.HasPrefix(string(row), p.last) {
+		p.complete()
+	}
+	return n, err
+}
+
 func TestFollowPrintsTheListAndThenEveryChange(t *testing.T) {
-	// What the management API sends for "?watch=true": two fleets that
-	// exist, the sign that this is all, and one change.
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "true", r.URL.Query().Get("watch"))
-		for _, event := range []string{
-			`Added {"metadata": {"name": "a"}}`,
-			`Added {"metadata": {"name": "a-much-longer-name"}}`,
-			`Synced {}`,
-			`Deleted {"metadata": {"name": "a"}}`,
-		} {
-			name, data, _ := strings.Cut(event, " ")
-			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, data)
-		}
+		watched(w)
+		<-r.Context().Done() // a watch goes on until the client leaves
 	}))
 	defer api.Close()
-	type named struct {
-		Metadata struct{ Name string }
-	}
-	row := func(n named) string { return n.Metadata.Name + "\tyes" }
-	out := &strings.Builder{}
+	ctx, stop := context.WithCancel(context.Background())
+	out := &printed{last: "Deleted", complete: stop} // the user has seen enough
 
-	err := follow(context.Background(), client{base: api.URL, http: api.Client()}, "/v1/fleets", "NAME\tOK", row, out)
+	err := follow(ctx, client{base: api.URL, http: api.Client()}, "/v1/fleets", "NAME\tOK", nameAndYes, out)
 
-	require.NoError(t, err)
+	require.NoError(t, err, "stopping a watch is how it is meant to end")
 	assert.Equal(t, []string{
 		"EVENT      NAME                 OK",
 		"Added      a                    yes",
@@ -185,4 +217,33 @@ func TestFollowPrintsTheListAndThenEveryChange(t *testing.T) {
 		"Deleted    a                    yes",
 		"",
 	}, strings.Split(out.String(), "\n"))
+}
+
+// The server closes a watch when it restarts, and when the store gives up
+// on a watcher that fell behind. The table would then stay as it is while
+// the world moves on, so "get -w" must not end as if all were well.
+func TestFollowFailsWhenTheServerEndsTheWatch(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { watched(w) }))
+	defer api.Close()
+	out := &strings.Builder{}
+
+	err := follow(context.Background(), client{base: api.URL, http: api.Client()}, "/v1/fleets", "NAME\tOK", nameAndYes, out)
+
+	assert.ErrorIs(t, err, errWatchClosed)
+	assert.Contains(t, out.String(), "Deleted    a", "what came before the end is still shown")
+}
+
+// A connection that breaks in the middle of the stream is told apart from
+// one the server closed: the user learns what broke.
+func TestFollowFailsWhenTheConnectionBreaks(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		watched(w)
+		panic(http.ErrAbortHandler) // what auth.RequireHTTP does when the token is rotated
+	}))
+	defer api.Close()
+
+	err := follow(context.Background(), client{base: api.URL, http: api.Client()}, "/v1/fleets", "NAME\tOK", nameAndYes, &strings.Builder{})
+
+	assert.ErrorContains(t, err, "the watch broke off")
+	assert.NotErrorIs(t, err, errWatchClosed)
 }

@@ -165,6 +165,103 @@ func TestCheck(t *testing.T) {
 				"spec.template.spec.containers[3].name",
 			},
 		},
+		"a port of a container is a note, and cannot publish": {
+			change: func(p *corev1.PodSpec) {
+				p.Containers[0].Ports = []corev1.ContainerPort{
+					{Name: "game", ContainerPort: 7654, Protocol: corev1.ProtocolUDP},
+					{ContainerPort: 7654, HostPort: 7654},
+					{ContainerPort: 7654, HostIP: "192.0.2.1"},
+					{ContainerPort: 70000},
+				}
+			},
+			errors: []string{
+				"spec.template.spec.containers[0].ports[1].hostPort",
+				"spec.template.spec.containers[0].ports[2].hostIP",
+				"spec.template.spec.containers[0].ports[3].containerPort",
+			},
+		},
+		"what Docker's volumes do not have is ignored with a warning": {
+			change: func(p *corev1.PodSpec) {
+				limit, kind := resource.MustParse("1Gi"), corev1.HostPathDirectory
+				p.Volumes = []corev1.Volume{
+					{Name: "fast", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory, SizeLimit: &limit}}},
+					{Name: "maps", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/srv/maps", Type: &kind}}},
+					{Name: "any", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/srv/any", Type: new(corev1.HostPathUnset)}}},
+				}
+			},
+			warnings: []string{
+				"spec.template.spec.volumes[0].emptyDir.medium is ignored",
+				"spec.template.spec.volumes[0].emptyDir.sizeLimit is ignored",
+				"spec.template.spec.volumes[1].hostPath.type is ignored",
+			},
+		},
+		"a path starts at the root and has no colon": {
+			change: func(p *corev1.PodSpec) {
+				tmp := corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}
+				p.Volumes = []corev1.Volume{
+					{Name: "relative", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "maps"}}},
+					{Name: "colon", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/srv/a:b"}}},
+					{Name: "tmp", VolumeSource: tmp},
+				}
+				p.Containers[0].WorkingDir = "srv"
+				p.Containers[0].VolumeMounts = []corev1.VolumeMount{
+					{Name: "tmp", MountPath: "data"}, {Name: "tmp", MountPath: "/a:ro"}, {Name: "tmp", MountPath: "/"},
+					{Name: "tmp", MountPath: "/data"}, {Name: "tmp", MountPath: "/data"},
+				}
+			},
+			errors: []string{
+				"spec.template.spec.volumes[0].hostPath.path",
+				"spec.template.spec.volumes[1].hostPath.path",
+				"spec.template.spec.containers[0].workingDir",
+				"spec.template.spec.containers[0].volumeMounts[0].mountPath",
+				"spec.template.spec.containers[0].volumeMounts[1].mountPath",
+				"spec.template.spec.containers[0].volumeMounts[2].mountPath",
+				"spec.template.spec.containers[0].volumeMounts[4].mountPath",
+			},
+		},
+		"a variable has a name without =, and nothing a process is given holds a NUL": {
+			change: func(p *corev1.PodSpec) {
+				p.Containers[0].Env = []corev1.EnvVar{{Value: "x"}, {Name: "A=B", Value: "x"}, {Name: "OK", Value: "a\x00b"}, {Name: "FINE", Value: "a=b"}}
+				p.Containers[0].Command = []string{"/game", "a\x00b"}
+				p.Containers[0].Args = []string{"\x00"}
+			},
+			errors: []string{
+				"spec.template.spec.containers[0].env[0].name",
+				"spec.template.spec.containers[0].env[1].name",
+				"spec.template.spec.containers[0].env[2].value",
+				"spec.template.spec.containers[0].command[1]",
+				"spec.template.spec.containers[0].args[0]",
+			},
+		},
+		"a user and a group are numbers Linux has, and Docker sets them together": {
+			change: func(p *corev1.PodSpec) {
+				p.Containers[0].SecurityContext = &corev1.SecurityContext{RunAsUser: new(int64(-1)), RunAsGroup: new(int64(1 << 31))}
+				p.Containers = append(p.Containers, corev1.Container{Name: "logs", Image: "example/logs:1",
+					SecurityContext: &corev1.SecurityContext{RunAsGroup: new(int64(1000))}})
+			},
+			errors: []string{
+				"spec.template.spec.containers[0].securityContext.runAsUser",
+				"spec.template.spec.containers[0].securityContext.runAsGroup",
+				"spec.template.spec.containers[1].securityContext.runAsUser",
+			},
+		},
+		"Docker gives a container 6Mi of memory or more, and takes no more than 68 years to stop it": {
+			change: func(p *corev1.PodSpec) {
+				p.TerminationGracePeriodSeconds = new(int64(1 << 31))
+				p.Containers[0].Resources.Limits = corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("6291455")}
+			},
+			errors: []string{
+				"spec.template.spec.terminationGracePeriodSeconds",
+				"spec.template.spec.containers[0].resources.limits[memory]",
+			},
+		},
+		"the least and the longest Docker takes are fine": {
+			change: func(p *corev1.PodSpec) {
+				p.TerminationGracePeriodSeconds = new(int64(1<<31 - 1))
+				p.Containers[0].Resources.Limits = corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("6Mi"), corev1.ResourceCPU: resource.MustParse("1m")}
+				p.Containers[0].SecurityContext = &corev1.SecurityContext{RunAsUser: new(int64(0)), RunAsGroup: new(int64(1<<31 - 1))}
+			},
+		},
 		"an image Docker cannot parse is rejected": {
 			change: func(p *corev1.PodSpec) {
 				p.Containers[0].Image = "alpine:"
@@ -269,6 +366,21 @@ func TestAPrefixBelongsToOneGameServer(t *testing.T) {
 	for _, neighbour := range []string{"gs-x", "gs.x", "gsx"} {
 		assert.NotContains(t, Prefix("default", neighbour), Prefix("default", "gs"), neighbour)
 	}
+}
+
+// Linux enforces no CPU limit below a hundredth of a core. The kubelet
+// rounds a smaller one up; Docker would pass it on, and the container
+// would fail to start.
+func TestASmallCPULimitIsRaisedToTheLeastLinuxEnforces(t *testing.T) {
+	tests := map[string]int64{"1m": 10_000_000, "9m": 10_000_000, "10m": 10_000_000, "11m": 11_000_000, "2": 2_000_000_000, "0": 0}
+	for limit, want := range tests {
+		gs := server(func(p *corev1.PodSpec) {
+			p.Containers[0].Resources.Limits = corev1.ResourceList{corev1.ResourceCPU: resource.MustParse(limit)}
+		})
+
+		assert.Equal(t, want, Containers(gs, Sidecar{})[1].NanoCPUs, "a limit of %s", limit)
+	}
+	assert.Zero(t, Containers(server(nil), Sidecar{})[1].NanoCPUs, "no limit")
 }
 
 func TestGracePeriod(t *testing.T) {

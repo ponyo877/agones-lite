@@ -114,6 +114,37 @@ func TestFramesAreUnwrappedIntoOneStream(t *testing.T) {
 	assert.Equal(t, "ready\nwarning: low memory\nbye\n", string(out))
 }
 
+// Docker sends a frame of nothing for every empty write of the container.
+// A reader that answered each with "nothing, and no error" would be given
+// up on by its caller after a hundred of them in a row.
+func TestFramesOfNothingAreSkippedHoweverManyThereAre(t *testing.T) {
+	empty := string([]byte{1, 0, 0, 0, 0, 0, 0, 0})
+	wire := strings.Repeat(empty, 500) + string([]byte{1, 0, 0, 0, 0, 0, 0, 3}) + "bye"
+	log := &frames{body: io.NopCloser(strings.NewReader(wire))}
+	buffer := make([]byte, 16)
+
+	n, err := log.Read(buffer)
+
+	require.NoError(t, err)
+	assert.Equal(t, "bye", string(buffer[:n]), "the first read already has something to give")
+}
+
+// A log that stops in the middle of a frame was cut, by a daemon or a
+// connection that went away. That is not the end of the log.
+func TestAStreamThatEndsInsideAFrameIsNotTakenForAWholeLog(t *testing.T) {
+	header := string([]byte{1, 0, 0, 0, 0, 0, 0, 10})
+	tests := map[string]struct{ wire, read string }{
+		"inside the output": {header + "only", "only"},
+		"inside a header":   {header + "ten bytes!" + header[:5], "ten bytes!"},
+	}
+	for name, tc := range tests {
+		out, err := io.ReadAll(&frames{body: io.NopCloser(strings.NewReader(tc.wire))})
+
+		assert.ErrorIs(t, err, io.ErrUnexpectedEOF, name)
+		assert.Equal(t, tc.read, string(out), "%s: what came before the cut is still read", name)
+	}
+}
+
 // TestAgainstTheDaemon runs a real container. It is skipped when no Docker
 // daemon answers at DefaultHost.
 func TestAgainstTheDaemon(t *testing.T) {

@@ -1,0 +1,3 @@
+go test fuzz v1
+string("0")
+[]byte("metAdAtA:\n nAme: 0\nspeC:\n  fleetNAme: 0\n  poliCY:\n   tYpe: Chain")

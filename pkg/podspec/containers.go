@@ -51,6 +51,10 @@ const defaultGracePeriod = 30 * time.Second
 // CPU in, into the billionths Docker takes.
 const nanoPerMilli = 1_000_000
 
+// minNanoCPUs is the smallest CPU limit Linux enforces: 1ms of CPU time in
+// every 100ms, a hundredth of a core.
+const minNanoCPUs = 10 * nanoPerMilli
+
 // Sidecar is what the agent decides about a GameServer's sidecar.
 type Sidecar struct {
 	Image string
@@ -138,12 +142,22 @@ func gameSpec(gs *agonesv1.GameServer, c corev1.Container) docker.Spec {
 		WorkingDir:       c.WorkingDir,
 		Labels:           labels(gs, role),
 		ShareNetworkWith: Name(gs, SidecarName),
-		NanoCPUs:         c.Resources.Limits.Cpu().MilliValue() * nanoPerMilli,
+		NanoCPUs:         nanoCPUs(c.Resources.Limits.Cpu().MilliValue()),
 		MemoryBytes:      c.Resources.Limits.Memory().Value(),
 		Binds:            binds(gs, c),
 	}
 	applySecurity(&spec, c.SecurityContext)
 	return spec
+}
+
+// nanoCPUs is a CPU limit in thousandths of a core the way Docker takes
+// it. A limit below the smallest Linux enforces is raised to that, as the
+// kubelet does: Docker would pass it on, and the container would not start.
+func nanoCPUs(milli int64) int64 {
+	if milli <= 0 {
+		return 0 // no limit
+	}
+	return max(milli*nanoPerMilli, minNanoCPUs)
 }
 
 func labels(gs *agonesv1.GameServer, role string) map[string]string {

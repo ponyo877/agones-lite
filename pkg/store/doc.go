@@ -2,7 +2,10 @@
 //
 // It stands in for the Kubernetes API server and etcd. One SQLite file makes
 // the state durable; a copy of everything in memory makes reads cheap. All
-// writes go through the Store, so the two never disagree.
+// writes go through the Store, so the two never disagree. The file holds
+// JSON, which keeps a time to the second, so the times the Store sets itself
+// are whole seconds; a caller that stores a finer one finds it rounded down
+// after a restart.
 //
 // Three ideas are borrowed from Kubernetes:
 //

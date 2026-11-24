@@ -55,6 +55,9 @@ func negotiate(daemonNewest, daemonOldest string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if newest.before(oldest) {
+		return "", fmt.Errorf("the daemon says it speaks the Docker API from %s to %s, which is no version at all", oldest, newest)
+	}
 	if newestAPI.before(oldest) {
 		return "", fmt.Errorf("agones-lite is too old for this daemon: it speaks the Docker API up to %s, and the daemon needs %s or newer: upgrade agones-lite", newestAPI, oldest)
 	}

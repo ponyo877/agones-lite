@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -32,15 +33,24 @@ func parseWithConfig(fs *flag.FlagSet, args []string) error {
 	if err != nil {
 		return err
 	}
-	var settings map[string]any
-	if err := yaml.Unmarshal(raw, &settings); err != nil {
+	if err := fillFrom(fs, raw); err != nil {
 		return fmt.Errorf("%s: %w", *file, err)
+	}
+	return nil
+}
+
+// fillFrom sets, from the content of a config file, every flag that was
+// not set before.
+func fillFrom(fs *flag.FlagSet, content []byte) error {
+	var settings map[string]any
+	if err := yaml.Unmarshal(content, &settings, digitByDigit); err != nil {
+		return err
 	}
 	given := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
 	for name, value := range settings {
 		if err := fill(fs, name, value, given[name]); err != nil {
-			return fmt.Errorf("%s: %s: %w", *file, name, err)
+			return fmt.Errorf("%s: %w", name, err)
 		}
 	}
 	return nil
@@ -62,6 +72,14 @@ func fill(fs *flag.FlagSet, name string, value any, given bool) error {
 	return fs.Set(name, text)
 }
 
+// digitByDigit has the numbers of the file kept as they are written. Read
+// the usual way they would become float64, and a whole number of more
+// than sixteen digits would come out as another number.
+func digitByDigit(d *json.Decoder) *json.Decoder {
+	d.UseNumber()
+	return d
+}
+
 // typed returns a value from the file the way it would be typed on the
 // command line, which is what a flag reads.
 func typed(value any) (string, error) {
@@ -70,12 +88,24 @@ func typed(value any) (string, error) {
 		return joined(v)
 	case map[string]any:
 		return "", errors.New("a flag takes one value or a list of them, not a map")
-	case float64:
-		// YAML numbers arrive as float64, and Go would print a million of
-		// them as 1e+06.
-		return strconv.FormatFloat(v, 'f', -1, 64), nil
+	case json.Number:
+		return number(v), nil
 	}
 	return fmt.Sprint(value), nil
+}
+
+// number is a number of the file as it would be typed. YAML writes a
+// million as 1e+06 when it was given as 1e6; nobody types that for a flag
+// that counts.
+func number(n json.Number) string {
+	if !strings.ContainsAny(n.String(), ".eE") {
+		return n.String()
+	}
+	float, err := n.Float64()
+	if err != nil {
+		return n.String()
+	}
+	return strconv.FormatFloat(float, 'f', -1, 64)
 }
 
 // joined is a list the way the flags take one: separated by commas.

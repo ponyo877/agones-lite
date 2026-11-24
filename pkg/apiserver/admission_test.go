@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/ponyo877/agones-lite/pkg/agones"
 )
 
 const scalerManifest = `
@@ -35,7 +37,7 @@ const (
 
 // replace changes one place of a manifest, and fails the test when the
 // place is not there: a case that changes nothing would pass for nothing.
-func replace(t *testing.T, manifest, old, changed string) string {
+func replace(t testing.TB, manifest, old, changed string) string {
 	t.Helper()
 	require.Contains(t, manifest, old)
 	return strings.Replace(manifest, old, changed, 1)
@@ -46,15 +48,7 @@ func replace(t *testing.T, manifest, old, changed string) string {
 // look like someone else's, or like they are already going away.
 func TestTemplateMetadataKeepsOnlyLabelsAndAnnotations(t *testing.T) {
 	h := newServer(t)
-	body := replace(t, fleetManifest, "  template:\n    spec:", `  template:
-    metadata:
-      labels: {tier: gold}
-      annotations: {note: kept}
-      deletionTimestamp: "2020-01-01T00:00:00Z"
-      finalizers: [example.com/hold]
-      ownerReferences:
-        - {apiVersion: v1, kind: Pod, name: other, uid: x, controller: true}
-    spec:`)
+	body := fleetWithTemplateMetadata(t)
 
 	rec := call(t, h, http.MethodPut, fleetPath, body)
 
@@ -76,14 +70,33 @@ func TestTemplateMetadataKeepsOnlyLabelsAndAnnotations(t *testing.T) {
 	assert.Nil(t, set.GameServer().DeletionTimestamp)
 }
 
-func TestPodTemplateMetadataKeepsOnlyLabelsAndAnnotations(t *testing.T) {
-	h := newServer(t)
-	body := replace(t, manifest, "  template:\n    spec:", `  template:
+// fleetWithTemplateMetadata is a Fleet whose template claims an owner, a
+// finalizer and a deletion.
+func fleetWithTemplateMetadata(t testing.TB) string {
+	return replace(t, fleetManifest, "  template:\n    spec:", `  template:
+    metadata:
+      labels: {tier: gold}
+      annotations: {note: kept}
+      deletionTimestamp: "2020-01-01T00:00:00Z"
+      finalizers: [example.com/hold]
+      ownerReferences:
+        - {apiVersion: v1, kind: Pod, name: other, uid: x, controller: true}
+    spec:`)
+}
+
+// gameServerWithPodMetadata is a GameServer whose Pod template claims an owner.
+func gameServerWithPodMetadata(t testing.TB) string {
+	return replace(t, manifest, "  template:\n    spec:", `  template:
     metadata:
       labels: {tier: gold}
       ownerReferences:
         - {apiVersion: v1, kind: Pod, name: other, uid: x, controller: true}
     spec:`)
+}
+
+func TestPodTemplateMetadataKeepsOnlyLabelsAndAnnotations(t *testing.T) {
+	h := newServer(t)
+	body := gameServerWithPodMetadata(t)
 
 	rec := call(t, h, http.MethodPost, gameServersPath, body)
 
@@ -103,9 +116,26 @@ func numbered(n int) string {
 	return "[" + strings.Join(names, ", ") + "]"
 }
 
+// refusal is a request admission must refuse, and the field it must blame.
+// The tables of them are also where FuzzAdmit starts from.
+type refusal struct {
+	method, path, body string
+	want               string
+}
+
 // Upstream's Validate relies on the CRD schema having run first. Nothing
 // runs it here, so its limits are checked by hand.
 func TestCreateRejectsWhatTheCRDSchemaWould(t *testing.T) {
+	for name, tc := range refusedByTheSchema(t) {
+		t.Run(name, func(t *testing.T) {
+			rec := call(t, newServer(t), tc.method, tc.path, tc.body)
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), tc.want+":")
+		})
+	}
+}
+
+func refusedByTheSchema(t testing.TB) map[string]refusal {
 	schedule := `policy:
     type: Schedule
     schedule:
@@ -114,10 +144,7 @@ func TestCreateRejectsWhatTheCRDSchemaWould(t *testing.T) {
         type: Buffer
         buffer: {bufferSize: 2, maxReplicas: 10}
 `
-	tests := map[string]struct {
-		method, path, body string
-		want               string
-	}{
+	return map[string]refusal{
 		"a negative counter": {
 			http.MethodPost, gameServersPath,
 			replace(t, manifest, "spec:\n", "spec:\n  counters: {rooms: {count: -1, capacity: 10}}\n"),
@@ -245,31 +272,87 @@ func TestCreateRejectsWhatTheCRDSchemaWould(t *testing.T) {
 			replace(t, scalerManifest, "type: Buffer", "type: Chain\n    chain: [{id: a, type: Chain}]"),
 			"spec.policy.chain[0].type",
 		},
+		"a port from a range of ports that is not there": {
+			http.MethodPost, gameServersPath,
+			replace(t, manifest, "containerPort: 7654", "containerPort: 7654\n      range: games"),
+			"spec.ports[0].range",
+		},
+		"an unknown log level": {
+			http.MethodPost, gameServersPath,
+			replace(t, manifest, "spec:\n", "spec:\n  sdkServer: {logLevel: Loud}\n"),
+			"spec.sdkServer.logLevel",
+		},
+		"a webhook that is a Service, of which there are none": {
+			http.MethodPut, scalerPath,
+			replace(t, scalerManifest, "type: Buffer", "type: Webhook\n    webhook: {service: {name: scaler, namespace: default, path: scale}}"),
+			"spec.policy.webhook.service",
+		},
+		"a webhook at no address a request could go to": {
+			http.MethodPut, scalerPath,
+			replace(t, scalerManifest, "type: Buffer", "type: Webhook\n    webhook: {url: scaler/scale}"),
+			"spec.policy.webhook.url",
+		},
+		"a scheduled policy without its settings": {
+			http.MethodPut, scalerPath,
+			replace(t, scalerManifest, "policy:\n    type: Buffer\n    buffer:\n      bufferSize: 2\n      maxReplicas: 10\n",
+				replace(t, schedule, "\n        buffer: {bufferSize: 2, maxReplicas: 10}", "")),
+			"spec.policy.schedule.policy.buffer",
+		},
+		"a chain of no policies": {
+			http.MethodPut, scalerPath,
+			replace(t, scalerManifest, "    type: Buffer\n    buffer:\n      bufferSize: 2\n      maxReplicas: 10\n", "    type: Chain\n"),
+			"spec.policy.chain",
+		},
 		"an unknown way to sync": {
 			http.MethodPut, scalerPath,
 			replace(t, scalerManifest, "spec:\n", "spec:\n  sync: {type: Sometimes}\n"),
 			"spec.sync.type",
 		},
 	}
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			rec := call(t, newServer(t), tc.method, tc.path, tc.body)
-			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
-			assert.Contains(t, rec.Body.String(), tc.want+":")
-		})
-	}
 }
 
 // Kubernetes refuses a Pod that asks for one host port twice, and Docker a
 // container. Two Static ports may share a number only on different protocols.
 func TestStaticPortsOfOneGameServerMustNotClash(t *testing.T) {
-	static := func(name string, hostPort int, protocol string) string {
-		return fmt.Sprintf("    - {name: %s, portPolicy: Static, containerPort: 7654, hostPort: %d%s}\n", name, hostPort, protocol)
+	for name, tc := range staticPortCases() {
+		t.Run(name, func(t *testing.T) {
+			rec := call(t, newServer(t), http.MethodPost, gameServersPath, withPorts(t, tc.ports))
+
+			if tc.clash == "" {
+				assert.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+				return
+			}
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), tc.clash+": Duplicate value")
+		})
 	}
-	tests := map[string]struct {
-		ports string
-		clash string // the field that is refused; empty when the ports are fine
-	}{
+
+	// In a Fleet the template has not been given its defaults yet.
+	fleet := replace(t, fleetManifest, "        - name: default\n          containerPort: 7654\n",
+		"        - {name: a, portPolicy: Static, containerPort: 7654, hostPort: 7000}\n"+
+			"        - {name: b, portPolicy: Static, containerPort: 7654, hostPort: 7000, protocol: UDP}\n")
+	rec := call(t, newServer(t), http.MethodPut, fleetPath, fleet)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "spec.template.spec.ports[1].hostPort: Duplicate value")
+}
+
+// withPorts is the GameServer manifest with other ports.
+func withPorts(t testing.TB, ports string) string {
+	return replace(t, manifest, "    - name: default\n      containerPort: 7654\n", ports)
+}
+
+// static is one Static port of a manifest.
+func static(name string, hostPort int, protocol string) string {
+	return fmt.Sprintf("    - {name: %s, portPolicy: Static, containerPort: 7654, hostPort: %d%s}\n", name, hostPort, protocol)
+}
+
+type staticPortCase struct {
+	ports string
+	clash string // the field that is refused; empty when the ports are fine
+}
+
+func staticPortCases() map[string]staticPortCase {
+	return map[string]staticPortCase{
 		"the same port twice": {
 			static("a", 7000, "") + static("b", 7000, ""), "spec.ports[1].hostPort",
 		},
@@ -289,28 +372,6 @@ func TestStaticPortsOfOneGameServerMustNotClash(t *testing.T) {
 			static("a", 7000, "") + "    - {name: b, containerPort: 7654}\n" + "    - {name: c, containerPort: 7654}\n", "",
 		},
 	}
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			body := replace(t, manifest, "    - name: default\n      containerPort: 7654\n", tc.ports)
-
-			rec := call(t, newServer(t), http.MethodPost, gameServersPath, body)
-
-			if tc.clash == "" {
-				assert.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-				return
-			}
-			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
-			assert.Contains(t, rec.Body.String(), tc.clash+": Duplicate value")
-		})
-	}
-
-	// In a Fleet the template has not been given its defaults yet.
-	fleet := replace(t, fleetManifest, "        - name: default\n          containerPort: 7654\n",
-		"        - {name: a, portPolicy: Static, containerPort: 7654, hostPort: 7000}\n"+
-			"        - {name: b, portPolicy: Static, containerPort: 7654, hostPort: 7000, protocol: UDP}\n")
-	rec := call(t, newServer(t), http.MethodPut, fleetPath, fleet)
-	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "spec.template.spec.ports[1].hostPort: Duplicate value")
 }
 
 // The limits themselves are still fine.
@@ -394,10 +455,17 @@ status:
 // Names end up in Docker's container and volume names, with "_" between
 // the parts. A name that holds a "_" itself would read as someone else's.
 func TestNamesMustBeDNSNames(t *testing.T) {
-	tests := map[string]struct {
-		method, path, body string
-		want               string
-	}{
+	for name, tc := range refusedForTheirNames(t) {
+		t.Run(name, func(t *testing.T) {
+			rec := call(t, newServer(t), tc.method, tc.path, tc.body)
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), tc.want+":")
+		})
+	}
+}
+
+func refusedForTheirNames(t testing.TB) map[string]refusal {
+	return map[string]refusal{
 		"an underscore in a name": {
 			http.MethodPost, gameServersPath, replace(t, manifest, "name: simple", "name: gs_x"), "metadata.name",
 		},
@@ -409,6 +477,12 @@ func TestNamesMustBeDNSNames(t *testing.T) {
 		},
 		"an underscore in a generated name": {
 			http.MethodPost, gameServersPath, replace(t, manifest, "name: simple", "generateName: gs_"), "metadata.generateName",
+		},
+		"an underscore before the dash a generated name may end in": {
+			http.MethodPost, gameServersPath, replace(t, manifest, "name: simple", "generateName: gs_-"), "metadata.generateName",
+		},
+		"a generated name that is nothing but a dash": {
+			http.MethodPost, gameServersPath, replace(t, manifest, "name: simple", "generateName: \"-\""), "metadata.generateName",
 		},
 		"an underscore in the namespace": {
 			http.MethodPost, "/v1/namespaces/a_b/gameservers", manifest, "metadata.namespace",
@@ -423,18 +497,23 @@ func TestNamesMustBeDNSNames(t *testing.T) {
 			http.MethodPut, "/v1/namespaces/default/fleetautoscalers/a_b", scalerManifest, "metadata.name",
 		},
 	}
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			rec := call(t, newServer(t), tc.method, tc.path, tc.body)
-			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
-			assert.Contains(t, rec.Body.String(), tc.want+":")
-		})
-	}
+}
+
+// The routes only match a namespace that is there. Admission does not
+// count on that: a resource without one would be found by no list.
+func TestAResourceWithoutANamespaceIsRefused(t *testing.T) {
+	require.NoError(t, agones.Setup())
+	api := New(nil, nil, nil, nil)
+
+	_, ok := admitted(api.servers, "", []byte(manifest))
+	assert.False(t, ok)
+	_, ok = admitted(api.servers, "default", []byte(manifest))
+	assert.True(t, ok)
 }
 
 func TestNamesThatKubernetesAcceptsAreAccepted(t *testing.T) {
 	h := newServer(t)
-	for _, name := range []string{"name: a", "name: my.game-1", "generateName: simple-"} {
+	for _, name := range []string{"name: a", "name: my.game-1", "generateName: simple-", "generateName: simple", "generateName: s--"} {
 		rec := call(t, h, http.MethodPost, "/v1/namespaces/team-1/gameservers", replace(t, manifest, "name: simple", name))
 		assert.Equal(t, http.StatusCreated, rec.Code, "%s: %s", name, rec.Body.String())
 	}
@@ -464,4 +543,145 @@ func TestADeletionMarkSentByTheClientIsIgnored(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), gs))
 	assert.Nil(t, gs.DeletionTimestamp)
 	assert.Nil(t, gs.DeletionGracePeriodSeconds)
+}
+
+// A Pod is checked as Kubernetes would check it, as far as it reaches
+// Docker: upstream leaves that to the API server, which is not there.
+func TestCreateRejectsAPodThatCouldNotRun(t *testing.T) {
+	for name, tc := range refusedByThePod(t) {
+		t.Run(name, func(t *testing.T) {
+			rec := call(t, newServer(t), http.MethodPost, gameServersPath, tc.body)
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), tc.want+":")
+		})
+	}
+}
+
+// inPod is the GameServer manifest with more in its Pod, and inContainer
+// with more in its container.
+func inPod(t testing.TB, more string) string {
+	return replace(t, manifest, "      nodeSelector:\n        pool: games\n", more)
+}
+
+func inContainer(t testing.TB, more string) string {
+	return replace(t, manifest, "          image: example/game:1\n", "          image: example/game:1\n"+more)
+}
+
+func refusedByThePod(t testing.TB) map[string]refusal {
+	pod := "spec.template.spec."
+	post := func(body, want string) refusal { return refusal{http.MethodPost, gameServersPath, body, pod + want} }
+	return map[string]refusal{
+		"two containers of one name": post(
+			gameIs(t, inContainer(t, "        - {name: game, image: example/logs:1}\n")), "containers[1].name"),
+		"a container named like the sidecar": post(
+			gameIs(t, inContainer(t, "        - {name: agones-gameserver-sidecar, image: example/logs:1}\n")), "containers[1].name"),
+		"a volume that is nothing": post(
+			inPod(t, "      volumes: [{name: data}]\n"), "volumes[0]"),
+		"a mount of a volume that is nothing": post(
+			replace(t, withMounts(t, "{name: data, mountPath: /data}"), "emptyDir: {}", ""), "volumes[0]"),
+		"a host path that is no path": post(
+			inPod(t, "      volumes: [{name: data, hostPath: {path: \"\"}}]\n"), "volumes[0].hostPath.path"),
+		"a mount of a volume that is not there": post(
+			inContainer(t, "          volumeMounts: [{name: data, mountPath: /data}]\n"), "containers[0].volumeMounts[0].name"),
+		"more memory than Docker can be told": post(
+			inContainer(t, "          resources: {limits: {memory: 1e19}}\n"), "containers[0].resources.limits[memory]"),
+		"a negative limit": post(
+			inContainer(t, "          resources: {limits: {cpu: -1}}\n"), "containers[0].resources.limits[cpu]"),
+		"less memory than Docker gives a container": post(
+			inContainer(t, "          resources: {limits: {memory: 1Mi}}\n"), "containers[0].resources.limits[memory]"),
+		"a port of a container on the node, which only spec.ports publishes": post(
+			inContainer(t, "          ports: [{containerPort: 7654, hostPort: 7654}]\n"), "containers[0].ports[0].hostPort"),
+		"a port of a container that is not a port": post(
+			inContainer(t, "          ports: [{containerPort: 70000}]\n"), "containers[0].ports[0].containerPort"),
+		"more time to stop than Docker can be told": post(
+			inPod(t, "      terminationGracePeriodSeconds: 9223372037\n"), "terminationGracePeriodSeconds"),
+		"a working directory that does not start at the root": post(
+			inContainer(t, "          workingDir: srv\n"), "containers[0].workingDir"),
+		"a variable without a name": post(
+			inContainer(t, "          env: [{value: ranked}]\n"), "containers[0].env[0].name"),
+		"a variable with = in its name": post(
+			inContainer(t, "          env: [{name: MODE=x, value: ranked}]\n"), "containers[0].env[0].name"),
+		"a host path that does not start at the root": post(
+			inPod(t, "      volumes: [{name: data, hostPath: {path: maps}}]\n"), "volumes[0].hostPath.path"),
+		"a host path with a colon, which ends the path for Docker": post(
+			inPod(t, "      volumes: [{name: data, hostPath: {path: \"/srv/a:b\"}}]\n"), "volumes[0].hostPath.path"),
+		"a mount path that does not start at the root": post(
+			withMounts(t, "{name: data, mountPath: data}"), "containers[0].volumeMounts[0].mountPath"),
+		"a mount path with a colon": post(
+			withMounts(t, "{name: data, mountPath: \"/a:ro\"}"), "containers[0].volumeMounts[0].mountPath"),
+		"a mount on the root": post(
+			withMounts(t, "{name: data, mountPath: /}"), "containers[0].volumeMounts[0].mountPath"),
+		"two mounts on one path": post(
+			withMounts(t, "{name: data, mountPath: /data}, {name: data, mountPath: /data}"), "containers[0].volumeMounts[1].mountPath"),
+		"a user Linux has no number for": post(
+			inContainer(t, "          securityContext: {runAsUser: -1}\n"), "containers[0].securityContext.runAsUser"),
+		"a group Linux has no number for": post(
+			inContainer(t, "          securityContext: {runAsUser: 0, runAsGroup: 4294967296}\n"), "containers[0].securityContext.runAsGroup"),
+		"a group without a user, which Docker cannot set alone": post(
+			inContainer(t, "          securityContext: {runAsGroup: 1000}\n"), "containers[0].securityContext.runAsUser"),
+	}
+}
+
+// gameIs says which container of a manifest with several is the game.
+func gameIs(t testing.TB, body string) string {
+	return replace(t, body, "spec:\n", "spec:\n  container: game\n")
+}
+
+// withMounts is the GameServer manifest with a volume "data" and the
+// given mounts of it.
+func withMounts(t testing.TB, mounts string) string {
+	body := inPod(t, "      volumes: [{name: data, emptyDir: {}}]\n")
+	return replace(t, body, "          image: example/game:1\n", "          image: example/game:1\n          volumeMounts: ["+mounts+"]\n")
+}
+
+// What Docker has no word for, but can run without, is told to the user
+// and dropped.
+func TestVolumeSettingsDockerDoesNotHaveAreIgnoredWithAWarning(t *testing.T) {
+	body := inPod(t, `      volumes:
+        - {name: fast, emptyDir: {medium: Memory, sizeLimit: 1Gi}}
+        - {name: maps, hostPath: {path: /srv/maps, type: Directory}}
+`)
+
+	rec := call(t, newServer(t), http.MethodPost, gameServersPath, body)
+
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.ElementsMatch(t, []string{
+		"spec.template.spec.volumes[0].emptyDir.medium is ignored",
+		"spec.template.spec.volumes[0].emptyDir.sizeLimit is ignored",
+		"spec.template.spec.volumes[1].hostPath.type is ignored",
+	}, rec.Header().Values("Warning"))
+}
+
+// Upstream registers such a GameServer without running anything: the game
+// is a process on the developer's machine. Here it would be run in a
+// container like any other, and upstream's validation skips most of its
+// checks for it.
+func TestADevelopmentGameServerIsRefused(t *testing.T) {
+	body := developmentGameServer(t)
+
+	rec := call(t, newServer(t), http.MethodPost, gameServersPath, body)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "metadata.annotations[agones.dev/dev-address]:")
+}
+
+// developmentGameServer is a GameServer for local development, as
+// upstream wants one, with a mistake upstream does not look for in one: it
+// does not say which of its two containers is the game.
+func developmentGameServer(t testing.TB) string {
+	body := replace(t, manifest, "  name: simple\n", "  name: simple\n  annotations: {agones.dev/dev-address: 192.0.2.1}\n")
+	body = replace(t, body, "containerPort: 7654\n", "containerPort: 7654\n      portPolicy: Static\n      hostPort: 7654\n")
+	return replace(t, body, "          image: example/game:1\n", "          image: example/game:1\n        - {name: logs, image: example/logs:1}\n")
+}
+
+// "apply" sends what it got back the next time. Upstream's defaults add
+// the finalizer each time they run, so the second time there were two.
+func TestWhatAdmissionReturnsIsAdmittedUnchanged(t *testing.T) {
+	require.NoError(t, agones.Setup())
+	api := New(nil, nil, nil, nil)
+	first, ok := admitted(api.servers, "default", []byte(manifest))
+	require.True(t, ok)
+
+	assert.Empty(t, changedByAdmission(api, first))
+	assert.Equal(t, []string{agonesv1.FinalizerName}, first.Finalizers)
 }

@@ -1,12 +1,16 @@
 package auth
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -216,4 +220,104 @@ func TestAStreamWithoutAValidTokenNeverStarts(t *testing.T) {
 
 	assert.Equal(t, codes.Unauthenticated, status.Code(err))
 	assert.False(t, called)
+}
+
+// A watch and a log that is being followed are answers that go on. One
+// started with the admin token must not outlive that token: after
+// "token rotate admin" nobody but the holder of the new one may be told
+// anything more.
+func TestAnAnswerThatGoesOnIsCutOffWhenItsTokenStopsBeingValid(t *testing.T) {
+	recheckEvery = 10 * time.Millisecond
+	t.Cleanup(func() { recheckEvery = 5 * time.Second })
+	check := &flip{}
+	check.allow.Store(true)
+	// The handler is a watch: it says something, and then waits for more to say.
+	watch := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprintln(w, "event: Synced")
+		_ = http.NewResponseController(w).Flush()
+		<-r.Context().Done()
+	})
+	server := httptest.NewServer(RequireHTTP(check, Admin, watch))
+	defer server.Close()
+	resp, err := http.Get(server.URL)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	lines := bufio.NewReader(resp.Body)
+	line, err := lines.ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, "event: Synced\n", line)
+	ended := make(chan error, 1)
+	go func() {
+		_, err := lines.ReadString('\n')
+		ended <- err
+	}()
+
+	// While the token is good, the answer goes on.
+	select {
+	case err := <-ended:
+		require.Fail(t, "the answer ended early", "%v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// The token is rotated: the connection is cut, which the client can
+	// tell from an answer that has come to its end.
+	check.allow.Store(false)
+	select {
+	case err := <-ended:
+		assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "the answer outlived its token")
+	}
+}
+
+// An answer that ends by itself is not disturbed by the watching.
+func TestAnAnswerThatEndsIsLeftWhole(t *testing.T) {
+	recheckEvery = time.Millisecond
+	t.Cleanup(func() { recheckEvery = 5 * time.Second })
+	check := &flip{}
+	check.allow.Store(true)
+	slow := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(20 * time.Millisecond) // long enough to be looked at again
+		_, _ = fmt.Fprint(w, "done")
+	})
+	server := httptest.NewServer(RequireHTTP(check, Admin, slow))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL)
+
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, "done", string(body))
+}
+
+// FuzzToken: a token arrives in a header, from anyone who can reach the
+// port. Whatever it is, it lets its bearer in only if it ends with the
+// secret of the role or the admin's, after nothing or after one part
+// without a "." in it: the fingerprint a join token starts with. And a
+// secret that is empty lets nobody in.
+func FuzzToken(f *testing.F) {
+	s, err := Load(f.TempDir(), nil)
+	require.NoError(f, err)
+	empty := &Secrets{tokens: map[Role]string{Admin: "", Allocator: "", Node: ""}}
+	for _, role := range roles {
+		f.Add(s.Token(role), string(role))
+		f.Add("fingerprint."+s.tokens[role], string(role))
+		f.Add("a.b."+s.tokens[role], string(role))
+		f.Add(s.tokens[role]+".", string(role))
+	}
+	f.Add("", "admin")
+	f.Add(".", "join")
+	f.Fuzz(func(t *testing.T, token, name string) {
+		role := Role(name)
+		assert.False(t, empty.Allows(role, token), "an empty secret must match nothing")
+
+		prefix, secret := "", token
+		if i := strings.Index(token, "."); i >= 0 {
+			prefix, secret = token[:i], token[i+1:]
+		}
+		good := secret != "" && (secret == s.tokens[role] || secret == s.tokens[Admin])
+		assert.Equal(t, good, s.Allows(role, token), "token %q with the fingerprint %q for %q", token, prefix, role)
+	})
 }

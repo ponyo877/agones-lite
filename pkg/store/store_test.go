@@ -2,12 +2,15 @@ package store
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 func open(t *testing.T, path string) *Store {
@@ -45,6 +48,39 @@ func TestCreateWithGenerateName(t *testing.T) {
 
 	_, err = servers.Create(&agonesv1.GameServer{})
 	assert.Error(t, err, "neither name nor generateName")
+}
+
+// A Fleet named with 63 characters makes a GameServerSet, and that makes
+// GameServers, each with five characters more. Kubernetes cuts the base so
+// that the result still fits a label; so must we.
+func TestAGeneratedNameIsCutToFitALabel(t *testing.T) {
+	servers := GameServersOf(open(t, filepath.Join(t.TempDir(), "state.db")))
+	long := strings.Repeat("f", 63) + "-"
+
+	created, err := servers.Create(&agonesv1.GameServer{ObjectMeta: metav1.ObjectMeta{Namespace: "default", GenerateName: long}})
+
+	require.NoError(t, err)
+	assert.Regexp(t, `^f{58}[a-z0-9]{5}$`, created.Name)
+	assert.Empty(t, validation.IsDNS1123Label(created.Name))
+}
+
+// JSON keeps a time to the second. A finer one in memory would differ from
+// the file, and two GameServers made within one second would be in order
+// until the next restart and tied after it.
+func TestTimesAreTheSameBeforeAndAfterARestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	s, err := Open(path, Kinds())
+	require.NoError(t, err)
+	_, err = GameServersOf(s).Create(gameServer("a"))
+	require.NoError(t, err)
+	require.NoError(t, GameServersOf(s).MarkDeleted("default", "a", time.Now()))
+	before, _ := GameServersOf(s).Get("default", "a")
+	require.NoError(t, s.Close())
+
+	after, _ := GameServersOf(open(t, path)).Get("default", "a")
+
+	assert.True(t, before.CreationTimestamp.Time.Equal(after.CreationTimestamp.Time), "created %s, read back as %s", before.CreationTimestamp.Time, after.CreationTimestamp.Time)
+	assert.True(t, before.DeletionTimestamp.Time.Equal(after.DeletionTimestamp.Time), "marked %s, read back as %s", before.DeletionTimestamp.Time, after.DeletionTimestamp.Time)
 }
 
 func TestUpdateNeedsTheLatestVersion(t *testing.T) {
@@ -91,6 +127,24 @@ func TestListFiltersAndSorts(t *testing.T) {
 
 	assert.Equal(t, []string{"a", "b"}, names(servers.List("default")))
 	assert.Equal(t, []string{"a", "b", "c"}, names(servers.List("")))
+}
+
+// "default-2/a" comes before "default/b" as text, because "-" comes before
+// "/". As namespaces, "default" comes first.
+func TestListOrdersByNamespaceAndThenByName(t *testing.T) {
+	servers := GameServersOf(open(t, filepath.Join(t.TempDir(), "state.db")))
+	for _, key := range [][2]string{{"default-2", "a"}, {"default", "b"}, {"default", "a"}} {
+		gs := gameServer(key[1])
+		gs.Namespace = key[0]
+		_, err := servers.Create(gs)
+		require.NoError(t, err)
+	}
+
+	var listed []string
+	for _, gs := range servers.List("") {
+		listed = append(listed, gs.Namespace+"/"+gs.Name)
+	}
+	assert.Equal(t, []string{"default/a", "default/b", "default-2/a"}, listed)
 }
 
 func TestWatchSeesEveryChange(t *testing.T) {

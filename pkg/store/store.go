@@ -1,12 +1,15 @@
 package store
 
 import (
+	"cmp"
 	"database/sql"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -110,9 +113,10 @@ func (s *Store) list(kind Kind, namespace string) []Object {
 			out = append(out, clone(obj))
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		a, b := KeyOf(kind, out[i]), KeyOf(kind, out[j])
-		return a.Namespace+"/"+a.Name < b.Namespace+"/"+b.Name
+	// Compared part by part. Joined into one text, "a-b/x" would come
+	// before "a/x", and namespace "a-b" before namespace "a".
+	slices.SortFunc(out, func(a, b Object) int {
+		return cmp.Or(strings.Compare(a.GetNamespace(), b.GetNamespace()), strings.Compare(a.GetName(), b.GetName()))
 	})
 	return out
 }
@@ -212,12 +216,38 @@ func prepare(obj Object) error {
 		if obj.GetGenerateName() == "" {
 			return errors.New("metadata.name or metadata.generateName is required")
 		}
-		obj.SetName(obj.GetGenerateName() + rand.String(5))
+		obj.SetName(generatedName(obj.GetGenerateName()))
 	}
 	obj.SetUID(uuid.NewUUID())
-	obj.SetCreationTimestamp(metav1.Now())
+	obj.SetCreationTimestamp(toTheSecond(time.Now()))
 	obj.SetGeneration(1)
 	return nil
+}
+
+// The shape of a generated name, as in Kubernetes
+// (k8s.io/apiserver/pkg/storage/names): the base, cut short if need be,
+// and five random characters, which together fit a DNS label.
+const (
+	maxNameLength = 63
+	randomLength  = 5
+)
+
+// generatedName makes a name from a generateName. Without the cut, the
+// GameServers of a Fleet with a long name would get names too long for a
+// label, which is where their names also go.
+func generatedName(base string) string {
+	if most := maxNameLength - randomLength; len(base) > most {
+		base = base[:most]
+	}
+	return base + rand.String(randomLength)
+}
+
+// toTheSecond is t the way the file keeps it. JSON holds a time to the
+// second, so a finer one in memory would change when the file is read
+// again: two objects made within one second would be in order before a
+// restart and tied after it.
+func toTheSecond(t time.Time) metav1.Time {
+	return metav1.NewTime(t.Truncate(time.Second))
 }
 
 func clone(obj Object) Object {

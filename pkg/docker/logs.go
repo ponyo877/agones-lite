@@ -33,21 +33,36 @@ type frames struct {
 	left int // bytes of the current frame not yet read
 }
 
-// Read implements io.Reader.
+// Read implements io.Reader. A stream that ends inside a frame ends with
+// io.ErrUnexpectedEOF, so that a log cut short is not taken for a whole one.
 func (f *frames) Read(p []byte) (int, error) {
-	if f.left == 0 {
-		var header [8]byte
-		if _, err := io.ReadFull(f.body, header[:]); err != nil {
+	// A loop, because Docker sends a frame of nothing for an empty write,
+	// and a reader that answers with nothing and no error is asked again.
+	for f.left == 0 {
+		if err := f.nextFrame(); err != nil {
 			return 0, err
 		}
-		f.left = int(binary.BigEndian.Uint32(header[4:]))
 	}
 	if len(p) > f.left {
 		p = p[:f.left]
 	}
 	n, err := f.body.Read(p)
 	f.left -= n
+	if err == io.EOF && f.left > 0 {
+		err = io.ErrUnexpectedEOF
+	}
 	return n, err
+}
+
+// nextFrame reads the header of the next frame. The stream may end before
+// one, with io.EOF, but not inside one.
+func (f *frames) nextFrame() error {
+	var header [8]byte
+	if _, err := io.ReadFull(f.body, header[:]); err != nil {
+		return err
+	}
+	f.left = int(binary.BigEndian.Uint32(header[4:]))
+	return nil
 }
 
 // Close implements io.Closer.

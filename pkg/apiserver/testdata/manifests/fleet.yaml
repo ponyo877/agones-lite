@@ -1,0 +1,48 @@
+# A Fleet whose template sets what the GameServer seed sets, and every
+# field of its own.
+apiVersion: agones.dev/v1
+kind: Fleet
+metadata:
+  name: everything
+  labels: {tier: gold}
+spec:
+  replicas: 3
+  scheduling: Distributed
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 25%, maxUnavailable: 1}
+  allocationOverflow:
+    labels: {overflow: "true"}
+  priorities:
+    - {type: Counter, key: rooms, order: Descending}
+    - {type: List, key: players, order: Ascending}
+  template:
+    metadata:
+      labels: {app: game}
+    spec:
+      ports:
+        - {name: game, containerPort: 7654}
+        - {name: query, portPolicy: Static, containerPort: 27015, hostPort: 27015, protocol: TCPUDP}
+      health: {disabled: true}
+      counters:
+        rooms: {capacity: 10}
+      lists:
+        players: {}
+      template:
+        metadata:
+          annotations: {example.com/note: kept}
+        spec:
+          terminationGracePeriodSeconds: 5
+          volumes:
+            - name: scratch
+              emptyDir: {}
+          containers:
+            - name: game
+              image: example/game:1
+              env:
+                - {name: MODE, value: casual}
+              resources:
+                limits: {cpu: "1", memory: 64Mi}
+              securityContext: {runAsUser: 1000}
+              volumeMounts:
+                - {name: scratch, mountPath: /tmp}

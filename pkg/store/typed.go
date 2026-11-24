@@ -6,7 +6,6 @@ import (
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	autoscalingv1 "agones.dev/agones/pkg/apis/autoscaling/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
 )
@@ -147,7 +146,7 @@ func (t Typed[T]) MarkDeleted(namespace, name string, now time.Time) error {
 		if obj.GetDeletionTimestamp() != nil {
 			return false
 		}
-		stamp := metav1.NewTime(now)
+		stamp := toTheSecond(now)
 		obj.SetDeletionTimestamp(&stamp)
 		return true
 	})

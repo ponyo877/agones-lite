@@ -2,6 +2,7 @@ package apiserver
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
@@ -27,7 +28,14 @@ func admitGameServer(gs *agonesv1.GameServer) (warnings []string, errs field.Err
 	spec := field.NewPath("spec")
 	warnings = labelsOnly(&gs.Spec.Template.ObjectMeta, spec.Child("template", "metadata"))
 	gs.ApplyDefaults()
-	errs = append(gameServerSpecSchema(&gs.Spec, spec), gs.Validate(agones.NoHooks{})...)
+	// The defaults add upstream's finalizer every time they run, and they
+	// run again when what was admitted is applied again.
+	gs.Finalizers = withoutRepeats(gs.Finalizers)
+	errs = slices.Concat(
+		notForDevelopment(gs.Annotations, field.NewPath("metadata", "annotations")),
+		gameServerSpecSchema(&gs.Spec, spec),
+		gs.Validate(agones.NoHooks{}),
+	)
 	ignored, unsupported := podspec.Check(&gs.Spec, spec)
 	return append(warnings, ignored...), append(errs, unsupported...)
 }
@@ -40,9 +48,36 @@ func admitFleet(fleet *agonesv1.Fleet) (warnings []string, errs field.ErrorList)
 	pod := &fleet.Spec.Template.Spec.Template.ObjectMeta
 	warnings = append(warnings, labelsOnly(pod, template.Child("spec", "template", "metadata"))...)
 	fleet.ApplyDefaults()
-	errs = append(fleetSchema(fleet), fleet.Validate(agones.NoHooks{})...)
+	errs = slices.Concat(
+		notForDevelopment(fleet.Spec.Template.Annotations, template.Child("metadata", "annotations")),
+		fleetSchema(fleet),
+		fleet.Validate(agones.NoHooks{}),
+	)
 	ignored, unsupported := podspec.Check(&fleet.Spec.Template.Spec, template.Child("spec"))
 	return append(warnings, ignored...), append(errs, unsupported...)
+}
+
+// notForDevelopment refuses the annotation that makes a GameServer one for
+// local development. Upstream registers such a GameServer without running
+// anything, the game being a process on the developer's machine, and skips
+// most of its validation for it. Here it would be run in a container like
+// any other, unchecked.
+func notForDevelopment(annotations map[string]string, at *field.Path) field.ErrorList {
+	if _, development := annotations[agonesv1.DevAddressAnnotation]; !development {
+		return nil
+	}
+	return field.ErrorList{field.Forbidden(at.Key(agonesv1.DevAddressAnnotation), "development GameServers are not supported by agones-lite")}
+}
+
+// withoutRepeats keeps the first of every value, in order.
+func withoutRepeats(values []string) []string {
+	var kept []string
+	for _, value := range values {
+		if !slices.Contains(kept, value) {
+			kept = append(kept, value)
+		}
+	}
+	return kept
 }
 
 func admitFleetAutoscaler(fas *autoscalingv1.FleetAutoscaler) (warnings []string, errs field.ErrorList) {
@@ -83,6 +118,9 @@ func labelsOnly(meta *metav1.ObjectMeta, at *field.Path) (warnings []string) {
 func identity(obj metav1.Object) field.ErrorList {
 	meta := field.NewPath("metadata")
 	errs := named(obj.GetNamespace(), false, apivalidation.ValidateNamespaceName, meta.Child("namespace"))
+	if obj.GetNamespace() == "" {
+		errs = append(errs, field.Required(meta.Child("namespace"), ""))
+	}
 	if obj.GetName() == "" && obj.GetGenerateName() == "" {
 		return append(errs, field.Required(meta.Child("name"), "name or generateName is required"))
 	}
@@ -91,12 +129,22 @@ func identity(obj metav1.Object) field.ErrorList {
 }
 
 // named holds a name that is set against one of Kubernetes' naming rules.
-// prefix says the name will have something appended, as a generateName has.
+// prefix says the name will have something appended, as a generateName
+// has, so it may end in the "-" that a name may not end in.
+//
+// Kubernetes' rules can be told about a prefix themselves, but then they
+// forgive the character before that "-" as well: "gs_-" passes. Kubernetes
+// finds out when it checks the generated name. Nothing checks that one
+// here, so the "-" is all that is forgiven.
 func named(name string, prefix bool, rule apivalidation.ValidateNameFunc, at *field.Path) field.ErrorList {
 	if name == "" {
 		return nil
 	}
-	return reported(name, rule(name, prefix), at)
+	whole := name
+	if prefix && len(name) > 1 && strings.HasSuffix(name, "-") {
+		whole = name[:len(name)-1] + "a"
+	}
+	return reported(name, rule(whole, false), at)
 }
 
 // carryFleetAutoscaler does for a FleetAutoscaler what carryFleet does for a Fleet.

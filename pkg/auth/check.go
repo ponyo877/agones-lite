@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -23,23 +24,46 @@ type Checker interface {
 // for role in its Authorization header, or came with a client certificate
 // the listener verified (see ServerTLSWithClients). A gRPC call served over
 // net/http is covered too: its "authorization" metadata is this same header.
+//
+// An answer that goes on, such as a watch or a log that is being followed,
+// is cut off once the token stops being valid, as a gRPC stream is by
+// guardStream. It is cut off rather than ended, so that the client sees a
+// broken connection and not what looks like the natural end of a log.
 func RequireHTTP(check Checker, role Role, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token, _ := strings.CutPrefix(r.Header.Get("Authorization"), bearer)
-		if !check.Allows(role, token) && !hasVerifiedCertificate(r) {
+		allowed := func() error { return allowedHTTP(r, check, role) }
+		if allowed() != nil {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			http.Error(w, `{"error":"a valid token is required"}`, http.StatusUnauthorized)
 			return
 		}
-		next.ServeHTTP(w, r)
+		ctx, end := context.WithCancelCause(r.Context())
+		defer end(nil)
+		go endWhenRefused(ctx, end, allowed)
+		next.ServeHTTP(w, r.WithContext(ctx))
+		if errors.Is(context.Cause(ctx), errRefused) {
+			panic(http.ErrAbortHandler) // net/http's way to close the connection in mid-answer
+		}
 	})
+}
+
+// errRefused says that a request has no token for what it asks.
+var errRefused = errors.New("a valid token is required")
+
+func allowedHTTP(r *http.Request, check Checker, role Role) error {
+	token, _ := strings.CutPrefix(r.Header.Get("Authorization"), bearer)
+	if !check.Allows(role, token) && !hasVerifiedCertificate(r) {
+		return errRefused
+	}
+	return nil
 }
 
 func hasVerifiedCertificate(r *http.Request) bool {
 	return r.TLS != nil && len(r.TLS.VerifiedChains) > 0
 }
 
-// recheckEvery is how often the token of an open stream is looked at again.
+// recheckEvery is how often the token of an open stream, or of an answer
+// that goes on, is looked at again.
 var recheckEvery = 5 * time.Second
 
 // RequireGRPC returns the server options that do for gRPC what RequireHTTP

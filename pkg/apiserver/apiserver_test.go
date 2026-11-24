@@ -72,10 +72,19 @@ func TestCreateAppliesDefaultsAndWarns(t *testing.T) {
 
 func TestCreateRejectsWhatCannotRun(t *testing.T) {
 	h := newServer(t)
-	tests := map[string]struct {
-		body string
-		want string
-	}{
+	for name, tc := range whatCannotRun() {
+		t.Run(name, func(t *testing.T) {
+			rec := call(t, h, http.MethodPost, "/v1/namespaces/default/gameservers", tc.body)
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+			assert.Contains(t, rec.Body.String(), tc.want)
+		})
+	}
+}
+
+// whatCannotRun are GameServers that must be refused, each with a word the
+// refusal must hold.
+func whatCannotRun() map[string]struct{ body, want string } {
+	return map[string]struct{ body, want string }{
 		"a typo in a field name":       {strings.Replace(manifest, "containerPort", "containerPrt", 1), "containerPrt"},
 		"upstream validation":          {strings.Replace(manifest, "containerPort: 7654", "containerPort: 7654\n      hostPort: 7000", 1), "hostPort"},
 		"a field Docker cannot honour": {strings.Replace(manifest, "nodeSelector:\n        pool: games", "hostNetwork: true", 1), "hostNetwork"},
@@ -84,13 +93,6 @@ func TestCreateRejectsWhatCannotRun(t *testing.T) {
 			strings.Replace(manifest, "nodeSelector:\n        pool: games", "terminationGracePeriodSeconds: -1", 1),
 			"terminationGracePeriodSeconds",
 		},
-	}
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			rec := call(t, h, http.MethodPost, "/v1/namespaces/default/gameservers", tc.body)
-			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-			assert.Contains(t, rec.Body.String(), tc.want)
-		})
 	}
 }
 

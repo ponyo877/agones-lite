@@ -3,6 +3,7 @@ package apiserver
 import (
 	"fmt"
 	"maps"
+	"net/url"
 	"regexp"
 	"slices"
 
@@ -82,6 +83,8 @@ func gameServerSpecSchema(spec *agonesv1.GameServerSpec, at *field.Path) field.E
 		oneOf(spec.Scheduling, at.Child("scheduling"), apis.Packed, apis.Distributed),
 		each(spec.Ports, at.Child("ports"), gameServerPortSchema),
 		staticPortsSchema(spec.Ports, at.Child("ports")),
+		oneOf(spec.SdkServer.LogLevel, at.Child("sdkServer", "logLevel"),
+			agonesv1.SdkServerLogLevelError, agonesv1.SdkServerLogLevelInfo, agonesv1.SdkServerLogLevelDebug, agonesv1.SdkServerLogLevelTrace),
 		portNumber(spec.SdkServer.GRPCPort, at.Child("sdkServer", "grpcPort")),
 		portNumber(spec.SdkServer.HTTPPort, at.Child("sdkServer", "httpPort")),
 		healthSchema(spec.Health, at.Child("health")),
@@ -98,6 +101,9 @@ func gameServerPortSchema(p agonesv1.GameServerPort, at *field.Path) field.Error
 		oneOf(p.Protocol, at.Child("protocol"), corev1.ProtocolUDP, corev1.ProtocolTCP, agonesv1.ProtocolTCPUDP),
 		portNumber(p.ContainerPort, at.Child("containerPort")),
 		portNumber(p.HostPort, at.Child("hostPort")),
+		// The schema takes any name. Upstream then looks the name up among
+		// the port ranges of its installation; here a node has one range.
+		oneOf(p.Range, at.Child("range"), agonesv1.DefaultPortRange),
 	)
 }
 
@@ -218,19 +224,27 @@ var (
 	anyPolicy       = append(slices.Clone(chainedPolicies), autoscalingv1.ChainPolicyType)
 )
 
-// policySchema checks one policy and the policies inside it. Upstream's
-// Validate does not look inside a Schedule at all, so for the policy of a
-// Schedule these are the only checks there are.
+// policySchema checks one policy and the policies inside it.
 func policySchema(p autoscalingv1.FleetAutoscalerPolicy, at *field.Path, allowed []autoscalingv1.FleetAutoscalerPolicyType) field.ErrorList {
 	return slices.Concat(
 		required(string(p.Type), at.Child("type")),
 		oneOf(p.Type, at.Child("type"), allowed...),
 		bufferSchema(p.Buffer, at.Child("buffer")),
+		webhookSchema(p.Webhook, at.Child("webhook")),
 		counterPolicySchema(p.Counter, at.Child("counter")),
 		listPolicySchema(p.List, at.Child("list")),
 		scheduleSchema(p.Schedule, at.Child("schedule")),
-		each(p.Chain, at.Child("chain"), chainEntrySchema),
+		chainSchema(p, at.Child("chain")),
 	)
+}
+
+// chainSchema checks the entries of a Chain, and that it has any. Upstream
+// admits a Chain of nothing, which the autoscaler can never apply.
+func chainSchema(p autoscalingv1.FleetAutoscalerPolicy, at *field.Path) field.ErrorList {
+	if p.Type == autoscalingv1.ChainPolicyType && len(p.Chain) == 0 {
+		return field.ErrorList{field.Required(at, "a Chain needs at least one entry")}
+	}
+	return each(p.Chain, at, chainEntrySchema)
 }
 
 func bufferSchema(b *autoscalingv1.BufferPolicy, at *field.Path) field.ErrorList {
@@ -266,11 +280,37 @@ func capacitySchema(key string, minCapacity, maxCapacity int64, at *field.Path) 
 	)
 }
 
+// webhookSchema refuses a webhook the autoscaler could never call. This
+// one is not in the CRD schema. Upstream admits a webhook that is a
+// Kubernetes Service, of which there are none here, and any text at all
+// for a URL; the autoscaler would then fail each time it looks at its Fleet.
+func webhookSchema(w *autoscalingv1.URLConfiguration, at *field.Path) field.ErrorList {
+	switch {
+	case w == nil:
+		return nil
+	case w.Service != nil:
+		return field.ErrorList{field.Forbidden(at.Child("service"), "there are no Services in agones-lite: give the webhook's url")}
+	case w.URL != nil && !isWebAddress(*w.URL):
+		return field.ErrorList{field.Invalid(at.Child("url"), *w.URL, "must be an http or https URL")}
+	}
+	return nil
+}
+
+func isWebAddress(text string) bool {
+	address, err := url.ParseRequestURI(text)
+	return err == nil && (address.Scheme == "http" || address.Scheme == "https") && address.Host != ""
+}
+
+// scheduleSchema checks the policy inside a Schedule. Upstream's Validate
+// does not look inside one at all, so its checks of a policy are run here.
 func scheduleSchema(s *autoscalingv1.SchedulePolicy, at *field.Path) field.ErrorList {
 	if s == nil {
 		return nil
 	}
-	return policySchema(s.Policy, at.Child("policy"), plainPolicies)
+	return slices.Concat(
+		policySchema(s.Policy, at.Child("policy"), plainPolicies),
+		s.Policy.ValidatePolicy(at.Child("policy")),
+	)
 }
 
 func chainEntrySchema(entry autoscalingv1.ChainEntry, at *field.Path) field.ErrorList {
