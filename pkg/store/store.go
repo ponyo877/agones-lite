@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -62,11 +63,15 @@ type Store struct {
 
 	// The file, and how far it is behind memory: see save.go.
 	file    file
-	unsaved []change   // made, but not in the file yet; oldest first
-	saved   int64      // the revision the file holds
-	settled *sync.Cond // told whenever saved moves
-	behind  bool       // Run is saving: a write does not wait for the file
+	unsaved []change     // made, but not in the file yet; oldest first
+	saved   atomic.Int64 // the revision the file holds
+	behind  atomic.Bool  // Run is saving: a write does not wait for the file
 	wake    chan struct{}
+	// Those who wait in Sync wait on a lock of their own. On the store's,
+	// a hundred answers waiting for the file would all wake at once after
+	// every save and stand in the way of the next write.
+	waiting sync.Mutex
+	settled *sync.Cond // told whenever saved moves or behind changes
 
 	// Clock tells the time, and Suffix makes the random end of a generated
 	// name. They are the machine's, unless a test puts its own in their
@@ -92,12 +97,12 @@ func Open(path string, kinds map[Kind]func() Object) (*Store, error) {
 		Clock:     time.Now,
 		Suffix:    func() string { return rand.String(randomLength) },
 	}
-	s.settled = sync.NewCond(&s.mu)
+	s.settled = sync.NewCond(&s.waiting)
 	if err := s.load(); err != nil {
 		_ = f.db.Close()
 		return nil, err
 	}
-	s.saved = s.revision
+	s.saved.Store(s.revision)
 	return s, nil
 }
 

@@ -59,15 +59,28 @@ func (s *Store) Run(ctx context.Context) {
 // Sync returns when the file has every change made before the call.
 func (s *Store) Sync() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	upTo := s.revision
-	for s.saved < upTo && s.behind {
+	s.mu.Unlock()
+
+	s.waiting.Lock()
+	for s.saved.Load() < upTo && s.behind.Load() {
 		s.settled.Wait()
 	}
-	if s.saved < upTo {
-		return s.save() // Run has ended and left it to us
+	s.waiting.Unlock()
+	if s.saved.Load() >= upTo {
+		return nil
 	}
-	return nil
+	// Run has ended and left it to us.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.save()
+}
+
+// tellWaiting wakes those who wait in Sync, to look again.
+func (s *Store) tellWaiting() {
+	s.waiting.Lock()
+	s.settled.Broadcast()
+	s.waiting.Unlock()
 }
 
 // record makes a change in memory and sends it on its way to the file.
@@ -80,7 +93,7 @@ func (s *Store) record(c change) error {
 	s.hold(c.event.Key, c.after())
 	s.revision = c.revision
 	s.unsaved = append(s.unsaved, c)
-	if s.behind {
+	if s.behind.Load() {
 		s.nudge()
 		return nil
 	}
@@ -130,9 +143,9 @@ func (s *Store) settle(n int) {
 	for _, c := range s.unsaved[:n] {
 		s.notify(c)
 	}
-	s.saved = s.unsaved[n-1].revision
+	s.saved.Store(s.unsaved[n-1].revision)
 	s.unsaved = slices.Clone(s.unsaved[n:]) // a copy, to let go of the saved ones
-	s.settled.Broadcast()
+	s.tellWaiting()
 }
 
 // setBehind says whether Run is saving. When it stops, what it has left is
@@ -140,14 +153,14 @@ func (s *Store) settle(n int) {
 func (s *Store) setBehind(behind bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.behind = behind
+	s.behind.Store(behind)
 	if behind {
 		return
 	}
 	if err := s.save(); err != nil {
 		slog.Error("changes are left unsaved", "changes", len(s.unsaved), "error", err)
 	}
-	s.settled.Broadcast()
+	s.tellWaiting()
 }
 
 // nudge tells Run there is something to save.

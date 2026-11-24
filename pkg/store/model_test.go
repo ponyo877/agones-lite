@@ -124,7 +124,7 @@ func scratch(t *testing.T) string {
 func (m *storeModel) open(t *rapid.T) {
 	s, err := Open(m.path, modelKinds)
 	require.NoError(t, err)
-	s.behind = m.behind
+	s.behind.Store(m.behind)
 	m.store = s
 }
 
@@ -326,7 +326,7 @@ func (m *storeModel) Reopen(t *rapid.T) {
 // Check holds the store against the model. rapid calls it after every step.
 func (m *storeModel) Check(t *rapid.T) {
 	m.store.mu.Lock()
-	revision, saved := m.store.revision, m.store.saved
+	revision, saved := m.store.revision, m.store.saved.Load()
 	m.store.mu.Unlock()
 	require.Equal(t, m.revision, revision, "the revision counts the changes, and nothing else")
 	require.Equal(t, m.inFileRevision, saved, "the revision the file holds")
