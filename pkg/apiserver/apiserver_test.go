@@ -2,6 +2,8 @@ package apiserver
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"sigs.k8s.io/yaml"
 
+	"github.com/ponyo877/agones-lite/pkg/agent"
 	"github.com/ponyo877/agones-lite/pkg/agones"
 	"github.com/ponyo877/agones-lite/pkg/store"
 )
@@ -256,4 +259,13 @@ func TestAcceptsTheUpstreamFleetAutoscalerSamples(t *testing.T) {
 			assert.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 		})
 	}
+}
+
+// A node that cannot hand over a log yet, or any more, is not a fault of
+// the server, and must not be answered as one.
+func TestALogThatIsNotThereToReadIsAConflictAndNotAServerError(t *testing.T) {
+	notConnected := fmt.Errorf("gameserver default/gs: its node %q is not connected: %w", "node-1", agent.ErrNoLog)
+
+	assert.Equal(t, http.StatusConflict, statusOf(notConnected))
+	assert.Equal(t, http.StatusInternalServerError, statusOf(errors.New("docker: the daemon went away")))
 }

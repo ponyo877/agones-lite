@@ -319,7 +319,7 @@ func statusOf(err error) int {
 	switch {
 	case errors.As(err, &bad):
 		return http.StatusUnprocessableEntity
-	case errors.As(err, &early):
+	case errors.As(err, &early), errors.Is(err, agent.ErrNoLog):
 		return http.StatusConflict
 	case errors.Is(err, store.ErrNotFound):
 		return http.StatusNotFound

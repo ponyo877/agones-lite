@@ -426,6 +426,24 @@ func TestCountersAndListsGetTheSchemasDefaultCapacity(t *testing.T) {
 	assert.Equal(t, int64(1000), getFleet(t, h).Spec.Template.Spec.Lists["players"].Capacity)
 }
 
+// The schema's default. Left empty, the order made the removal order of a
+// scale-down depend on the order its GameServers happened to be listed in.
+func TestAPriorityWithoutAnOrderIsAscending(t *testing.T) {
+	h := newServer(t)
+	fleet := replace(t, fleetManifest, "  replicas: 2\n", `  replicas: 2
+  priorities:
+    - {type: Counter, key: rooms}
+    - {type: List, key: players, order: Descending}
+`)
+
+	require.Equal(t, http.StatusCreated, call(t, h, http.MethodPut, fleetPath, fleet).Code)
+
+	assert.Equal(t, []agonesv1.Priority{
+		{Type: "Counter", Key: "rooms", Order: "Ascending"},
+		{Type: "List", Key: "players", Order: "Descending"},
+	}, getFleet(t, h).Spec.Priorities)
+}
+
 // Status is the controllers' to write. A client that could set it would
 // have a GameServer that is Ready, and so allocatable, with nothing running.
 func TestAStatusSentByTheClientIsIgnored(t *testing.T) {

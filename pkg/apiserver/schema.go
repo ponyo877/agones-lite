@@ -43,6 +43,14 @@ func fillGameServer(gs *agonesv1.GameServer, written map[string]any) {
 
 func fillFleet(fleet *agonesv1.Fleet, written map[string]any) {
 	fillCapacities(&fleet.Spec.Template.Spec, dig(written, "spec", "template", "spec"))
+	for i := range fleet.Spec.Priorities {
+		if fleet.Spec.Priorities[i].Order == "" {
+			// The schema's default. Without an order, upstream's
+			// comparison is not an order at all: see ascendingByDefault
+			// in pkg/gameserversets.
+			fleet.Spec.Priorities[i].Order = agonesv1.GameServerPriorityAscending
+		}
+	}
 }
 
 // fillCapacities gives every Counter and List whose capacity the manifest

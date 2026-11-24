@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -22,6 +23,11 @@ type LogRequest struct {
 	Tail int
 }
 
+// ErrNoLog says that there is no log to read right now: the containers are
+// not there yet, or not any more, or their node cannot be reached. That is
+// nobody's fault, and asking again later may find one.
+var ErrNoLog = errors.New("there is no log to read")
+
 // Logs returns the output of one container of a GameServer on this node.
 func (a *Agent) Logs(ctx context.Context, req LogRequest) (io.ReadCloser, error) {
 	containers, err := a.docker.List(ctx, podspec.LabelNode+"="+a.cfg.NodeName)
@@ -30,7 +36,7 @@ func (a *Agent) Logs(ctx context.Context, req LogRequest) (io.ReadCloser, error)
 	}
 	target, ok := logTarget(containers, req)
 	if !ok {
-		return nil, fmt.Errorf("gameserver %s/%s has no such container on node %s", req.Namespace, req.Name, a.cfg.NodeName)
+		return nil, fmt.Errorf("gameserver %s/%s has no such container on node %s: %w", req.Namespace, req.Name, a.cfg.NodeName, ErrNoLog)
 	}
 	return a.docker.Logs(ctx, target.ID, req.Follow, req.Tail)
 }

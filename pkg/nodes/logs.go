@@ -50,7 +50,7 @@ func (l *Local) Logs(ctx context.Context, req agent.LogRequest) (io.ReadCloser, 
 	reader, connected := l.readers[gs.Status.NodeName]
 	l.mu.Unlock()
 	if !connected {
-		return nil, fmt.Errorf("gameserver %s/%s: its node %q is not connected", req.Namespace, req.Name, gs.Status.NodeName)
+		return nil, fmt.Errorf("gameserver %s/%s: its node %q is not connected: %w", req.Namespace, req.Name, gs.Status.NodeName, agent.ErrNoLog)
 	}
 	return reader.Logs(ctx, req)
 }
