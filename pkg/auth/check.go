@@ -100,7 +100,7 @@ func guardStream(allowed func(context.Context) error) grpc.StreamServerIntercept
 		}
 		ctx, end := context.WithCancelCause(ss.Context())
 		defer end(nil)
-		go endWhenRefused(ctx, end, func() error { return allowed(ss.Context()) })
+		go endWhenRefused(ctx, end, func() error { return allowed(ctx) })
 		err := handler(srv, &guarded{ServerStream: ss, ctx: ctx})
 		if refused := context.Cause(ctx); status.Code(refused) == codes.Unauthenticated {
 			return refused

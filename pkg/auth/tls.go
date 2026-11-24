@@ -112,27 +112,25 @@ func TrustFile(caFile string) (*tls.Config, error) {
 func TrustPinned(fingerprint string) *tls.Config {
 	return &tls.Config{
 		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: true, // replaced by the check below
-		VerifyPeerCertificate: func(chain [][]byte, _ [][]*x509.Certificate) error {
-			return verifyPinned(chain, fingerprint)
+		InsecureSkipVerify: true, //nolint:gosec // the usual check is replaced by the one below
+		// VerifyConnection and not VerifyPeerCertificate: this one is asked
+		// about every connection, one that resumes an earlier session too.
+		VerifyConnection: func(state tls.ConnectionState) error {
+			return verifyPinned(state.PeerCertificates, fingerprint)
 		},
 	}
 }
 
-func verifyPinned(chain [][]byte, fingerprint string) error {
+// verifyPinned accepts a chain whose first certificate is signed by a CA
+// in the chain that has the fingerprint.
+func verifyPinned(chain []*x509.Certificate, fingerprint string) error {
 	if len(chain) == 0 {
 		return errors.New("the server presented no certificate")
 	}
-	leaf, err := x509.ParseCertificate(chain[0])
-	if err != nil {
-		return err
-	}
-	for _, raw := range chain[1:] {
-		ca, err := x509.ParseCertificate(raw)
-		if err != nil || Fingerprint(ca) != fingerprint {
-			continue
+	for _, ca := range chain[1:] {
+		if Fingerprint(ca) == fingerprint {
+			return chain[0].CheckSignatureFrom(ca)
 		}
-		return leaf.CheckSignatureFrom(ca)
 	}
 	return errors.New("the server's certificate authority does not match the join token")
 }
