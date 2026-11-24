@@ -97,36 +97,30 @@ job:
 ## How it works
 
 ```mermaid
-flowchart TB
+flowchart LR
   players(["Players"])
-  cli(["CLI"])
   mm(["Matchmaker"])
+  cli(["CLI"])
 
   subgraph node["Each machine"]
-    subgraph gs["One game server"]
-      game["Game container"]
-      sidecar["SDK sidecar"]
-    end
-    agent["Agent"]
-    docker["Docker"]
+    gs["Game server<br/>game container and SDK sidecar"]
+    agent["Agent<br/>drives Docker"]
   end
 
   subgraph cp["Control plane"]
     nodeapi["Node API"]
-    api["Management API"]
     alloc["Allocation API"]
+    api["Management API"]
     ctrl["Controllers"]
     store[("SQLite")]
   end
 
-  players -- game traffic --> game
-  game -- SDK on localhost --> sidecar
-  sidecar -- reports --> agent
-  agent -- creates and watches containers --> docker
-  agent -- connects and watches --> nodeapi
-  cli -- apply, get, logs --> api
+  players -- game traffic --> gs
+  gs -- SDK --> agent
+  agent -- watches --> nodeapi
   mm -- allocate --> alloc
-  nodeapi & api & alloc & ctrl --> store
+  cli -- apply, get, logs --> api
+  nodeapi & alloc & api & ctrl --> store
 ```
 
 - The **control plane** keeps the state and decides what should run. It
