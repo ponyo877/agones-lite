@@ -174,16 +174,15 @@ func (w world) resize(replicas int) {
 	w.call(http.MethodPut, "/v1/namespaces/default/fleets/simple", manifest)
 }
 
-// count is how many game servers are in a state. It looks without copying:
-// with ten thousand of them, a copy for every look would be measured too.
+// count is how many game servers are in a state. The store keeps count:
+// with ten thousand of them, a look at each for every time this is asked
+// would be measured too.
 func (w world) count(state agonesv1.GameServerState) int {
-	n := 0
-	for _, gs := range store.GameServersOf(w.store).View("default") {
-		if gs.Status.State == state {
-			n++
-		}
+	byState := store.By[*agonesv1.GameServer, agonesv1.GameServerState]{
+		Name: "state",
+		Of:   func(gs *agonesv1.GameServer) agonesv1.GameServerState { return gs.Status.State },
 	}
-	return n
+	return store.GroupSizes(store.GameServersOf(w.store), byState)[state]
 }
 
 // waitFor returns when that many game servers are in a state.
