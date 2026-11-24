@@ -97,40 +97,36 @@ job:
 ## How it works
 
 ```mermaid
-flowchart LR
-  cli[CLI]
-  mm[Matchmaker]
-  player[Players]
+flowchart TB
+  players(["Players"])
+  cli(["CLI"])
+  mm(["Matchmaker"])
 
-  subgraph cp[Control plane]
-    api[Management API]
-    alloc[Allocation API]
-    ctrl[Controllers]
-    store[(SQLite)]
-    nodeapi[Node API]
-    api --> store
-    alloc --> store
-    ctrl --> store
-    nodeapi --> store
-  end
-
-  subgraph node[Each machine]
-    agent[Agent]
-    docker[Docker]
-    subgraph gs[One game server]
-      sidecar[SDK sidecar]
-      game[Game container]
+  subgraph node["Each machine"]
+    subgraph gs["One game server"]
+      game["Game container"]
+      sidecar["SDK sidecar"]
     end
-    agent --> docker
-    docker --> gs
-    game -- SDK on localhost --> sidecar
-    sidecar --> agent
+    agent["Agent"]
+    docker["Docker"]
   end
 
-  cli --> api
-  mm --> alloc
-  player -- game traffic --> game
+  subgraph cp["Control plane"]
+    nodeapi["Node API"]
+    api["Management API"]
+    alloc["Allocation API"]
+    ctrl["Controllers"]
+    store[("SQLite")]
+  end
+
+  players -- game traffic --> game
+  game -- SDK on localhost --> sidecar
+  sidecar -- reports --> agent
+  agent -- creates and watches containers --> docker
   agent -- connects and watches --> nodeapi
+  cli -- apply, get, logs --> api
+  mm -- allocate --> alloc
+  nodeapi & api & alloc & ctrl --> store
 ```
 
 - The **control plane** keeps the state and decides what should run. It
@@ -244,7 +240,7 @@ agones-lite is designed for 10 machines, 1,000 game servers and 50
 allocations a second, and is held to that in CI. Measured on **one arm64
 core** with a disk that takes 1.5 ms to sync:
 
-| | |
+| What was measured | Result |
 |---|---|
 | A Fleet of 1,000 game servers, until all are Ready | about 1 second |
 | A Fleet of 10,000 game servers, until all are Ready | about 10 seconds |
