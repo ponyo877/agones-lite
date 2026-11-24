@@ -177,11 +177,9 @@ type openStream struct {
 func (s openStream) Context() context.Context { return s.ctx }
 
 func TestAnOpenStreamEndsWhenItsTokenStopsBeingValid(t *testing.T) {
-	recheckEvery = 10 * time.Millisecond
-	t.Cleanup(func() { recheckEvery = 5 * time.Second })
 	check := &flip{}
 	check.allow.Store(true)
-	guard := guardStream(func(ctx context.Context) error { return allowedGRPC(ctx, check, Node) })
+	guard := guardStream(func(ctx context.Context) error { return allowedGRPC(ctx, check, Node) }, 10*time.Millisecond)
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer old-token"))
 	started := make(chan struct{})
 	// The handler is a stream that stays open, as an agent's Watch does.
@@ -212,7 +210,7 @@ func TestAnOpenStreamEndsWhenItsTokenStopsBeingValid(t *testing.T) {
 }
 
 func TestAStreamWithoutAValidTokenNeverStarts(t *testing.T) {
-	guard := guardStream(func(ctx context.Context) error { return allowedGRPC(ctx, &flip{}, Node) })
+	guard := guardStream(func(ctx context.Context) error { return allowedGRPC(ctx, &flip{}, Node) }, recheckEvery)
 	called := false
 	handler := func(any, grpc.ServerStream) error { called = true; return nil }
 
@@ -227,8 +225,6 @@ func TestAStreamWithoutAValidTokenNeverStarts(t *testing.T) {
 // "token rotate admin" nobody but the holder of the new one may be told
 // anything more.
 func TestAnAnswerThatGoesOnIsCutOffWhenItsTokenStopsBeingValid(t *testing.T) {
-	recheckEvery = 10 * time.Millisecond
-	t.Cleanup(func() { recheckEvery = 5 * time.Second })
 	check := &flip{}
 	check.allow.Store(true)
 	// The handler is a watch: it says something, and then waits for more to say.
@@ -237,7 +233,7 @@ func TestAnAnswerThatGoesOnIsCutOffWhenItsTokenStopsBeingValid(t *testing.T) {
 		_ = http.NewResponseController(w).Flush()
 		<-r.Context().Done()
 	})
-	server := httptest.NewServer(RequireHTTP(check, Admin, watch))
+	server := httptest.NewServer(requireHTTP(check, Admin, watch, 10*time.Millisecond))
 	defer server.Close()
 	resp, err := http.Get(server.URL)
 	require.NoError(t, err)
@@ -272,15 +268,13 @@ func TestAnAnswerThatGoesOnIsCutOffWhenItsTokenStopsBeingValid(t *testing.T) {
 
 // An answer that ends by itself is not disturbed by the watching.
 func TestAnAnswerThatEndsIsLeftWhole(t *testing.T) {
-	recheckEvery = time.Millisecond
-	t.Cleanup(func() { recheckEvery = 5 * time.Second })
 	check := &flip{}
 	check.allow.Store(true)
 	slow := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(20 * time.Millisecond) // long enough to be looked at again
 		_, _ = fmt.Fprint(w, "done")
 	})
-	server := httptest.NewServer(RequireHTTP(check, Admin, slow))
+	server := httptest.NewServer(requireHTTP(check, Admin, slow, time.Millisecond))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL)
