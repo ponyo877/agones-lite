@@ -46,6 +46,11 @@ type lot struct {
 	residents   int
 	cpu, memory resource.Quantity // what the residents ask for, together
 	ports       map[int32]bool    // the host ports they have
+	// free is the range host ports are still handed out from. It begins as
+	// the node's range and loses its low end as ports are given: they are
+	// given lowest first, so what lies below the last one given is taken.
+	// Without it, every placement would walk past all the ports before it.
+	free litev1.PortRange
 }
 
 // RoomOn counts what servers leave free on nodes.
@@ -53,7 +58,7 @@ func RoomOn(nodes []*litev1.Node, servers []*agonesv1.GameServer) *Room {
 	room := &Room{}
 	byName := map[string]*lot{}
 	for _, node := range nodes {
-		l := &lot{node: node, ports: map[int32]bool{}}
+		l := &lot{node: node, ports: map[int32]bool{}, free: node.Status.PortRange}
 		byName[node.Name] = l
 		room.lots = append(room.lots, l)
 	}
@@ -74,11 +79,12 @@ func (r *Room) Place(gs *agonesv1.GameServer) (*agonesv1.GameServer, bool) {
 			continue
 		}
 		placed := gs.DeepCopy()
-		if !portallocator.Allocate(placed, l.node.Status.PortRange, l.ports) {
+		if !portallocator.Allocate(placed, l.free, l.ports) {
 			continue
 		}
 		placed.Status.NodeName = l.node.Name
 		l.take(placed)
+		l.free.Min = max(l.free.Min, portallocator.Highest(placed)+1)
 		return placed, true
 	}
 	return nil, false

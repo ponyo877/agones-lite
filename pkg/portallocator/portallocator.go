@@ -54,6 +54,18 @@ func Allocate(gs *agonesv1.GameServer, r litev1.PortRange, used map[int32]bool) 
 	return true
 }
 
+// Highest returns the highest host port Allocate has given gs, or 0 when
+// it has none that Allocate chooses.
+func Highest(gs *agonesv1.GameServer) int32 {
+	var highest int32
+	for _, p := range gs.Spec.Ports {
+		if automatic(p) {
+			highest = max(highest, p.HostPort)
+		}
+	}
+	return highest
+}
+
 // ownStatic returns the Static host ports of gs itself. They may lie in the
 // node's range, and are then as taken as a neighbour's.
 func ownStatic(gs *agonesv1.GameServer) []int32 {
