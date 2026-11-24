@@ -69,7 +69,7 @@ func NewServer(s *store.Store, local *Local) *Server {
 // Watch calls: the end of the last one is how we learn that the agent is
 // gone. Were a Register to make the node Ready with no call open, nothing
 // would ever make it Disconnected again.
-func (s *Server) Register(_ context.Context, req *nodev1.RegisterRequest) (*nodev1.RegisterResponse, error) {
+func (s *Server) Register(ctx context.Context, req *nodev1.RegisterRequest) (*nodev1.RegisterResponse, error) {
 	node := &litev1.Node{}
 	if err := json.Unmarshal(req.GetNode(), node); err != nil || node.Name == "" {
 		return nil, status.Error(codes.InvalidArgument, "the request must carry a Node with a name")
@@ -77,7 +77,7 @@ func (s *Server) Register(_ context.Context, req *nodev1.RegisterRequest) (*node
 	s.mu.Lock()
 	defer s.mu.Unlock() // held to the end, so no Watch call opens or ends meanwhile
 	node.Status.Phase = s.phase(node.Name)
-	if err := s.local.Register(node); err != nil {
+	if err := s.local.Register(ctx, node); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return &nodev1.RegisterResponse{}, nil
@@ -179,12 +179,12 @@ func (s *Server) phase(node string) litev1.NodePhase {
 }
 
 // Report implements the Report call of the protocol.
-func (s *Server) Report(_ context.Context, req *nodev1.ReportRequest) (*nodev1.ReportResponse, error) {
+func (s *Server) Report(ctx context.Context, req *nodev1.ReportRequest) (*nodev1.ReportResponse, error) {
 	event := gameservers.Event(req.GetEvent())
 	if !slices.Contains(reportable, event) {
 		return nil, status.Errorf(codes.InvalidArgument, "agents cannot report %q", req.GetEvent())
 	}
-	err := s.local.Report(gameservers.Report{
+	err := s.local.Report(ctx, gameservers.Report{
 		Namespace: req.GetNamespace(),
 		Name:      req.GetName(),
 		UID:       types.UID(req.GetUid()),
@@ -199,8 +199,8 @@ func (s *Server) Report(_ context.Context, req *nodev1.ReportRequest) (*nodev1.R
 }
 
 // UpdateCounts implements the UpdateCounts call of the protocol.
-func (s *Server) UpdateCounts(_ context.Context, req *nodev1.UpdateCountsRequest) (*nodev1.UpdateCountsResponse, error) {
-	gs, err := s.local.UpdateCounts(req.GetNamespace(), req.GetName(), req.GetChangeId(), req.GetCounters(), req.GetLists())
+func (s *Server) UpdateCounts(ctx context.Context, req *nodev1.UpdateCountsRequest) (*nodev1.UpdateCountsResponse, error) {
+	gs, err := s.local.UpdateCounts(ctx, req.GetNamespace(), req.GetName(), req.GetChangeId(), req.GetCounters(), req.GetLists())
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -215,8 +215,8 @@ func (s *Server) UpdateCounts(_ context.Context, req *nodev1.UpdateCountsRequest
 }
 
 // SetMetadata implements the SetMetadata call of the protocol.
-func (s *Server) SetMetadata(_ context.Context, req *nodev1.SetMetadataRequest) (*nodev1.SetMetadataResponse, error) {
-	if err := s.local.SetMetadata(req.GetNamespace(), req.GetName(), req.GetLabels(), req.GetAnnotations()); err != nil {
+func (s *Server) SetMetadata(ctx context.Context, req *nodev1.SetMetadataRequest) (*nodev1.SetMetadataResponse, error) {
+	if err := s.local.SetMetadata(ctx, req.GetNamespace(), req.GetName(), req.GetLabels(), req.GetAnnotations()); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return &nodev1.SetMetadataResponse{}, nil

@@ -124,7 +124,7 @@ func (n *modelNode) callSDK(t *rapid.T) {
 		gameservers.SDKReady, gameservers.SDKAllocate, gameservers.SDKReserve, gameservers.SDKShutdown,
 	}).Draw(t, "event")
 	// The sidecar speaks for the GameServer its containers were made for.
-	_ = n.cp.Report(gameservers.Report{Namespace: "default", Name: name, UID: n.docker.madeFor(name), Event: event})
+	_ = n.cp.Report(context.Background(), gameservers.Report{Namespace: "default", Name: name, UID: n.docker.madeFor(name), Event: event})
 }
 
 func (n *modelNode) exit(t *rapid.T) {
@@ -346,7 +346,7 @@ func (p *placements) standing(c docker.Container) bool {
 	return gs.Status.State != agonesv1.GameServerStateCreating && !gameservers.Final(gs.Status.State)
 }
 
-func (p *placements) Register(*litev1.Node) error { return nil }
+func (p *placements) Register(context.Context, *litev1.Node) error { return nil }
 
 func (p *placements) Assigned(string) ([]*agonesv1.GameServer, bool) {
 	p.mu.Lock()
@@ -359,15 +359,15 @@ func (p *placements) Assigned(string) ([]*agonesv1.GameServer, bool) {
 
 func (p *placements) Changes() (<-chan struct{}, func()) { return nil, func() {} }
 
-func (p *placements) SetMetadata(string, string, map[string]string, map[string]string) error {
+func (p *placements) SetMetadata(context.Context, string, string, map[string]string, map[string]string) error {
 	return nil
 }
 
-func (p *placements) UpdateCounts(string, string, string, []*sidecarv1.CounterUpdate, []*sidecarv1.ListUpdate) (*agonesv1.GameServer, error) {
+func (p *placements) UpdateCounts(context.Context, string, string, string, []*sidecarv1.CounterUpdate, []*sidecarv1.ListUpdate) (*agonesv1.GameServer, error) {
 	return nil, nil
 }
 
-func (p *placements) Report(r gameservers.Report) error {
+func (p *placements) Report(_ context.Context, r gameservers.Report) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.lost == (report{r.Name, r.Event}) {

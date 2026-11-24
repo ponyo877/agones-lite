@@ -29,7 +29,7 @@ func NewSimulator(node *litev1.Node, cp ControlPlane) *Simulator {
 
 // Run plays the node until ctx is done.
 func (s *Simulator) Run(ctx context.Context) error {
-	if err := s.cp.Register(s.Node); err != nil {
+	if err := s.cp.Register(ctx, s.Node); err != nil {
 		return err
 	}
 	changes, cancel := s.cp.Changes()
@@ -37,7 +37,7 @@ func (s *Simulator) Run(ctx context.Context) error {
 	tick := time.NewTicker(reconcilePeriod)
 	defer tick.Stop()
 	for {
-		s.step()
+		s.step(ctx)
 		select {
 		case <-ctx.Done():
 			return nil
@@ -51,7 +51,7 @@ func (s *Simulator) Run(ctx context.Context) error {
 // report next. Like a real agent, it works on its GameServers side by side:
 // a report is answered when the control plane has saved it, and the reports
 // of a hundred GameServers are saved in one go when they come together.
-func (s *Simulator) step() {
+func (s *Simulator) step(ctx context.Context) {
 	placed, current := s.cp.Assigned(s.Node.Name)
 	if !current {
 		return
@@ -59,15 +59,15 @@ func (s *Simulator) step() {
 	var busy sync.WaitGroup
 	for _, gs := range placed {
 		if events := next(gs); len(events) > 0 {
-			busy.Go(func() { s.report(gs, events) })
+			busy.Go(func() { s.report(ctx, gs, events) })
 		}
 	}
 	busy.Wait()
 }
 
-func (s *Simulator) report(gs *agonesv1.GameServer, events []gameservers.Event) {
+func (s *Simulator) report(ctx context.Context, gs *agonesv1.GameServer, events []gameservers.Event) {
 	for _, event := range events {
-		_ = s.cp.Report(gameservers.Report{Namespace: gs.Namespace, Name: gs.Name, Event: event})
+		_ = s.cp.Report(ctx, gameservers.Report{Namespace: gs.Namespace, Name: gs.Name, Event: event})
 	}
 }
 

@@ -1,6 +1,7 @@
 package apiserver
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 )
@@ -13,17 +14,21 @@ import (
 // change was made; neither must be taken back once a client has read it.
 // What follows the first byte needs no waiting: a watch sends changes, and
 // the store tells of a change only when it is saved.
-func answerWhenSaved(next http.Handler, saved func() error) http.Handler {
+//
+// The wait ends early when the client has gone: nobody is left to promise
+// anything to.
+func answerWhenSaved(next http.Handler, saved func(context.Context) error) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(&heldBack{ResponseWriter: w, saved: saved}, r)
+		next.ServeHTTP(&heldBack{ResponseWriter: w, request: r, saved: saved}, r)
 	})
 }
 
 // heldBack is a ResponseWriter that waits for the store before it begins.
 type heldBack struct {
 	http.ResponseWriter
-	saved func() error
-	begun bool
+	request *http.Request
+	saved   func(context.Context) error
+	begun   bool
 }
 
 func (w *heldBack) WriteHeader(status int) {
@@ -54,7 +59,7 @@ func (w *heldBack) begin() {
 		return
 	}
 	w.begun = true
-	if err := w.saved(); err != nil {
+	if err := w.saved(w.request.Context()); err != nil {
 		slog.Error("no answer: the store cannot save", "error", err)
 		panic(http.ErrAbortHandler)
 	}

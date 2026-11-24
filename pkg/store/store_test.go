@@ -2,12 +2,14 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
@@ -278,7 +280,7 @@ func TestSyncWaitsForTheFileWhileRunSavesBehind(t *testing.T) {
 		_, err := servers.Create(gameServer(fmt.Sprint("gs-", i)))
 		require.NoError(t, err)
 	}
-	require.NoError(t, servers.Sync())
+	require.NoError(t, servers.Sync(context.Background()))
 	require.NoError(t, s.Abandon())
 
 	assert.Len(t, GameServersOf(open(t, path)).List(""), 200)
@@ -461,4 +463,102 @@ func TestAWatcherThatLeftBeforeItWasToldIsLeftAlone(t *testing.T) {
 			assert.True(t, tellAll(w, saved, patience))
 		}
 	}
+}
+
+// running starts Run on s, in a bubble, and returns what stops it and waits
+// for it. It returns once Run has taken over the saving: a write made
+// before that would save itself.
+func running(s *Store) (stop func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var run sync.WaitGroup
+	run.Go(func() { s.Run(ctx) })
+	synctest.Wait()
+	return func() { cancel(); run.Wait() }
+}
+
+// stalled is a disk that takes nothing until it is released.
+func stalled() (disk func() error, release func()) {
+	gate := make(chan struct{})
+	return func() error { <-gate; return nil }, sync.OnceFunc(func() { close(gate) })
+}
+
+// The tests below run in a bubble of testing/synctest: time is the
+// bubble's own and moves only when everyone in it waits, so "after three
+// seconds" is exact, and takes none.
+
+func TestSyncGivesUpWhenItsCallerDoesAndTheChangeIsSavedAllTheSame(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "state.db")
+		s := open(t, path)
+		disk, release := stalled()
+		s.Disk = disk
+		stop := running(s)
+		_, err := GameServersOf(s).Create(gameServer("a"))
+		require.NoError(t, err)
+
+		impatient, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		asked := time.Now()
+		err = s.Sync(impatient)
+
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Equal(t, 100*time.Millisecond, time.Since(asked), "it waited for as long as its caller, and no longer")
+
+		release()
+		require.NoError(t, s.Sync(context.Background()))
+		stop()
+		require.NoError(t, s.Abandon())
+		assert.Len(t, GameServersOf(open(t, path)).List(""), 1)
+	})
+}
+
+func TestLagTellsSinceWhenTheOldestUnsavedChangeHasWaited(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := open(t, filepath.Join(t.TempDir(), "state.db"))
+		disk, release := stalled()
+		s.Disk = disk
+		stop := running(s)
+		defer stop()
+		servers := GameServersOf(s)
+		assert.Zero(t, s.Lag(), "the file has everything")
+
+		_, err := servers.Create(gameServer("first"))
+		require.NoError(t, err)
+		time.Sleep(2 * time.Second)
+		_, err = servers.Create(gameServer("second"))
+		require.NoError(t, err)
+		time.Sleep(time.Second)
+
+		assert.Equal(t, 3*time.Second, s.Lag(), "the first has waited longest")
+
+		release()
+		require.NoError(t, s.Sync(context.Background()))
+		assert.Zero(t, s.Lag())
+	})
+}
+
+func TestADiskThatFailsIsTriedAgainAndNothingIsPromisedMeanwhile(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "state.db")
+		s := open(t, path)
+		failures := 3
+		s.Disk = func() error {
+			if failures > 0 {
+				failures--
+				return errors.New("input/output error")
+			}
+			return nil
+		}
+		stop := running(s)
+		_, err := GameServersOf(s).Create(gameServer("a"))
+		require.NoError(t, err)
+
+		asked := time.Now()
+		require.NoError(t, s.Sync(context.Background()))
+
+		assert.Equal(t, 3*retryAfter, time.Since(asked), "Sync returned with the first save that worked")
+		stop()
+		require.NoError(t, s.Abandon())
+		assert.Len(t, GameServersOf(open(t, path)).List(""), 1)
+	})
 }

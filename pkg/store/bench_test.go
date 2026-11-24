@@ -47,7 +47,7 @@ func changeAndSync(b *testing.B, servers Typed[*agonesv1.GameServer], writers in
 	for range writers {
 		writing.Go(func() {
 			for i := int(next.Add(1)); i <= b.N; i = int(next.Add(1)) {
-				if err := errors.Join(relabel(servers, i%1000), servers.Sync()); err != nil {
+				if err := errors.Join(relabel(servers, i%1000), servers.Sync(context.Background())); err != nil {
 					b.Error(err)
 				}
 			}

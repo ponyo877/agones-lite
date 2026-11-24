@@ -196,9 +196,9 @@ func (s *sidecarServer) Tell(ctx context.Context, req *sidecarv1.TellRequest) (*
 		return nil, err
 	}
 	if req.GetEvent() == sidecarv1.Event_EVENT_UPDATE_COUNTS {
-		return s.updateCounts(key, req)
+		return s.updateCounts(ctx, key, req)
 	}
-	if err := s.pass(key, uid, req); err != nil {
+	if err := s.pass(ctx, key, uid, req); err != nil {
 		return nil, refusal(err)
 	}
 	return &sidecarv1.TellResponse{}, nil
@@ -217,8 +217,8 @@ func refusal(err error) error {
 // updateCounts hands changes to Counters and Lists on to the control plane
 // and answers with the GameServer as it is afterwards. The sidecar shows the
 // game server its own prediction until this answer arrives.
-func (s *sidecarServer) updateCounts(key Key, req *sidecarv1.TellRequest) (*sidecarv1.TellResponse, error) {
-	gs, err := s.cp.UpdateCounts(key.Namespace, key.Name, req.GetChangeId(), req.GetCounters(), req.GetLists())
+func (s *sidecarServer) updateCounts(ctx context.Context, key Key, req *sidecarv1.TellRequest) (*sidecarv1.TellResponse, error) {
+	gs, err := s.cp.UpdateCounts(ctx, key.Namespace, key.Name, req.GetChangeId(), req.GetCounters(), req.GetLists())
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -233,15 +233,15 @@ func (s *sidecarServer) updateCounts(key Key, req *sidecarv1.TellRequest) (*side
 }
 
 // pass hands the request on to the control plane.
-func (s *sidecarServer) pass(key Key, uid types.UID, req *sidecarv1.TellRequest) error {
+func (s *sidecarServer) pass(ctx context.Context, key Key, uid types.UID, req *sidecarv1.TellRequest) error {
 	if req.GetEvent() == sidecarv1.Event_EVENT_SET_METADATA {
-		return s.cp.SetMetadata(key.Namespace, key.Name, req.GetLabels(), req.GetAnnotations())
+		return s.cp.SetMetadata(ctx, key.Namespace, key.Name, req.GetLabels(), req.GetAnnotations())
 	}
 	event, ok := sdkEvents[req.GetEvent()]
 	if !ok {
 		return status.Errorf(codes.InvalidArgument, "unknown event %v", req.GetEvent())
 	}
-	return s.cp.Report(gameservers.Report{
+	return s.cp.Report(ctx, gameservers.Report{
 		Namespace: key.Namespace,
 		Name:      key.Name,
 		UID:       uid,

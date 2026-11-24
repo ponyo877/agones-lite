@@ -38,8 +38,10 @@ const (
 // is a handful of direct calls (pkg/nodes.Local); between machines it will
 // be gRPC.
 type ControlPlane interface {
-	// Register announces this node and what it can hold.
-	Register(node *litev1.Node) error
+	// Register announces this node and what it can hold. Like every call
+	// here that tells the control plane something, it returns once that is
+	// saved there, or when ctx is done.
+	Register(ctx context.Context, node *litev1.Node) error
 	// Assigned returns the GameServers placed on the node. current is false
 	// while the list is not known to be complete and up to date, for example
 	// before the first answer from a remote control plane has arrived.
@@ -47,13 +49,13 @@ type ControlPlane interface {
 	// Changes signals whenever an assigned GameServer may have changed.
 	Changes() (signal <-chan struct{}, cancel func())
 	// Report passes on something that happened to a GameServer.
-	Report(gameservers.Report) error
+	Report(ctx context.Context, r gameservers.Report) error
 	// SetMetadata adds labels and annotations set through the SDK.
-	SetMetadata(namespace, name string, labels, annotations map[string]string) error
+	SetMetadata(ctx context.Context, namespace, name string, labels, annotations map[string]string) error
 	// UpdateCounts changes Counters and Lists as a game server asked through
 	// the SDK. It returns the GameServer afterwards, or nil when it is gone.
 	// change names the change, so that one sent twice is made once.
-	UpdateCounts(namespace, name, change string, counters []*sidecarv1.CounterUpdate, lists []*sidecarv1.ListUpdate) (*agonesv1.GameServer, error)
+	UpdateCounts(ctx context.Context, namespace, name, change string, counters []*sidecarv1.CounterUpdate, lists []*sidecarv1.ListUpdate) (*agonesv1.GameServer, error)
 }
 
 // Docker is the part of the Docker client the agent uses.
@@ -133,7 +135,7 @@ func (a *Agent) announce(ctx context.Context) {
 	tick := time.NewTicker(heartbeatPeriod)
 	defer tick.Stop()
 	for {
-		if err := a.cp.Register(a.node()); err != nil {
+		if err := a.cp.Register(ctx, a.node()); err != nil {
 			slog.Warn("cannot register the node, will try again", "error", err)
 		}
 		select {
@@ -232,20 +234,20 @@ func (a *Agent) execute(ctx context.Context, action Action) error {
 		if err := a.takeDown(ctx, action.Containers, podspec.GracePeriod(action.GameServer), prefix); err != nil {
 			return err
 		}
-		return a.tell(action, gameservers.ContainersRemoved)
+		return a.tell(ctx, action, gameservers.ContainersRemoved)
 	case Discard:
 		prefix := podspec.Prefix(action.Key.Namespace, action.Key.Name)
 		return a.takeDown(ctx, action.Containers, discardGrace, prefix)
 	case Tell:
-		return a.tell(action, action.Event)
+		return a.tell(ctx, action, action.Event)
 	}
 	return nil
 }
 
 // tell reports event of the GameServer the action is about: of that very
 // one, should another have taken its name meanwhile.
-func (a *Agent) tell(about Action, event gameservers.Event) error {
-	if err := a.cp.Report(about.report(event, "")); err != nil {
+func (a *Agent) tell(ctx context.Context, about Action, event gameservers.Event) error {
+	if err := a.cp.Report(ctx, about.report(event, "")); err != nil {
 		return unreported{err}
 	}
 	return nil
@@ -275,7 +277,7 @@ func (a *Agent) orCreateFailed(ctx context.Context, about Action, err error) err
 	if err == nil || ctx.Err() != nil || errors.As(err, &unreported{}) || a.alreadyThere(ctx, about.Key, err) {
 		return err
 	}
-	return errors.Join(err, a.cp.Report(about.report(gameservers.CreateFailed, err.Error())))
+	return errors.Join(err, a.cp.Report(ctx, about.report(gameservers.CreateFailed, err.Error())))
 }
 
 // alreadyThere reports whether err is Docker refusing a name while the
@@ -307,7 +309,7 @@ func (a *Agent) bringUp(ctx context.Context, about Action) error {
 		return err
 	}
 	a.sidecars.allow(about.Key, ticket{token: token, uid: gs.UID}) // before the sidecar starts and dials in
-	if err := a.tell(about, gameservers.ContainersCreated); err != nil {
+	if err := a.tell(ctx, about, gameservers.ContainersCreated); err != nil {
 		return err
 	}
 	return a.startAll(ctx, about, ids)
@@ -334,7 +336,7 @@ func (a *Agent) startAll(ctx context.Context, about Action, ids []string) error 
 			return err
 		}
 	}
-	return a.tell(about, gameservers.ContainersRunning)
+	return a.tell(ctx, about, gameservers.ContainersRunning)
 }
 
 func ids(containers []docker.Container) []string {

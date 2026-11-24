@@ -11,8 +11,9 @@ import (
 type change struct {
 	event    Event // what watchers are told once it is saved
 	revision int64
-	was      Object // what the key held before, or nil: the way back
-	data     []byte // the object as the file stores it; nil for a deletion
+	was      Object    // what the key held before, or nil: the way back
+	data     []byte    // the object as the file stores it; nil for a deletion
+	made     time.Time // by the store's clock: since when it waits for the file
 }
 
 // after is what the key holds once the change is made, or nil.
@@ -44,7 +45,18 @@ const retryAfter = time.Second
 // only take back what nobody outside was told.
 //
 // A save that fails is tried again until it works. Until then nothing new
-// is promised to anyone: Sync waits.
+// is promised to anyone: Sync waits, for as long as its caller does, and
+// Lag tells how long the file has been behind.
+//
+// What a failed save leaves behind is not for the store to know. After a
+// sync of the disk has failed, Linux file systems mark the pages clean all
+// the same, and a second sync succeeds without writing them (Rebello et
+// al., "Can Applications Recover from fsync Failures?", USENIX ATC 2020).
+// A save here does not sync again what was written before: it writes its
+// whole transaction anew. The study found no way of going on that is safe
+// in every case, and for SQLite with a write-ahead log the mildest outcome
+// of those it tried: a change that was said to have failed may be there
+// after a restart. Here that was a change promised to nobody.
 func (s *Store) Run(ctx context.Context) {
 	s.setBehind(true)
 	for s.unsavedChanges(ctx) {
@@ -56,19 +68,29 @@ func (s *Store) Run(ctx context.Context) {
 	s.setBehind(false)
 }
 
-// Sync returns when the file has every change made before the call.
-func (s *Store) Sync() error {
+// Sync returns when the file has every change made before the call. It
+// returns early, with ctx's error, when ctx is done: whoever was to be
+// told has stopped listening. The changes are saved all the same, later.
+func (s *Store) Sync(ctx context.Context) error {
 	s.mu.Lock()
 	upTo := s.revision
 	s.mu.Unlock()
 
-	s.waiting.Lock()
-	for s.saved.Load() < upTo && s.behind.Load() {
-		s.settled.Wait()
-	}
-	s.waiting.Unlock()
-	if s.saved.Load() >= upTo {
-		return nil
+	for {
+		// The order matters: taken first, the channel is closed by any
+		// save that the look after it has not seen.
+		moved := s.nextMove()
+		if s.saved.Load() >= upTo {
+			return nil
+		}
+		if !s.behind.Load() {
+			break
+		}
+		select {
+		case <-moved:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	// Run has ended and left it to us.
 	s.mu.Lock()
@@ -76,11 +98,44 @@ func (s *Store) Sync() error {
 	return s.save()
 }
 
+// Lag tells for how long the file has been behind memory: since when the
+// oldest change that is not in it has waited. It is nothing when the file
+// has everything, and a few milliseconds while Run keeps up. More than
+// that says the disk is slow, stalled or refusing, and that Sync will be
+// long in returning: time to stop making promises that rest on it.
+func (s *Store) Lag() time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.unsaved) == 0 {
+		return 0
+	}
+	return s.Now().Sub(s.unsaved[0].made)
+}
+
+// nextMove returns a channel that is closed the next time saved moves or
+// behind changes.
+func (s *Store) nextMove() <-chan struct{} {
+	s.waiting.Lock()
+	defer s.waiting.Unlock()
+	return s.moved
+}
+
 // tellWaiting wakes those who wait in Sync, to look again.
 func (s *Store) tellWaiting() {
 	s.waiting.Lock()
-	s.settled.Broadcast()
+	close(s.moved)
+	s.moved = make(chan struct{})
 	s.waiting.Unlock()
+}
+
+// write puts changes into the file, if the disk is willing.
+func (s *Store) write(changes []change) error {
+	if s.Disk != nil {
+		if err := s.Disk(); err != nil {
+			return err
+		}
+	}
+	return s.file.write(changes)
 }
 
 // record makes a change in memory and sends it on its way to the file.
@@ -112,7 +167,7 @@ func (s *Store) save() error {
 	if len(s.unsaved) == 0 {
 		return nil
 	}
-	if err := s.file.write(s.unsaved); err != nil {
+	if err := s.write(s.unsaved); err != nil {
 		return err
 	}
 	saved := s.settle(len(s.unsaved))
@@ -133,7 +188,7 @@ func (s *Store) saveBehind() error {
 	if len(round) == 0 {
 		return nil
 	}
-	if err := s.file.write(round); err != nil {
+	if err := s.write(round); err != nil {
 		return err
 	}
 	s.mu.Lock()

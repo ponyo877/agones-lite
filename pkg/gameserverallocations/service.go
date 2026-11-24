@@ -73,7 +73,7 @@ func NewService(s *store.Store, recorder *events.Recorder) *Service {
 // Allocate implements the allocation call. The request is prepared in
 // upstream's order: defaults, validation, then the conversion of the
 // deprecated selector fields.
-func (s *Service) Allocate(_ context.Context, in *pb.AllocationRequest) (*pb.AllocationResponse, error) {
+func (s *Service) Allocate(ctx context.Context, in *pb.AllocationRequest) (*pb.AllocationResponse, error) {
 	gsa := converters.ConvertAllocationRequestToGSA(in)
 	gsa.ApplyDefaults()
 	if errs := gsa.Validate(); len(errs) > 0 {
@@ -88,7 +88,7 @@ func (s *Service) Allocate(_ context.Context, in *pb.AllocationRequest) (*pb.All
 	if err == nil {
 		// Players are sent on this answer, so it waits for the file. The
 		// next request does not: see allocate.
-		err = s.servers.Sync()
+		err = s.servers.Sync(ctx)
 	}
 	s.observe(gsa, result, s.now().Sub(started))
 	if err != nil {

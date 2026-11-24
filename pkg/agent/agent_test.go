@@ -112,18 +112,18 @@ type fakeControlPlane struct {
 	deaf    gameservers.Event // a report it does not take, as when the network fails
 }
 
-func (f *fakeControlPlane) Register(*litev1.Node) error                    { return nil }
+func (f *fakeControlPlane) Register(context.Context, *litev1.Node) error   { return nil }
 func (f *fakeControlPlane) Assigned(string) ([]*agonesv1.GameServer, bool) { return f.placed, true }
 func (f *fakeControlPlane) Changes() (<-chan struct{}, func())             { return nil, func() {} }
-func (f *fakeControlPlane) SetMetadata(string, string, map[string]string, map[string]string) error {
+func (f *fakeControlPlane) SetMetadata(context.Context, string, string, map[string]string, map[string]string) error {
 	return nil
 }
 
-func (f *fakeControlPlane) UpdateCounts(string, string, string, []*sidecarv1.CounterUpdate, []*sidecarv1.ListUpdate) (*agonesv1.GameServer, error) {
+func (f *fakeControlPlane) UpdateCounts(context.Context, string, string, string, []*sidecarv1.CounterUpdate, []*sidecarv1.ListUpdate) (*agonesv1.GameServer, error) {
 	return nil, nil
 }
 
-func (f *fakeControlPlane) Report(r gameservers.Report) error {
+func (f *fakeControlPlane) Report(_ context.Context, r gameservers.Report) error {
 	if r.Event == f.deaf {
 		return errors.New("deadline exceeded")
 	}
@@ -387,7 +387,7 @@ func TestTheSecondsOfAReserveArePassedOnAsADuration(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			a, cp := newAgent(&fakeDocker{})
 
-			err := a.sidecars.pass(key, "", &sidecarv1.TellRequest{Event: sidecarv1.Event_EVENT_RESERVE, ReserveSeconds: tc.seconds})
+			err := a.sidecars.pass(context.Background(), key, "", &sidecarv1.TellRequest{Event: sidecarv1.Event_EVENT_RESERVE, ReserveSeconds: tc.seconds})
 
 			require.NoError(t, err)
 			assert.Equal(t, []gameservers.Event{gameservers.SDKReserve}, cp.events)
@@ -400,7 +400,7 @@ func TestTheSecondsOfAReserveArePassedOnAsADuration(t *testing.T) {
 func TestAnEventTheAgentDoesNotKnowIsRefusedForGood(t *testing.T) {
 	a, cp := newAgent(&fakeDocker{})
 
-	err := refusal(a.sidecars.pass(key, "", &sidecarv1.TellRequest{Event: sidecarv1.Event(999)}))
+	err := refusal(a.sidecars.pass(context.Background(), key, "", &sidecarv1.TellRequest{Event: sidecarv1.Event(999)}))
 
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 	assert.Empty(t, cp.events)
@@ -410,7 +410,7 @@ func TestAnEventTheAgentDoesNotKnowIsRefusedForGood(t *testing.T) {
 func TestAReserveThatRanOutIsPassedOnAsThatAndNotAsReady(t *testing.T) {
 	a, cp := newAgent(&fakeDocker{})
 
-	err := a.sidecars.pass(key, "", &sidecarv1.TellRequest{Event: sidecarv1.Event_EVENT_RESERVE_EXPIRED})
+	err := a.sidecars.pass(context.Background(), key, "", &sidecarv1.TellRequest{Event: sidecarv1.Event_EVENT_RESERVE_EXPIRED})
 
 	require.NoError(t, err)
 	assert.Equal(t, []gameservers.Event{gameservers.ReserveExpired}, cp.events)

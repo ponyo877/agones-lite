@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -171,10 +172,15 @@ func (t Typed[T]) Now() time.Time {
 	return t.store.Now()
 }
 
-// Sync returns when the file has every change made so far, to any kind.
-// See Store.Run for who has to call it.
-func (t Typed[T]) Sync() error {
-	return t.store.Sync()
+// Sync returns when the file has every change made so far, to any kind,
+// or when ctx is done. See Store.Run for who has to call it.
+func (t Typed[T]) Sync(ctx context.Context) error {
+	return t.store.Sync(ctx)
+}
+
+// Lag tells for how long the file has been behind: see Store.Lag.
+func (t Typed[T]) Lag() time.Duration {
+	return t.store.Lag()
 }
 
 // Watch delivers every change to this kind until cancel is called.

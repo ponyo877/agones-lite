@@ -52,7 +52,7 @@ type Server struct {
 	events  *events.Recorder
 	nodeOps NodeOperator
 	logs    LogSource
-	saved   func() error // returns when the store's file has caught up
+	saved   func(context.Context) error // returns when the store's file has caught up
 }
 
 // LogSource reads a game server's log from the node it runs on.
