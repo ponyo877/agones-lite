@@ -24,9 +24,11 @@ const watchBuffer = 1024
 type watcher struct {
 	kind   Kind
 	events chan Event
+	after  int64 // the revision it began at: it is told what came later
 }
 
-// Watch delivers every change to kind until cancel is called.
+// Watch delivers every change to kind made from now on, until cancel is
+// called. A change is delivered once the file has it: see Run.
 //
 // Writers never wait for a watcher. One that falls watchBuffer changes
 // behind is closed instead: it can still read what it was sent, and then
@@ -50,7 +52,7 @@ func (s *Store) ListAndWatch(kind Kind, namespace string) (objects []Object, eve
 
 // subscribe is called with the lock held.
 func (s *Store) subscribe(kind Kind) (events <-chan Event, cancel func()) {
-	w := &watcher{kind: kind, events: make(chan Event, watchBuffer)}
+	w := &watcher{kind: kind, events: make(chan Event, watchBuffer), after: s.revision}
 	s.watchers[w] = struct{}{}
 	return w.events, func() {
 		s.mu.Lock()
@@ -67,15 +69,15 @@ func (s *Store) drop(w *watcher) {
 	}
 }
 
-// notify is called with the lock held.
-func (s *Store) notify(e Event) {
+// notify tells the watchers of a change. Called with the lock held.
+func (s *Store) notify(c change) {
 	for w := range s.watchers {
-		if w.kind != e.Key.Kind {
+		if w.kind != c.event.Key.Kind || c.revision <= w.after {
 			continue
 		}
 		// Like View, an event carries the stored object itself: read only.
 		select {
-		case w.events <- e:
+		case w.events <- c.event:
 		default:
 			s.drop(w) // too far behind: see Watch
 		}

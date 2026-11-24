@@ -129,6 +129,8 @@ func (o *serverOptions) parts(ctx context.Context, s *store.Store, recorder *eve
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	parts := []part{
+		func(ctx context.Context) error { s.Run(ctx); return nil },
+		func(ctx context.Context) error { recorder.Run(ctx); return nil },
 		func(ctx context.Context) error { cp.Run(ctx); return nil },
 		func(ctx context.Context) error { return serveTLS(ctx, api) },
 		func(ctx context.Context) error { return serveTLS(ctx, allocation) },

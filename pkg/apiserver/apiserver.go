@@ -51,6 +51,7 @@ type Server struct {
 	events  *events.Recorder
 	nodeOps NodeOperator
 	logs    LogSource
+	saved   func() error // returns when the store's file has caught up
 }
 
 // LogSource reads a game server's log from the node it runs on.
@@ -73,6 +74,7 @@ func New(s *store.Store, recorder *events.Recorder, nodeOps NodeOperator, logs L
 		events:  recorder,
 		nodeOps: nodeOps,
 		logs:    logs,
+		saved:   s.Sync,
 		servers: resource[*agonesv1.GameServer]{
 			typed: store.GameServersOf(s),
 			blank: func() *agonesv1.GameServer { return &agonesv1.GameServer{} },
@@ -115,7 +117,7 @@ func (s *Server) Handler() http.Handler {
 	s.scalers.mount(mux, "fleetautoscalers")
 	mux.HandleFunc("PUT /v1/namespaces/{namespace}/fleets/{name}/scale", s.scaleFleet)
 	mux.HandleFunc("GET /v1/namespaces/{namespace}/gameservers/{name}/logs", s.gameServerLogs)
-	return mux
+	return answerWhenSaved(mux, s.saved)
 }
 
 func (s *Server) listNodes(w http.ResponseWriter, _ *http.Request) {

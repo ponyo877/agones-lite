@@ -2,7 +2,6 @@ package store
 
 import (
 	"cmp"
-	"database/sql"
 	"errors"
 	"fmt"
 	"slices"
@@ -51,14 +50,22 @@ func KeyOf(kind Kind, obj metav1.Object) Key {
 
 // Store is safe for concurrent use.
 type Store struct {
-	mu       sync.Mutex
-	db       *sql.DB
-	revision int64
-	// objects holds everything, by kind. A stored object is never changed
-	// in place: an update swaps in a new one. That is what makes View safe.
+	mu sync.Mutex
+	// revision numbers the last change made, and objects holds everything
+	// as of that change, by kind. A stored object is never changed in
+	// place: an update swaps in a new one. That is what makes View safe.
+	revision  int64
 	objects   map[Kind]map[Key]Object
 	factories map[Kind]func() Object
 	watchers  map[*watcher]struct{}
+
+	// The file, and how far it is behind memory: see save.go.
+	file    file
+	unsaved []change   // made, but not in the file yet; oldest first
+	saved   int64      // the revision the file holds
+	settled *sync.Cond // told whenever saved moves
+	behind  bool       // Run is saving: a write does not wait for the file
+	wake    chan struct{}
 
 	// Clock tells the time, and Suffix makes the random end of a generated
 	// name. They are the machine's, unless a test puts its own in their
@@ -70,28 +77,42 @@ type Store struct {
 // Open loads the SQLite file at path, creating it when missing.
 // kinds tells the store how to make an empty object of each kind.
 func Open(path string, kinds map[Kind]func() Object) (*Store, error) {
-	db, err := openDB(path)
+	f, err := openFile(path)
 	if err != nil {
 		return nil, err
 	}
 	s := &Store{
-		db:        db,
+		file:      f,
 		objects:   map[Kind]map[Key]Object{},
 		factories: kinds,
 		watchers:  map[*watcher]struct{}{},
+		wake:      make(chan struct{}, 1),
 		Clock:     time.Now,
 		Suffix:    func() string { return rand.String(randomLength) },
 	}
+	s.settled = sync.NewCond(&s.mu)
 	if err := s.load(); err != nil {
-		_ = db.Close()
+		_ = f.db.Close()
 		return nil, err
 	}
+	s.saved = s.revision
 	return s, nil
 }
 
-// Close releases the SQLite file.
+// Close saves what is not saved yet and releases the SQLite file. Run must
+// have returned by then.
 func (s *Store) Close() error {
-	return s.db.Close()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return errors.Join(s.save(), s.file.db.Close())
+}
+
+// Abandon releases the SQLite file without saving, which is what a crash
+// does to a store. It is for tests of what a crash leaves behind.
+func (s *Store) Abandon() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.file.db.Close()
 }
 
 // Now tells the time by the store's clock. Whatever works on a store asks
@@ -101,6 +122,7 @@ func (s *Store) Now() time.Time {
 }
 
 // Get returns a private copy of the object, so callers may change it freely.
+// Like every read, it shows the changes made so far, saved or not: see Run.
 func (s *Store) Get(key Key) (Object, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -194,19 +216,12 @@ func (s *Store) Delete(key Key) error {
 	if !ok {
 		return fmt.Errorf("%s: %w", key, ErrNotFound)
 	}
-	next := s.revision + 1
-	if err := s.remove(key, next); err != nil {
-		return err
-	}
-	s.revision = next
-	delete(s.objects[key.Kind], key)
-	s.notify(Event{Type: Deleted, Key: key, Object: obj})
-	return nil
+	return s.record(change{event: Event{Type: Deleted, Key: key, Object: obj}, revision: s.revision + 1, was: obj})
 }
 
-// commit writes obj under the next revision: disk first, then memory, then watchers.
+// commit makes obj what is stored under key, as the next revision.
 //
-// Memory gets what the file got, read back, and not obj itself. The two
+// Memory gets what the file gets, read back, and not obj itself. The two
 // differ in small ways: JSON keeps a time to the second, and an empty list
 // may come back as none. A store that answers one thing before a restart
 // and another after it would change, for one, the order of two GameServers
@@ -214,17 +229,23 @@ func (s *Store) Delete(key Key) error {
 func (s *Store) commit(t EventType, key Key, obj Object) (Object, error) {
 	next := s.revision + 1
 	obj.SetResourceVersion(strconv.FormatInt(next, 10))
-	stored, err := s.persist(key, next, obj)
+	stored, data, err := s.asStored(key, obj)
 	if err != nil {
 		return nil, err
 	}
-	s.revision = next
-	s.put(key, stored)
-	s.notify(Event{Type: t, Key: key, Object: stored})
+	c := change{event: Event{Type: t, Key: key, Object: stored}, revision: next, was: s.objects[key.Kind][key], data: data}
+	if err := s.record(c); err != nil {
+		return nil, err
+	}
 	return clone(stored), nil
 }
 
-func (s *Store) put(key Key, obj Object) {
+// hold makes obj what memory has under key, or drops the key when obj is nil.
+func (s *Store) hold(key Key, obj Object) {
+	if obj == nil {
+		delete(s.objects[key.Kind], key)
+		return
+	}
 	if s.objects[key.Kind] == nil {
 		s.objects[key.Kind] = map[Key]Object{}
 	}

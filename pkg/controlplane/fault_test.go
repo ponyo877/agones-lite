@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -74,24 +75,22 @@ func (s *site) start() {
 	server := grpc.NewServer(options...)
 	nodev1.RegisterNodesServer(server, nodes.NewServer(state, cp.Agents))
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		cp.Run(ctx)
-	}()
+	var running sync.WaitGroup
+	running.Go(func() { state.Run(ctx) })
+	running.Go(func() { cp.Run(ctx) })
 	go func() { _ = server.Serve(listener) }()
 
 	s.world = world{t: s.t, cp: cp, api: cp.API.Handler(), store: state}
 	s.address, s.token = listener.Addr().String(), secrets.Token(auth.Node)
 	s.halt = func(crash bool) {
 		if crash {
-			// Nothing gets written on the way down: the state stays as
-			// it was at the moment of the crash.
-			_ = state.Close()
+			// Nothing gets written on the way down: the file stays as it
+			// was at the moment of the crash.
+			_ = state.Abandon()
 		}
 		server.Stop()
 		cancel()
-		<-done
+		running.Wait()
 		_ = state.Close()
 	}
 }

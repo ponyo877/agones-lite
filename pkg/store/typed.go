@@ -158,6 +158,12 @@ func (t Typed[T]) Now() time.Time {
 	return t.store.Now()
 }
 
+// Sync returns when the file has every change made so far, to any kind.
+// See Store.Run for who has to call it.
+func (t Typed[T]) Sync() error {
+	return t.store.Sync()
+}
+
 // Watch delivers every change to this kind until cancel is called.
 func (t Typed[T]) Watch() (events <-chan Event, cancel func()) {
 	return t.store.Watch(t.kind)

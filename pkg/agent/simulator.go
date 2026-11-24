@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
@@ -47,16 +48,26 @@ func (s *Simulator) Run(ctx context.Context) error {
 }
 
 // step reports, for each GameServer on the node, what a real node would
-// report next.
+// report next. Like a real agent, it works on its GameServers side by side:
+// a report is answered when the control plane has saved it, and the reports
+// of a hundred GameServers are saved in one go when they come together.
 func (s *Simulator) step() {
 	placed, current := s.cp.Assigned(s.Node.Name)
 	if !current {
 		return
 	}
+	var busy sync.WaitGroup
 	for _, gs := range placed {
-		for _, event := range next(gs) {
-			_ = s.cp.Report(gameservers.Report{Namespace: gs.Namespace, Name: gs.Name, Event: event})
+		if events := next(gs); len(events) > 0 {
+			busy.Go(func() { s.report(gs, events) })
 		}
+	}
+	busy.Wait()
+}
+
+func (s *Simulator) report(gs *agonesv1.GameServer, events []gameservers.Event) {
+	for _, event := range events {
+		_ = s.cp.Report(gameservers.Report{Namespace: gs.Namespace, Name: gs.Name, Event: event})
 	}
 }
 

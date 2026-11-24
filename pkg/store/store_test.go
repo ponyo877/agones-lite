@@ -1,8 +1,11 @@
 package store
 
 import (
+	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -256,4 +259,65 @@ func TestListAndWatchStartsTheEventsWhereTheListEnds(t *testing.T) {
 	change := <-events
 	assert.Equal(t, Added, change.Type)
 	assert.Equal(t, "after", change.Key.Name, "what was listed is not told again")
+}
+
+// While Run saves in the background a write does not wait for the file,
+// and Sync does. What Sync has waited for outlasts a crash.
+func TestSyncWaitsForTheFileWhileRunSavesBehind(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	s := open(t, path)
+	ctx, stop := context.WithCancel(context.Background())
+	var running sync.WaitGroup
+	running.Go(func() { s.Run(ctx) })
+	defer running.Wait()
+	defer stop()
+
+	servers := GameServersOf(s)
+	for i := range 200 {
+		_, err := servers.Create(gameServer(fmt.Sprint("gs-", i)))
+		require.NoError(t, err)
+	}
+	require.NoError(t, servers.Sync())
+	require.NoError(t, s.Abandon())
+
+	assert.Len(t, GameServersOf(open(t, path)).List(""), 200)
+}
+
+// Run does its saving when it is told to stop, too.
+func TestWhatRunHasNotSavedItSavesWhenItStops(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	s := open(t, path)
+	ctx, stop := context.WithCancel(context.Background())
+	var running sync.WaitGroup
+	running.Go(func() { s.Run(ctx) })
+
+	_, err := GameServersOf(s).Create(gameServer("a"))
+	require.NoError(t, err)
+	stop()
+	running.Wait()
+	require.NoError(t, s.Abandon())
+
+	assert.Len(t, GameServersOf(open(t, path)).List(""), 1)
+}
+
+// With nobody saving behind, the file comes first: a change it refuses was
+// never made, as far as anyone can tell.
+func TestAChangeTheFileRefusesIsTakenBack(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "state.db"))
+	servers := GameServersOf(s)
+	kept, err := servers.Create(gameServer("kept"))
+	require.NoError(t, err)
+	events, cancel := servers.Watch()
+	defer cancel()
+	require.NoError(t, s.file.db.Close())
+
+	_, createErr := servers.Create(gameServer("new"))
+	_, updateErr := servers.Update(kept)
+	deleteErr := servers.Delete("default", "kept")
+
+	assert.Error(t, createErr)
+	assert.Error(t, updateErr)
+	assert.Error(t, deleteErr)
+	assert.Equal(t, []*agonesv1.GameServer{kept}, servers.List(""))
+	assert.Empty(t, events, "nobody is told of a change that was taken back")
 }

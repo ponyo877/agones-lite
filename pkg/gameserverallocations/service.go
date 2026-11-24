@@ -37,9 +37,11 @@ var errConflict = errors.New("could not update the selected GameServer")
 // service: the same gRPC service and the same REST path, built from the
 // same generated code. It is the thin half of this package.
 //
-// Requests are handled one at a time. Upstream batches them and updates a
-// hundred GameServers in parallel; at the scale agones-lite is meant for,
-// that machinery buys nothing.
+// Requests choose their GameServer one at a time, which takes no waiting:
+// the store has the choice at once. They wait for the store's file side by
+// side, and the file takes them in one write (store.Run). Upstream gets
+// the same effect by batching requests and updating a hundred GameServers
+// in parallel.
 type Service struct {
 	pb.UnimplementedAllocationServiceServer
 	servers store.Typed[*agonesv1.GameServer]
@@ -82,6 +84,11 @@ func (s *Service) Allocate(_ context.Context, in *pb.AllocationRequest) (*pb.All
 	}
 	started := s.now()
 	result, err := s.allocate(gsa)
+	if err == nil {
+		// Players are sent on this answer, so it waits for the file. The
+		// next request does not: see allocate.
+		err = s.servers.Sync()
+	}
 	s.observe(gsa, result, s.now().Sub(started))
 	if err != nil {
 		return nil, status.Error(codes.Aborted, err.Error())

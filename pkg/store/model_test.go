@@ -33,6 +33,9 @@ import (
 //   - Get, List and View show what the model holds (Check).
 //   - After the file is opened again, memory holds what it held before
 //     (Reopen, then Check).
+//   - Where the file is written behind (Store.Run), a crash takes back the
+//     changes made since the last save, all of them and nothing else, and
+//     a watcher is told of a change when it is saved (Save, Crash, Check).
 //   - What View or a Watch event handed out is never changed by a later
 //     write (Check).
 //   - A watcher that keeps up is told every change, once and in order (Check).
@@ -64,17 +67,25 @@ type storeModel struct {
 	objects  map[Key]*agonesv1.GameServer // what was stored, by key
 	revision int64                        // how many changes were committed
 	outdated map[Key][]string             // resourceVersions each key no longer has
+	// behind says that the file is written behind, as while Store.Run runs:
+	// here at the Save steps, so that a run can be repeated. inFile is the
+	// model as it was at the last save, which is all a crash leaves.
+	behind         bool
+	inFile         map[Key]*agonesv1.GameServer
+	inFileRevision int64
 	// lent holds every object the store shared with a reader, through View
 	// or a Watch event, with a copy of how it looked when it was handed out.
 	lent     map[Object]Object
 	watchers []*follower
 }
 
-// follower is a watcher and the changes it has yet to be told.
+// follower is a watcher and the changes it has yet to be told: those made
+// since it began and not saved yet, and those it is owed by now.
 type follower struct {
 	kind   Kind
 	events <-chan Event
 	cancel func()
+	made   []Event
 	owed   []Event
 }
 
@@ -84,7 +95,9 @@ func TestTheStoreBehavesLikeAMap(t *testing.T) {
 		file, err := os.CreateTemp(dir, "*.db")
 		require.NoError(t, err)
 		require.NoError(t, file.Close())
-		m := &storeModel{path: file.Name(), objects: map[Key]*agonesv1.GameServer{}, outdated: map[Key][]string{}, lent: map[Object]Object{}}
+		m := &storeModel{path: file.Name(), outdated: map[Key][]string{}, lent: map[Object]Object{}}
+		m.objects, m.inFile = map[Key]*agonesv1.GameServer{}, map[Key]*agonesv1.GameServer{}
+		m.behind = rapid.Bool().Draw(t, "the file is written behind")
 		m.open(t)
 		defer func() { _ = m.store.Close() }()
 
@@ -108,6 +121,7 @@ func scratch(t *testing.T) string {
 func (m *storeModel) open(t *rapid.T) {
 	s, err := Open(m.path, modelKinds)
 	require.NoError(t, err)
+	s.behind = m.behind
 	m.store = s
 }
 
@@ -238,6 +252,24 @@ func (m *storeModel) Delete(t *rapid.T) {
 	m.owe(Event{Type: Deleted, Key: key, Object: last})
 }
 
+// Save is one round of what Store.Run does in the background.
+func (m *storeModel) Save(t *rapid.T) {
+	if !m.behind {
+		t.Skip("every write saves itself")
+	}
+	require.NoError(t, m.store.saveBehind())
+	m.fileHasIt()
+}
+
+// A crash takes with it what the file did not have yet, and those who
+// watched. What the file had is there when the store is opened again.
+func (m *storeModel) Crash(t *rapid.T) {
+	require.NoError(t, m.store.Abandon())
+	m.watchers = nil
+	m.objects, m.revision = maps.Clone(m.inFile), m.inFileRevision
+	m.open(t)
+}
+
 func (m *storeModel) Watch(t *rapid.T) {
 	kind := aKind(t)
 	events, cancel := m.store.Watch(kind)
@@ -283,6 +315,7 @@ func (m *storeModel) ScribbleOnCopies(t *rapid.T) {
 // Those who watched the closed store are gone with it.
 func (m *storeModel) Reopen(t *rapid.T) {
 	require.NoError(t, m.store.Close())
+	m.fileHasIt() // closing saves
 	m.watchers = nil
 	m.open(t)
 }
@@ -290,9 +323,10 @@ func (m *storeModel) Reopen(t *rapid.T) {
 // Check holds the store against the model. rapid calls it after every step.
 func (m *storeModel) Check(t *rapid.T) {
 	m.store.mu.Lock()
-	revision := m.store.revision
+	revision, saved := m.store.revision, m.store.saved
 	m.store.mu.Unlock()
 	require.Equal(t, m.revision, revision, "the revision counts the changes, and nothing else")
+	require.Equal(t, m.inFileRevision, saved, "the revision the file holds")
 
 	for _, kind := range []Kind{red, blue} {
 		for _, namespace := range append([]string{""}, modelNamespaces...) {
@@ -330,8 +364,8 @@ func (m *storeModel) getAgrees(t *rapid.T, key Key) {
 }
 
 // isUpToDate reads what a watcher was told and holds it against what it is
-// owed. A change is in the channel by the time the write returns, so
-// nothing here has to wait.
+// owed. A change is in the channel by the time it is saved, so nothing
+// here has to wait.
 func (m *storeModel) isUpToDate(t *rapid.T, w *follower) {
 	for _, want := range w.owed {
 		got, told := heard(w)
@@ -370,12 +404,24 @@ func (m *storeModel) commit(change EventType, key Key, stored Object) {
 	m.owe(Event{Type: change, Key: key, Object: gs})
 }
 
-// owe notes a change for everyone who watches its kind.
+// owe notes a change for everyone who watches its kind. They are told
+// when it is saved, which is at once unless the file is written behind.
 func (m *storeModel) owe(change Event) {
 	for _, w := range m.watchers {
 		if w.kind == change.Key.Kind {
-			w.owed = append(w.owed, change)
+			w.made = append(w.made, change)
 		}
+	}
+	if !m.behind {
+		m.fileHasIt()
+	}
+}
+
+// fileHasIt records that everything so far was saved.
+func (m *storeModel) fileHasIt() {
+	m.inFile, m.inFileRevision = maps.Clone(m.objects), m.revision
+	for _, w := range m.watchers {
+		w.owed, w.made = append(w.owed, w.made...), nil
 	}
 }
 

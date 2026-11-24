@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -48,7 +49,7 @@ spec:
 // world is a whole control plane with one simulated node. Nothing real
 // runs: the node reports every game server as started and Ready at once.
 type world struct {
-	t     *testing.T
+	t     testing.TB
 	cp    *ControlPlane
 	api   http.Handler
 	store *store.Store
@@ -70,15 +71,13 @@ func newWorld(t *testing.T) world {
 		},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		cp.Run(ctx)
-	}()
+	var running sync.WaitGroup
+	running.Go(func() { s.Run(ctx) }) // the file is written behind, as in "agones-lite server"
+	running.Go(func() { cp.Run(ctx) })
 	go func() { _ = agent.NewSimulator(node, cp.Agents).Run(ctx) }()
 	t.Cleanup(func() {
 		cancel()
-		<-done
+		running.Wait()
 		_ = s.Close()
 	})
 	return world{t: t, cp: cp, api: cp.API.Handler(), store: s}
