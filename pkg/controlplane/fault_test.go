@@ -229,3 +229,49 @@ func TestACrashKeepsWhatIsStillThereAndGivesUpWhatIsNot(t *testing.T) {
 		assert.Equal(t, state, s.on(kept)[name], "%s was not disturbed", name)
 	}
 }
+
+// The store writes to its file behind what it holds in memory, and a
+// crash takes back whatever the file did not have yet. An allocation is
+// answered when the file has it. So whatever the control plane was in the
+// middle of when it crashed, a matchmaker that got an answer finds its
+// game server Allocated afterwards, and no two were given the same one.
+func TestWhatAMatchmakerWasToldOutlastsACrash(t *testing.T) {
+	s := newSite(t)
+	s.join("node-1")
+	s.call(http.MethodPut, "/v1/namespaces/default/fleets/simple", strings.Replace(fleetManifest, "replicas: 3", "replicas: 60", 1))
+	s.soon(func() bool { return s.fleet().Status.ReadyReplicas == 60 }, "sixty game servers become Ready")
+
+	told := make(chan string, 60)
+	var asking sync.WaitGroup
+	for range 8 {
+		asking.Go(func() { s.allocateInto(told) })
+	}
+	for len(told) < 20 { // in the middle of it
+		time.Sleep(time.Millisecond)
+	}
+	s.halt(true)
+	asking.Wait()
+	close(told)
+	s.start()
+
+	after := s.on("node-1")
+	seen := map[string]bool{}
+	for name := range told {
+		assert.Equal(t, agonesv1.GameServerStateAllocated, after[name], "%s was handed to a matchmaker", name)
+		assert.False(t, seen[name], "%s was handed out twice", name)
+		seen[name] = true
+	}
+}
+
+// allocateInto allocates until it is refused, by a crash or because
+// nothing is left to hand out, and sends on the name of every game server
+// it was given.
+func (s *site) allocateInto(told chan<- string) {
+	for {
+		got, err := s.allocate()
+		if err != nil || got.GetGameServerName() == "" {
+			return
+		}
+		told <- got.GetGameServerName()
+	}
+}
