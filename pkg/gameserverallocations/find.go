@@ -1,6 +1,8 @@
 package gameserverallocations
 
 import (
+	"cmp"
+	"maps"
 	"slices"
 
 	"agones.dev/agones/pkg/apis"
@@ -54,6 +56,66 @@ func Find(gsa *allocationv1.GameServerAllocation, servers []*agonesv1.GameServer
 		return slices.MinFunc(matches, before), true
 	}
 	return nil, false
+}
+
+// FindPacked is Find for the Packed strategy, for when there are many
+// GameServers: it looks at the nodes first and at the GameServers of as few
+// nodes as it can, where Find looks at every GameServer there is.
+//
+// Packed sends a session to the node that is busiest already, so the
+// GameServers of the busiest node that has a match are all it has to see.
+// Nodes that are equally busy are looked at together, and among their
+// matches the priorities and then the name decide, as in Find.
+//
+// counts is as for Find, but only of the nodes players may be sent to. on
+// returns the GameServers a node has in a state.
+func FindPacked(gsa *allocationv1.GameServerAllocation, counts map[string]gameservers.NodeCount, on func(node string, state agonesv1.GameServerState) []*agonesv1.GameServer) (*agonesv1.GameServer, bool) {
+	busiestFirst := byHowBusy(counts)
+	for i := range gsa.Spec.Selectors {
+		matches := matcher(&gsa.Spec.Selectors[i])
+		wanted := func(gs *agonesv1.GameServer) bool { return candidate(gsa, gs) && matches(gs) }
+		// A GameServer that is in use comes before any that is not: see
+		// allocatedFirst.
+		for _, state := range []agonesv1.GameServerState{agonesv1.GameServerStateAllocated, agonesv1.GameServerStateReady} {
+			if gs, found := firstOn(busiestFirst, state, on, wanted, distributed(gsa.Spec.Priorities)); found {
+				return gs, true
+			}
+		}
+	}
+	return nil, false
+}
+
+// firstOn returns the best of the wanted GameServers on the first group of
+// nodes that has any.
+func firstOn(groups [][]string, state agonesv1.GameServerState, on func(string, agonesv1.GameServerState) []*agonesv1.GameServer, wanted func(*agonesv1.GameServer) bool, before order) (*agonesv1.GameServer, bool) {
+	for _, nodes := range groups {
+		var found []*agonesv1.GameServer
+		for _, node := range nodes {
+			found = append(found, filter(on(node, state), wanted)...)
+		}
+		if len(found) > 0 {
+			return slices.MinFunc(found, before), true
+		}
+	}
+	return nil, false
+}
+
+// byHowBusy sorts the nodes the way Packed prefers them, the one with the
+// most sessions first, and puts those that are equally busy into one group.
+func byHowBusy(counts map[string]gameservers.NodeCount) [][]string {
+	nodes := slices.Collect(maps.Keys(counts))
+	busier := func(a, b string) int {
+		return cmp.Or(cmp.Compare(counts[b].Allocated, counts[a].Allocated), cmp.Compare(counts[b].Ready, counts[a].Ready))
+	}
+	slices.SortFunc(nodes, busier)
+	var groups [][]string
+	for i, node := range nodes {
+		if i == 0 || busier(nodes[i-1], node) != 0 {
+			groups = append(groups, nil)
+		}
+		groups[len(groups)-1] = append(groups[len(groups)-1], node)
+	}
+	return groups
 }
 
 // matcher returns what selector.Matches says, made for asking it about many

@@ -11,6 +11,7 @@ import (
 
 	"agones.dev/agones/pkg/allocation/converters"
 	pb "agones.dev/agones/pkg/allocation/go"
+	"agones.dev/agones/pkg/apis"
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	allocationv1 "agones.dev/agones/pkg/apis/allocation/v1"
 	gwruntime "github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
@@ -118,8 +119,7 @@ func (s *Service) allocate(gsa *allocationv1.GameServerAllocation) (*allocationv
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for range attempts {
-		all := s.servers.View("")
-		gs, found := Find(gsa, s.reachable(gsa.Namespace, all), gameservers.CountByNode(all), s.Pick)
+		gs, found := s.find(gsa)
 		if !found {
 			return Unallocated(gsa), nil
 		}
@@ -136,20 +136,33 @@ func (s *Service) allocate(gsa *allocationv1.GameServerAllocation) (*allocationv
 	return nil, errConflict
 }
 
-// reachable returns the GameServers of a namespace that sit on a node
+// find chooses the GameServer for a request among those on the nodes
 // players can be sent to: connected and not cordoned.
-func (s *Service) reachable(namespace string, all []*agonesv1.GameServer) []*agonesv1.GameServer {
-	open := map[string]bool{}
-	for _, node := range s.nodes.View("") {
-		open[node.Name] = node.Schedulable()
+//
+// Packed is the default, and the one way of choosing that does not need a
+// look at every GameServer. The others get one.
+func (s *Service) find(gsa *allocationv1.GameServerAllocation) (*agonesv1.GameServer, bool) {
+	counts := s.open()
+	if gsa.Spec.Scheduling == apis.Packed {
+		return FindPacked(gsa, counts, func(node string, state agonesv1.GameServerState) []*agonesv1.GameServer {
+			return gameservers.OnNodeIn(s.servers, node, state)
+		})
 	}
-	var out []*agonesv1.GameServer
-	for _, gs := range all {
-		if gs.Namespace == namespace && open[gs.Status.NodeName] {
-			out = append(out, gs)
+	return Find(gsa, s.servers.View(gsa.Namespace), counts, s.Pick)
+}
+
+// open returns how full each node is that players can be sent to. A node
+// that is cordoned, cut off or gone is not in it, and neither is one
+// without a Ready or Allocated GameServer.
+func (s *Service) open() map[string]gameservers.NodeCount {
+	all := gameservers.CountOnNodes(s.servers)
+	counts := map[string]gameservers.NodeCount{}
+	for _, node := range s.nodes.View("") {
+		if count, counted := all[node.Name]; counted && node.Schedulable() {
+			counts[node.Name] = count
 		}
 	}
-	return out
+	return counts
 }
 
 func (s *Service) record(gs *agonesv1.GameServer, problems []error) {

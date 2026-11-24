@@ -311,3 +311,35 @@ func TestApplyMovesACountTheWayTheRequestSays(t *testing.T) {
 }
 
 func least(a, b int64) int64 { return min(a, b) }
+
+// FindPacked is the quick way to what Find finds for Packed: it looks at
+// the GameServers node by node, and at no more nodes than it must. Given
+// the same GameServers, sorted by node and state as the store has them,
+// the two must find the same one.
+func TestFindPackedFindsWhatFindFinds(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		gsa := aRequest(t)
+		gsa.Spec.Scheduling = apis.Packed
+		servers := aCrowd(t)
+		counts := someCounts(t, servers)
+		on := func(node string, state agonesv1.GameServerState) []*agonesv1.GameServer {
+			return filter(servers, func(gs *agonesv1.GameServer) bool {
+				return gs.Status.NodeName == node && gs.Status.State == state
+			})
+		}
+		want, wantFound := Find(gsa, servers, counts, neverAsked(t))
+
+		gs, found := FindPacked(gsa, counts, on)
+
+		require.Equal(t, wantFound, found)
+		require.Same(t, want, gs)
+	})
+}
+
+// neverAsked is the pick for a strategy that leaves nothing to chance.
+func neverAsked(t *rapid.T) func(int) int {
+	return func(int) int {
+		t.Fatalf("pick must not be asked")
+		return 0
+	}
+}
