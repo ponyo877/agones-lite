@@ -56,6 +56,7 @@ type Store struct {
 	// place: an update swaps in a new one. That is what makes View safe.
 	revision  int64
 	objects   map[Kind]map[Key]Object
+	groupings map[Kind]map[string]*grouping // the same objects, sorted into groups: see group.go
 	factories map[Kind]func() Object
 	watchers  map[*watcher]struct{}
 
@@ -84,6 +85,7 @@ func Open(path string, kinds map[Kind]func() Object) (*Store, error) {
 	s := &Store{
 		file:      f,
 		objects:   map[Kind]map[Key]Object{},
+		groupings: map[Kind]map[string]*grouping{},
 		factories: kinds,
 		watchers:  map[*watcher]struct{}{},
 		wake:      make(chan struct{}, 1),
@@ -261,6 +263,9 @@ func (s *Store) commit(t EventType, key Key, obj Object) (Object, error) {
 
 // hold makes obj what memory has under key, or drops the key when obj is nil.
 func (s *Store) hold(key Key, obj Object) {
+	for _, g := range s.groupings[key.Kind] {
+		g.move(key, s.objects[key.Kind][key], obj)
+	}
 	if obj == nil {
 		delete(s.objects[key.Kind], key)
 		return

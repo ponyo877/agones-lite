@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -319,7 +320,34 @@ func TestAChangeTheFileRefusesIsTakenBack(t *testing.T) {
 	assert.Error(t, updateErr)
 	assert.Error(t, deleteErr)
 	assert.Equal(t, []*agonesv1.GameServer{kept}, servers.List(""))
+	assert.Equal(t, []*agonesv1.GameServer{kept}, OnNode(servers, ""), "and is in no group")
 	assert.Empty(t, events, "nobody is told of a change that was taken back")
+}
+
+func TestOnNodeFindsTheGameServersOfANodeAndFollowsThemAsTheyMove(t *testing.T) {
+	servers := GameServersOf(open(t, filepath.Join(t.TempDir(), "state.db")))
+	names := func(node string) []string {
+		var out []string
+		for _, gs := range OnNode(servers, node) {
+			out = append(out, gs.Name)
+		}
+		slices.Sort(out)
+		return out
+	}
+	a, err := servers.Create(gameServer("a"))
+	require.NoError(t, err)
+	_, err = servers.Create(gameServer("b"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a", "b"}, names(""), "neither has a node yet")
+
+	a.Status.NodeName = "node-1"
+	_, err = servers.Update(a)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a"}, names("node-1"))
+	assert.Equal(t, []string{"b"}, names(""))
+
+	require.NoError(t, servers.Delete("default", "a"))
+	assert.Empty(t, names("node-1"))
 }
 
 // Five random characters do not go far among ten thousand names. A name

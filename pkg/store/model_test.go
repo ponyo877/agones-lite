@@ -38,6 +38,8 @@ import (
 //     a watcher is told of a change when it is saved (Save, Crash, Check).
 //   - What View or a Watch event handed out is never changed by a later
 //     write (Check).
+//   - The GameServers the store finds for a node are the ones a look at
+//     every GameServer finds (Check).
 //   - A watcher that keeps up is told every change, once and in order (Check).
 
 // Two kinds, so that a change to one can be mistaken for a change to the
@@ -57,6 +59,7 @@ var modelKinds = map[Kind]func() Object{
 var (
 	modelNamespaces = []string{"a", "a-b", "b"}
 	modelNames      = []string{"x", "y", "z"}
+	modelNodes      = []string{"", "n1", "n2"} // an object may have none
 )
 
 // storeModel is a store, and beside it what the store should hold.
@@ -336,6 +339,9 @@ func (m *storeModel) Check(t *rapid.T) {
 	for _, key := range everyKey() {
 		m.getAgrees(t, key)
 	}
+	for _, kind := range []Kind{red, blue} {
+		m.groupsAgree(t, kind)
+	}
 	for object, was := range m.lent {
 		require.Equal(t, was, object, "an object handed out by View or Watch was changed afterwards")
 	}
@@ -352,6 +358,25 @@ func (m *storeModel) listsAgree(t *rapid.T, kind Kind, namespace string) {
 	m.lend(viewed...)
 	slices.SortFunc(viewed, byNamespaceAndName) // View promises no order
 	m.sameList(t, want, viewed, "View")
+}
+
+// groupsAgree asks the store for the GameServers of each node, and for
+// those without one, and holds each answer against the model's objects
+// sorted the slow way. The store keeps its groups current with every
+// write, and with every write that is taken back.
+func (m *storeModel) groupsAgree(t *rapid.T, kind Kind) {
+	for _, node := range modelNodes {
+		var want []Object
+		for _, obj := range m.stored(kind, "") {
+			if obj.(*agonesv1.GameServer).Status.NodeName == node {
+				want = append(want, obj)
+			}
+		}
+		got := m.store.grouped(kind, "node", nodeOf, node)
+		m.lend(got...)
+		slices.SortFunc(got, byNamespaceAndName)
+		m.sameList(t, want, got, "the group of node "+strconv.Quote(node))
+	}
 }
 
 func (m *storeModel) getAgrees(t *rapid.T, key Key) {
@@ -536,6 +561,7 @@ func anObject(t *rapid.T) *agonesv1.GameServer {
 	gs := &agonesv1.GameServer{}
 	gs.Labels = map[string]string{"colour": rapid.SampledFrom([]string{"green", "amber", "violet"}).Draw(t, "label")}
 	gs.Status.State = rapid.SampledFrom([]agonesv1.GameServerState{"", agonesv1.GameServerStateReady, agonesv1.GameServerStateAllocated}).Draw(t, "state")
+	gs.Status.NodeName = rapid.SampledFrom(modelNodes).Draw(t, "node")
 	if rapid.Bool().Draw(t, "reserved") {
 		gs.Status.ReservedUntil = &metav1.Time{Time: time.Unix(rapid.Int64Range(1, 4_000_000_000).Draw(t, "until"), 0)}
 	}

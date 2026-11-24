@@ -73,13 +73,8 @@ func (l *Local) Register(node *litev1.Node) error {
 // the store, the answer is always current. An agent starts containers on
 // it, so it is given once the file has it.
 func (l *Local) Assigned(node string) ([]*agonesv1.GameServer, bool) {
-	var out []*agonesv1.GameServer
-	for _, gs := range l.servers.View("") {
-		if gs.Status.NodeName == node {
-			out = append(out, gs)
-		}
-	}
-	return out, l.servers.Sync() == nil
+	placed := store.OnNode(l.servers, node)
+	return placed, l.servers.Sync() == nil
 }
 
 // Changes signals after any GameServer changed. Signals that pile up while

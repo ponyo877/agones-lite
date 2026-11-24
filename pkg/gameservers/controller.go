@@ -163,8 +163,8 @@ func (c *Controller) afterNodeChange(e store.Event) []store.Key {
 		return nil
 	}
 	keys := []store.Key{thoseWaiting}
-	for _, gs := range c.servers.View("") {
-		if gs.Status.NodeName == node.Name && gs.DeletionTimestamp != nil {
+	for _, gs := range store.OnNode(c.servers, node.Name) {
+		if gs.DeletionTimestamp != nil {
 			keys = append(keys, store.KeyOf(store.GameServers, gs))
 		}
 	}
@@ -258,13 +258,12 @@ func (c *Controller) reachable(nodeName string) bool {
 // per GameServer, a Fleet of ten thousand would look a hundred million
 // times.
 func (c *Controller) placeWaiting() error {
-	servers := c.servers.View("")
-	waiting := waitingForANode(servers)
+	waiting := waitingForANode(store.OnNode(c.servers, ""))
 	if len(waiting) == 0 {
 		clear(c.waiting)
 		return nil
 	}
-	room := scheduling.RoomOn(c.nodes.View(""), servers)
+	room := scheduling.RoomOn(c.nodes.View(""), c.servers.View(""))
 	noRoom := map[store.Key]bool{}
 	var errs error
 	for _, gs := range waiting {
@@ -278,12 +277,13 @@ func (c *Controller) placeWaiting() error {
 	return errs
 }
 
-// waitingForANode returns the GameServers that are to be placed, by how
-// long they have waited, and by name where that does not tell them apart.
-func waitingForANode(servers []*agonesv1.GameServer) []*agonesv1.GameServer {
+// waitingForANode returns those of the GameServers without a node that
+// are to be placed, by how long they have waited, and by name where that
+// does not tell them apart.
+func waitingForANode(unplaced []*agonesv1.GameServer) []*agonesv1.GameServer {
 	var waiting []*agonesv1.GameServer
-	for _, gs := range servers {
-		if gs.Status.NodeName == "" && decide(gs, false) == place {
+	for _, gs := range unplaced {
+		if decide(gs, false) == place {
 			waiting = append(waiting, gs)
 		}
 	}
