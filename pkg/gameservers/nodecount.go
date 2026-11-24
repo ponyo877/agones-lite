@@ -2,6 +2,8 @@ package gameservers
 
 import (
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
+
+	"github.com/ponyo877/agones-lite/pkg/store"
 )
 
 // NodeCount is how many Ready and Allocated GameServers a node holds.
@@ -35,4 +37,43 @@ func CountByNode(servers []*agonesv1.GameServer) map[string]NodeCount {
 		}
 	}
 	return counts
+}
+
+// spot is a node and a state. The store keeps the GameServers sorted by
+// the two, for those who ask how full every node is, or for the Ready ones
+// of a single node.
+type spot struct {
+	node  string
+	state agonesv1.GameServerState
+}
+
+var bySpot = store.By[*agonesv1.GameServer, spot]{
+	Name: "node and state",
+	Of:   func(gs *agonesv1.GameServer) spot { return spot{gs.Status.NodeName, gs.Status.State} },
+}
+
+// CountOnNodes is CountByNode of every GameServer in the store, without a
+// look at each of them.
+func CountOnNodes(servers store.Typed[*agonesv1.GameServer]) map[string]NodeCount {
+	counts := map[string]NodeCount{}
+	for at, n := range store.GroupSizes(servers, bySpot) {
+		if at.node == "" {
+			continue
+		}
+		switch count := counts[at.node]; at.state {
+		case agonesv1.GameServerStateReady:
+			count.Ready = int64(n)
+			counts[at.node] = count
+		case agonesv1.GameServerStateAllocated:
+			count.Allocated = int64(n)
+			counts[at.node] = count
+		}
+	}
+	return counts
+}
+
+// OnNodeIn returns the GameServers on a node that are in a state. Like
+// View it does not copy: read them, never change them.
+func OnNodeIn(servers store.Typed[*agonesv1.GameServer], node string, state agonesv1.GameServerState) []*agonesv1.GameServer {
+	return store.Group(servers, bySpot, spot{node, state})
 }

@@ -7,7 +7,6 @@ import (
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/ponyo877/agones-lite/pkg/control"
 	"github.com/ponyo877/agones-lite/pkg/events"
@@ -80,29 +79,23 @@ func (c *Controller) sync(_ context.Context, key store.Key) error {
 	if !ok {
 		return nil
 	}
-	owned := c.owned(set)
+	owned := store.ControlledBy(c.servers, set)
 	if set.DeletionTimestamp != nil {
 		return c.dissolve(set, owned)
 	}
-	actions := Plan(set, owned, gameservers.CountByNode(c.servers.View("")), c.now())
-	// The Fleet and the autoscaler steer by the status, so it is written
-	// from a fresh look, and also when the plan could only be carried out
-	// in part: sessions begin and end whether or not this pass went well.
-	//
-	// Upstream writes it from the list it planned with, and not at all
-	// after a failure (syncGameServerSet).
-	return errors.Join(c.carryOut(set, actions), c.publish(set, c.owned(set)))
-}
-
-// owned returns the GameServers that set controls.
-func (c *Controller) owned(set *agonesv1.GameServerSet) []*agonesv1.GameServer {
-	var out []*agonesv1.GameServer
-	for _, gs := range c.servers.View(set.Namespace) {
-		if metav1.IsControlledBy(gs, set) {
-			out = append(out, gs)
-		}
+	actions := Plan(set, owned, gameservers.CountOnNodes(c.servers), c.now())
+	err := c.carryOut(set, actions)
+	if actions.Create > 0 || len(actions.Delete) > 0 {
+		// The Fleet and the autoscaler steer by the status, so it is
+		// written from a fresh look, and also when the plan could only be
+		// carried out in part: sessions begin and end whether or not this
+		// pass went well.
+		//
+		// Upstream writes it from the list it planned with, and not at all
+		// after a failure (syncGameServerSet).
+		owned = store.ControlledBy(c.servers, set)
 	}
-	return out
+	return errors.Join(err, c.publish(set, owned))
 }
 
 // dissolve removes a set that is being deleted: first all its GameServers,

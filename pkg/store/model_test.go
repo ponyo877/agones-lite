@@ -372,7 +372,10 @@ func (m *storeModel) groupsAgree(t *rapid.T, kind Kind) {
 				want = append(want, obj)
 			}
 		}
-		got := m.store.grouped(kind, "node", nodeOf, node)
+		var got []Object
+		for _, gs := range OnNode(m.typed(kind), node) {
+			got = append(got, gs)
+		}
 		m.lend(got...)
 		slices.SortFunc(got, byNamespaceAndName)
 		m.sameList(t, want, got, "the group of node "+strconv.Quote(node))
