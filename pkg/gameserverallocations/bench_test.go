@@ -54,3 +54,47 @@ func aFleet(size int) []*agonesv1.GameServer {
 	}
 	return servers
 }
+
+// BenchmarkFindSpread measures the same choice as BenchmarkFind makes for
+// Distributed, made by a draw: compare the two.
+//
+//	go test ./pkg/gameserverallocations/ -run '^$' -bench 'Find(Spread)?/Distributed'
+func BenchmarkFindSpread(b *testing.B) {
+	for _, size := range []int{1000, 10000} {
+		b.Run(fmt.Sprintf("%s/among-%d", apis.Distributed, size), func(b *testing.B) {
+			gsa := request(b, allocationv1.GameServerAllocationSpec{
+				Scheduling: apis.Distributed,
+				Selectors:  []allocationv1.GameServerSelector{{LabelSelector: metav1.LabelSelector{MatchLabels: role}}},
+			})
+			servers := aFleet(size)
+			counts := gameservers.CountByNode(servers)
+			one := inPlaces(servers)
+			for b.Loop() {
+				if _, found := FindSpread(gsa, counts, one, rand.IntN); !found {
+					b.Fatal("nothing found")
+				}
+			}
+		})
+	}
+}
+
+// inPlaces is the Fleet as the store hands it out one by one, sorted
+// beforehand as the store keeps it sorted.
+func inPlaces(servers []*agonesv1.GameServer) func(string, agonesv1.GameServerState, int) (*agonesv1.GameServer, bool) {
+	type spot struct {
+		node  string
+		state agonesv1.GameServerState
+	}
+	spots := map[spot][]*agonesv1.GameServer{}
+	for _, gs := range servers {
+		at := spot{gs.Status.NodeName, gs.Status.State}
+		spots[at] = append(spots[at], gs)
+	}
+	return func(node string, state agonesv1.GameServerState, place int) (*agonesv1.GameServer, bool) {
+		there := spots[spot{node, state}]
+		if place >= len(there) {
+			return nil, false
+		}
+		return there[place], true
+	}
+}

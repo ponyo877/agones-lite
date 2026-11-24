@@ -85,6 +85,77 @@ func FindPacked(gsa *allocationv1.GameServerAllocation, counts map[string]gamese
 	return nil, false
 }
 
+// tries is how often FindSpread draws before it leaves the request to Find.
+// Where every other GameServer matches, eight draws miss one time in 256.
+const tries = 8
+
+// FindSpread is Find for the Distributed strategy without priorities, for
+// when there are many GameServers: it draws the one Find would as likely
+// have chosen, and does not look at the rest.
+//
+// Find chooses evenly among all that match. FindSpread chooses evenly among
+// all there are in the state the request asks for, which the counts say
+// without a look at any of them, and takes its choice if it matches. One
+// that does not is drawn again. Every match is then as likely as every
+// other, as with Find, and a request that most GameServers match is
+// answered after a draw or two.
+//
+// It reports false when it found nothing: after tries draws, or for a
+// request it is not for. That says nothing about whether there is a match,
+// and Find has to be asked.
+//
+// counts is as for FindPacked. one returns a GameServer of a node in a
+// state by its place among them, as gameservers.OneOnNodeIn does.
+func FindSpread(gsa *allocationv1.GameServerAllocation, counts map[string]gameservers.NodeCount, one func(node string, state agonesv1.GameServerState, place int) (*agonesv1.GameServer, bool), pick func(n int) int) (*agonesv1.GameServer, bool) {
+	if !random(gsa) || len(gsa.Spec.Selectors) == 0 {
+		return nil, false
+	}
+	selector := &gsa.Spec.Selectors[0]
+	state, matches := stateOf(selector), matcher(selector)
+	nodes, total := slices.Sorted(maps.Keys(counts)), 0
+	for _, node := range nodes {
+		total += countIn(counts[node], state)
+	}
+	for range min(tries, total) {
+		node, place := nodeOf(pick(total), nodes, counts, state)
+		if gs, there := one(node, state, place); there && candidate(gsa, gs) && matches(gs) {
+			return gs, true
+		}
+	}
+	return nil, false
+}
+
+// nodeOf turns a place among all the GameServers in a state into the node
+// that has it and its place on that node: the nodes are gone through in
+// order, each with as many places as it counts.
+func nodeOf(place int, nodes []string, counts map[string]gameservers.NodeCount, state agonesv1.GameServerState) (string, int) {
+	for _, node := range nodes {
+		here := countIn(counts[node], state)
+		if place < here {
+			return node, place
+		}
+		place -= here
+	}
+	return "", 0 // a place beyond the last: nobody has it
+}
+
+// stateOf is the state a selector asks for: Ready, unless it says Allocated.
+func stateOf(selector *allocationv1.GameServerSelector) agonesv1.GameServerState {
+	if selector.GameServerState != nil {
+		return *selector.GameServerState
+	}
+	return agonesv1.GameServerStateReady
+}
+
+// countIn is how many GameServers a node has in a state, of the two that
+// are counted.
+func countIn(count gameservers.NodeCount, state agonesv1.GameServerState) int {
+	if state == agonesv1.GameServerStateAllocated {
+		return int(count.Allocated)
+	}
+	return int(count.Ready)
+}
+
 // firstOn returns the best of the wanted GameServers on the first group of
 // nodes that has any.
 func firstOn(groups [][]string, state agonesv1.GameServerState, on func(string, agonesv1.GameServerState) []*agonesv1.GameServer, wanted func(*agonesv1.GameServer) bool, before order) (*agonesv1.GameServer, bool) {

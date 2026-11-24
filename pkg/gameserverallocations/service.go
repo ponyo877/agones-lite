@@ -240,14 +240,21 @@ func (s *Service) takeTurn(ctx context.Context) error {
 // find chooses the GameServer for a request among those on the nodes
 // players can be sent to: connected and not cordoned.
 //
-// Packed is the default, and the one way of choosing that does not need a
-// look at every GameServer. The others get one.
+// Packed is the default, and needs no look at every GameServer. Neither
+// does Distributed, most of the time: a request that asks for no order
+// among the GameServers is given one by chance. What is left gets the look.
 func (s *Service) find(gsa *allocationv1.GameServerAllocation) (*agonesv1.GameServer, bool) {
 	counts := s.open()
 	if gsa.Spec.Scheduling == apis.Packed {
 		return FindPacked(gsa, counts, func(node string, state agonesv1.GameServerState) []*agonesv1.GameServer {
 			return gameservers.OnNodeIn(s.servers, node, state)
 		})
+	}
+	one := func(node string, state agonesv1.GameServerState, place int) (*agonesv1.GameServer, bool) {
+		return gameservers.OneOnNodeIn(s.servers, node, state, place)
+	}
+	if gs, found := FindSpread(gsa, counts, one, s.Pick); found {
+		return gs, true
 	}
 	return Find(gsa, s.servers.View(gsa.Namespace), counts, s.Pick)
 }
