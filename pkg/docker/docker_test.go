@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/ponyo877/agones-lite/test/testenv"
 )
 
 func TestSplitTag(t *testing.T) {
@@ -146,14 +148,14 @@ func TestAStreamThatEndsInsideAFrameIsNotTakenForAWholeLog(t *testing.T) {
 }
 
 // TestAgainstTheDaemon runs a real container. It is skipped when no Docker
-// daemon answers at DefaultHost.
+// daemon answers at DefaultHost, except in CI, where one has to.
 func TestAgainstTheDaemon(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	c, err := New(DefaultHost())
 	require.NoError(t, err)
 	if err := c.Ping(ctx); err != nil {
-		t.Skipf("no Docker daemon at %s: %v", DefaultHost(), err)
+		testenv.Missing(t, "no Docker daemon at %s: %v", DefaultHost(), err)
 	}
 
 	const image, label = "alpine:3.20", "agones-lite.test"

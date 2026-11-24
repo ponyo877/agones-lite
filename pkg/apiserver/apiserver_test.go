@@ -19,6 +19,7 @@ import (
 	"github.com/ponyo877/agones-lite/pkg/agent"
 	"github.com/ponyo877/agones-lite/pkg/agones"
 	"github.com/ponyo877/agones-lite/pkg/store"
+	"github.com/ponyo877/agones-lite/test/testenv"
 )
 
 const manifest = `
@@ -130,7 +131,7 @@ func TestAcceptsTheUpstreamSamples(t *testing.T) {
 	root, _ := filepath.Glob("../../third_party/agones/examples/gameserver.yaml")
 	samples = append(samples, root...)
 	if len(samples) == 0 {
-		t.Skip("the Agones submodule is not checked out")
+		testenv.Missing(t, "the Agones submodule is not checked out")
 	}
 	for _, sample := range samples {
 		if strings.Contains(sample, "allocation") {
@@ -228,7 +229,7 @@ func TestAcceptsTheUpstreamFleetSamples(t *testing.T) {
 		t.Run(sample, func(t *testing.T) {
 			body, err := os.ReadFile(filepath.Join("../../third_party/agones", sample))
 			if err != nil {
-				t.Skip("the Agones submodule is not checked out")
+				testenv.Missing(t, "the Agones submodule is not checked out")
 			}
 			var head struct {
 				Metadata struct{ Name string } `json:"metadata"`
@@ -249,7 +250,7 @@ func TestAcceptsTheUpstreamFleetAutoscalerSamples(t *testing.T) {
 		t.Run(sample, func(t *testing.T) {
 			body, err := os.ReadFile(filepath.Join("../../third_party/agones", sample))
 			if err != nil {
-				t.Skip("the Agones submodule is not checked out")
+				testenv.Missing(t, "the Agones submodule is not checked out")
 			}
 			var head struct {
 				Metadata struct{ Name string } `json:"metadata"`
