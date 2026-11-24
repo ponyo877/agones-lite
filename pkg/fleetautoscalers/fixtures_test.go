@@ -144,28 +144,28 @@ func readyOn(node string, with func(count, capacity int64) option, each ...usage
 }
 
 // bufferPolicy keeps size replicas free, between min and max replicas.
-func bufferPolicy(size intstr.IntOrString, min, max int32) autoscalingv1.FleetAutoscalerPolicy {
+func bufferPolicy(size intstr.IntOrString, least, most int32) autoscalingv1.FleetAutoscalerPolicy {
 	return autoscalingv1.FleetAutoscalerPolicy{
 		Type:   bufferType,
-		Buffer: &autoscalingv1.BufferPolicy{BufferSize: size, MinReplicas: min, MaxReplicas: max},
+		Buffer: &autoscalingv1.BufferPolicy{BufferSize: size, MinReplicas: least, MaxReplicas: most},
 	}
 }
 
 // counterPolicy keeps size of the rooms Counter free, between min and max
 // total capacity.
-func counterPolicy(size intstr.IntOrString, min, max int64) autoscalingv1.FleetAutoscalerPolicy {
+func counterPolicy(size intstr.IntOrString, least, most int64) autoscalingv1.FleetAutoscalerPolicy {
 	return autoscalingv1.FleetAutoscalerPolicy{
 		Type:    counterType,
-		Counter: &autoscalingv1.CounterPolicy{Key: rooms, BufferSize: size, MinCapacity: min, MaxCapacity: max},
+		Counter: &autoscalingv1.CounterPolicy{Key: rooms, BufferSize: size, MinCapacity: least, MaxCapacity: most},
 	}
 }
 
 // listPolicy keeps size of the players List free, between min and max total
 // capacity.
-func listPolicy(size intstr.IntOrString, min, max int64) autoscalingv1.FleetAutoscalerPolicy {
+func listPolicy(size intstr.IntOrString, least, most int64) autoscalingv1.FleetAutoscalerPolicy {
 	return autoscalingv1.FleetAutoscalerPolicy{
 		Type: listType,
-		List: &autoscalingv1.ListPolicy{Key: players, BufferSize: size, MinCapacity: min, MaxCapacity: max},
+		List: &autoscalingv1.ListPolicy{Key: players, BufferSize: size, MinCapacity: least, MaxCapacity: most},
 	}
 }
 

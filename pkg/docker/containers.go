@@ -209,7 +209,7 @@ func (c *Client) RemoveVolumes(ctx context.Context, prefix string) error {
 
 // listQuery builds the filter the list endpoints expect.
 func listQuery(field, value string) url.Values {
-	filters, _ := json.Marshal(map[string][]string{field: {value}})
+	filters, _ := json.Marshal(map[string][]string{field: {value}}) //nolint:errchkjson // a map of strings always marshals
 	return url.Values{"all": {"true"}, "filters": {string(filters)}}
 }
 

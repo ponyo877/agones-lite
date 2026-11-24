@@ -134,6 +134,8 @@ func (c credentials) header() string {
 	if c.Username == "" && c.IdentityToken == "" {
 		return ""
 	}
-	raw, _ := json.Marshal(c) // a struct of strings always marshals
+	// A struct of strings always marshals. That it holds a password is the
+	// point: this is what logs in.
+	raw, _ := json.Marshal(c) //nolint:errchkjson,gosec // see above
 	return base64.URLEncoding.EncodeToString(raw)
 }

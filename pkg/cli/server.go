@@ -214,6 +214,7 @@ func serveAgents(ctx context.Context, address string, service nodev1.NodesServer
 	if err != nil {
 		return err
 	}
+	//nolint:contextcheck // what guards a call goes by the context of that call, not by ours
 	options := append(auth.RequireGRPC(secrets, auth.Node),
 		grpc.Creds(credentials.NewTLS(secrets.ServerTLS())),
 		// Agents ping to notice a lost control plane; allow them to.

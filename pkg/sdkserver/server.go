@@ -124,7 +124,7 @@ func loopback(port int) ([]net.Listener, error) {
 	}
 	v6, err := net.Listen("tcp6", fmt.Sprintf("[::1]:%d", port))
 	if err != nil {
-		return []net.Listener{v4}, nil // IPv6 is switched off here
+		return []net.Listener{v4}, nil //nolint:nilerr // IPv6 is switched off here, which is no reason not to serve
 	}
 	return []net.Listener{v4, v6}, nil
 }

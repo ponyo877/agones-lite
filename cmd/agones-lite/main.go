@@ -14,10 +14,16 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+// run is main, with a way out that lets what was deferred happen first.
+func run() (exitCode int) {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	if err := cli.Main(ctx, os.Args[1:], os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }

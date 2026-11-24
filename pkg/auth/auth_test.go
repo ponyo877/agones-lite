@@ -314,8 +314,8 @@ func FuzzToken(f *testing.F) {
 		assert.False(t, empty.Allows(role, token), "an empty secret must match nothing")
 
 		prefix, secret := "", token
-		if i := strings.Index(token, "."); i >= 0 {
-			prefix, secret = token[:i], token[i+1:]
+		if before, after, found := strings.Cut(token, "."); found {
+			prefix, secret = before, after
 		}
 		good := secret != "" && (secret == s.tokens[role] || secret == s.tokens[Admin])
 		assert.Equal(t, good, s.Allows(role, token), "token %q with the fingerprint %q for %q", token, prefix, role)

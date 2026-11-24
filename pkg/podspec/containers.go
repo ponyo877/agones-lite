@@ -22,7 +22,7 @@ const (
 	LabelNode = "agones-lite.node"
 	LabelRole = "agones-lite.role"
 	// LabelToken is on the sidecar only: the secret it shows the agent.
-	LabelToken = "agones-lite.token"
+	LabelToken = "agones-lite.token" //nolint:gosec // the name of the label, not what is in it
 )
 
 // Roles a container can have within a GameServer.
@@ -39,7 +39,7 @@ const SidecarName = "agones-gameserver-sidecar"
 const (
 	EnvAgent      = "AGONES_LITE_AGENT"
 	EnvGameServer = "AGONES_LITE_GAMESERVER"
-	EnvToken      = "AGONES_LITE_TOKEN"
+	EnvToken      = "AGONES_LITE_TOKEN" //nolint:gosec // the name of the variable, not what is in it
 	// The SDK port variables are upstream's, also given to the game containers.
 	EnvGRPCPort = "AGONES_SDK_GRPC_PORT"
 	EnvHTTPPort = "AGONES_SDK_HTTP_PORT"

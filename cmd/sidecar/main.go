@@ -21,7 +21,7 @@ import (
 const (
 	envAgent      = "AGONES_LITE_AGENT"
 	envGameServer = "AGONES_LITE_GAMESERVER"
-	envToken      = "AGONES_LITE_TOKEN"
+	envToken      = "AGONES_LITE_TOKEN" //nolint:gosec // the name of the variable that holds the token
 	envGRPCPort   = "AGONES_SDK_GRPC_PORT"
 	envHTTPPort   = "AGONES_SDK_HTTP_PORT"
 )

@@ -87,8 +87,8 @@ func pickFree(n int, r litev1.PortRange, used map[int32]bool) ([]int32, bool) {
 	// Counted as int64: an int32 that has reached a range's end at the
 	// largest int32 starts again at the smallest, far outside the range.
 	for port := int64(r.Min); port <= int64(r.Max) && len(free) < n; port++ {
-		if !used[int32(port)] {
-			free = append(free, int32(port))
+		if p := int32(port); !used[p] { //nolint:gosec // between r.Min and r.Max, which are int32
+			free = append(free, p)
 		}
 	}
 	return free, len(free) == n

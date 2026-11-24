@@ -128,7 +128,7 @@ func (c *Client) newRequest(ctx context.Context, method, path string, query url.
 // jsonBody returns in as the body of a request: none at all when in is nil.
 func jsonBody(in any) (io.Reader, error) {
 	if in == nil {
-		return nil, nil
+		return http.NoBody, nil
 	}
 	data, err := json.Marshal(in)
 	return bytes.NewReader(data), err

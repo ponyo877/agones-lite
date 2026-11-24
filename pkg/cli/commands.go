@@ -182,7 +182,10 @@ func runScale(ctx context.Context, args []string, out io.Writer) error {
 	if len(positional) != 2 || positional[0] != "fleet" || *replicas < 0 {
 		return errors.New("usage: agones-lite scale fleet NAME --replicas N")
 	}
-	body, _ := json.Marshal(map[string]int{"replicas": *replicas})
+	body, err := json.Marshal(map[string]int{"replicas": *replicas})
+	if err != nil {
+		return err
+	}
 	c, err := conn.admin()
 	if err != nil {
 		return err
