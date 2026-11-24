@@ -30,6 +30,12 @@ type Checker interface {
 // guardStream. It is cut off rather than ended, so that the client sees a
 // broken connection and not what looks like the natural end of a log.
 func RequireHTTP(check Checker, role Role, next http.Handler) http.Handler {
+	return requireHTTP(check, role, next, recheckEvery)
+}
+
+// requireHTTP is RequireHTTP with the time between two looks at the token
+// of an answer that goes on. A test does not have five seconds.
+func requireHTTP(check Checker, role Role, next http.Handler, every time.Duration) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		allowed := func() error { return allowedHTTP(r, check, role) }
 		if allowed() != nil {
@@ -39,7 +45,7 @@ func RequireHTTP(check Checker, role Role, next http.Handler) http.Handler {
 		}
 		ctx, end := context.WithCancelCause(r.Context())
 		defer end(nil)
-		go endWhenRefused(ctx, end, allowed)
+		go endWhenRefused(ctx, end, allowed, every)
 		next.ServeHTTP(w, r.WithContext(ctx))
 		if errors.Is(context.Cause(ctx), errRefused) {
 			panic(http.ErrAbortHandler) // net/http's way to close the connection in mid-answer
@@ -64,7 +70,7 @@ func hasVerifiedCertificate(r *http.Request) bool {
 
 // recheckEvery is how often the token of an open stream, or of an answer
 // that goes on, is looked at again.
-var recheckEvery = 5 * time.Second
+const recheckEvery = 5 * time.Second
 
 // RequireGRPC returns the server options that do for gRPC what RequireHTTP
 // does for HTTP, on single calls and on streams alike.
@@ -76,7 +82,7 @@ func RequireGRPC(check Checker, role Role) []grpc.ServerOption {
 		}
 		return handler(ctx, req)
 	}
-	return []grpc.ServerOption{grpc.UnaryInterceptor(unary), grpc.StreamInterceptor(guardStream(allowed))}
+	return []grpc.ServerOption{grpc.UnaryInterceptor(unary), grpc.StreamInterceptor(guardStream(allowed, recheckEvery))}
 }
 
 func allowedGRPC(ctx context.Context, check Checker, role Role) error {
@@ -93,14 +99,14 @@ func allowedGRPC(ctx context.Context, check Checker, role Role) error {
 // the token stops being valid, for example because it was rotated. Without
 // the second half, a caller that could no longer make a single call would
 // keep its open stream, and look connected while nothing it says is heard.
-func guardStream(allowed func(context.Context) error) grpc.StreamServerInterceptor {
+func guardStream(allowed func(context.Context) error, every time.Duration) grpc.StreamServerInterceptor {
 	return func(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		if err := allowed(ss.Context()); err != nil {
 			return err
 		}
 		ctx, end := context.WithCancelCause(ss.Context())
 		defer end(nil)
-		go endWhenRefused(ctx, end, func() error { return allowed(ctx) })
+		go endWhenRefused(ctx, end, func() error { return allowed(ctx) }, every)
 		err := handler(srv, &guarded{ServerStream: ss, ctx: ctx})
 		if refused := context.Cause(ctx); status.Code(refused) == codes.Unauthenticated {
 			return refused
@@ -109,10 +115,10 @@ func guardStream(allowed func(context.Context) error) grpc.StreamServerIntercept
 	}
 }
 
-// endWhenRefused checks again every recheckEvery and ends the stream with
+// endWhenRefused checks again at every tick and ends the stream with
 // the refusal as its cause.
-func endWhenRefused(ctx context.Context, end context.CancelCauseFunc, allowed func() error) {
-	tick := time.NewTicker(recheckEvery)
+func endWhenRefused(ctx context.Context, end context.CancelCauseFunc, allowed func() error, every time.Duration) {
+	tick := time.NewTicker(every)
 	defer tick.Stop()
 	for {
 		select {
