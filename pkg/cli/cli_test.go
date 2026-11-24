@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -246,4 +247,32 @@ func TestFollowFailsWhenTheConnectionBreaks(t *testing.T) {
 
 	assert.ErrorContains(t, err, "the watch broke off")
 	assert.NotErrorIs(t, err, errWatchClosed)
+}
+
+func TestBufferSaysHowManyToKeepReadyAndWhy(t *testing.T) {
+	var out strings.Builder
+
+	err := runBuffer(context.Background(), []string{"--rate", "2", "--startup", "5s"}, &out)
+
+	require.NoError(t, err)
+	assert.Equal(t, `bufferSize: 90
+
+At 2 allocations a second, 70 are asked for in the 30s between two looks of
+the autoscaler and the 5s a game server takes to be Ready. What is Ready or
+on its way at one look has to do for that long. With 90, a request finds
+nothing Ready after at most 1 of every 100 looks.
+`, out.String())
+}
+
+func TestBufferAsksForARateAndAStartupTimeThatMakeSense(t *testing.T) {
+	for _, args := range [][]string{
+		{},
+		{"--rate", "0", "--startup", "5s"},
+		{"--rate", "2", "--startup", "-1s"},
+		{"--rate", "2", "--startup", "5s", "--sync", "0s"},
+		{"--rate", "2", "--startup", "5s", "--miss", "0"},
+		{"--rate", "2", "--startup", "5s", "--miss", "1"},
+	} {
+		assert.ErrorContains(t, runBuffer(context.Background(), args, io.Discard), "usage: agones-lite buffer", "%v", args)
+	}
 }

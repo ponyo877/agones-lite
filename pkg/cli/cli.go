@@ -1,7 +1,8 @@
 // Package cli is the agones-lite command line: one binary that is the
 // control plane ("server"), the agent for further nodes ("agent"), and the
 // tool to talk to them ("apply", "get", "describe", "delete", "scale",
-// "allocate", "node", "token").
+// "allocate", "node", "token"). "buffer" talks to nobody: it works out a
+// number.
 //
 // Each command is one function in its own file. They share nothing but the
 // small HTTP client in client.go.
@@ -33,6 +34,7 @@ var commands = map[string]command{
 	"delete":   runDelete,
 	"scale":    runScale,
 	"allocate": runAllocate,
+	"buffer":   runBuffer,
 	"version":  runVersion,
 }
 
