@@ -1,0 +1,264 @@
+name: ci
+
+# The last check before a change reaches main: nobody reads every line of a
+# pull request, and this does not get tired. Every job below is one way a
+# change could be wrong. The job at the end, "ci", passes only when all of
+# them do, and is the one the protection of main asks for.
+#
+# What a job runs is a command that also runs on a developer's machine:
+# "make check" runs most of them in one go.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Mondays, with no change at all: a dependency may have been found
+    # vulnerable since the last one.
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    # Named, so that a command that fails before a pipe fails the step.
+    shell: bash
+
+jobs:
+  # Code that is hard to read, mistakes that compile, and files that are
+  # not what a tool would have written.
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: golangci-lint (complexity, length, mistakes, security)
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.15.0
+      - name: go.mod and go.sum are what go mod tidy writes
+        run: go mod tidy -diff
+      - name: The modules are the ones go.sum knows
+        run: go mod verify
+      - name: The workflows are well-formed
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: The scripts are well-formed
+        run: shellcheck build/ci/*.sh
+
+  # Everything that is released builds, for every platform it is released
+  # for. The release workflow runs the same two commands, on a tag.
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: The binaries, for four platforms
+        run: make dist VERSION=ci
+      - name: The one for this machine runs
+        run: test "$(dist/agones-lite-linux-amd64 version)" = "agones-lite ci"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: The sidecar image, for both architectures
+        run: docker buildx build --platform linux/amd64,linux/arm64 --file build/sidecar/Dockerfile.release dist
+
+  # Every test, on the three kinds of machine agones-lite runs on, with the
+  # race detector and in an order drawn anew each time. On Linux nothing a
+  # test needs is missing, Docker included, so a test that cannot run fails
+  # (test/testenv), and so does the job when one was skipped all the same.
+  # macOS has no Docker daemon here.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            complete: "1"
+          - os: ubuntu-24.04-arm
+            complete: "1"
+          - os: macos-latest
+            complete: ""
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      AGONES_LITE_COMPLETE: ${{ matrix.complete }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Some tests feed the upstream sample manifests to our API.
+          submodules: true
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Test
+        run: go test -race -shuffle=on -count=1 ./...
+      - name: No test was skipped
+        if: matrix.complete
+        run: build/ci/skipped.sh
+
+  # Code that came in without tests shows as a drop. The floor is a little
+  # under what the tests reach today, and is raised when they reach more.
+  coverage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      AGONES_LITE_COMPLETE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: The tests reach no less of the code than they did
+        run: build/ci/coverage.sh 79
+
+  # The property tests and the model tests, with ten times the tries a
+  # plain "go test" gives them.
+  properties:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      AGONES_LITE_COMPLETE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: A thousand tries for each property
+        run: build/ci/properties.sh 1000
+
+  # Half a minute of new inputs for what takes bytes from outside. The
+  # tests above only replay the inputs that were kept. FuzzAdmit is left to
+  # runs by hand for the time being: the README says how.
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: The fuzz targets, for thirty seconds each
+        run: build/ci/fuzz.sh 30
+        env:
+          FUZZ_SKIP: ^FuzzAdmit$
+      - name: Keep the inputs that failed
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: failing-fuzz-inputs
+          path: "**/testdata/fuzz/**"
+          if-no-files-found: ignore
+
+  # The scale agones-lite is designed for, held against its targets, and
+  # every benchmark run once so that it still runs.
+  load:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: 1,000 game servers, 50 allocations a second
+        run: go test ./pkg/controlplane/ -run '^TestLoad$' -count=1 -v | tee load.txt
+        env:
+          AGONES_LITE_LOAD: "1"
+      - name: The load test did run
+        run: grep -- '--- PASS[:] TestLoad ' load.txt
+      - name: Every benchmark, once
+        run: go test ./... -run '^$' -bench . -benchtime 1x
+
+  # The generated code is what the generator writes from the .proto files.
+  generated:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Install protoc (the version the generated files name in their headers)
+        run: |
+          curl -sSfLo protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v33.4/protoc-33.4-linux-x86_64.zip
+          echo "c0040ea9aef08fdeb2c74ca609b18d5fdbfc44ea0042fcfbfb38860d35f7dd66  protoc.zip" | sha256sum --check
+          unzip -q protoc.zip -d "$HOME/protoc" && rm protoc.zip
+          echo "$HOME/protoc/bin" >> "$GITHUB_PATH"
+      - name: Generating the code again changes nothing
+        run: make proto && git diff --exit-code -- proto
+
+  # The Lean proofs hold, with nothing left to be proved later, and the
+  # vectors the Go tests replay are what the models answer.
+  proofs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Lean (the version named in formal/lean-toolchain)
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/3cc76985a1becb3c03cd65c1c5007e6f186ae474/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: No proof is put off, assumed, or left to the compiler
+        run: |
+          found=0
+          grep -rnwE 'sorry|admit|axiom|native_decide' formal/Formal formal/*.lean || found=$?
+          test "$found" -eq 1 # 1 is grep for "none"; 2 would be "could not look"
+      - name: Check every proof, and let no warning pass
+        working-directory: formal
+        run: lake build --wfail
+      - name: The vectors in the repository are what the models answer
+        working-directory: formal
+        run: lake exe vectors && git diff --exit-code -- vectors
+
+  # No vulnerability that is known today and that the code reaches.
+  vulnerabilities:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
+
+  # The reference copy of Agones is the version the build uses, untouched.
+  pinned:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: third_party/agones is the commit of the module's version
+        run: build/ci/pinned.sh
+
+  # The one check to require: it passes when every job above has passed,
+  # and fails when one failed, was cancelled or did not run.
+  ci:
+    if: always()
+    needs: [lint, build, test, coverage, properties, fuzz, load, generated, proofs, vulnerabilities, pinned]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every check passed
+        run: jq -e 'all(.[]; .result == "success")' <<< "$NEEDS"
+        env:
+          NEEDS: ${{ toJSON(needs) }}

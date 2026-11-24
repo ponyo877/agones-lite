@@ -1,0 +1,16 @@
+# Example /etc/agones-lite/server.yaml. The keys are the flags of
+# `agones-lite server`; see `agones-lite server --help`.
+data-dir: /var/lib/agones-lite
+
+# Where operators, matchmakers and agents on other machines connect.
+listen: 0.0.0.0:9443
+allocation-listen: 0.0.0.0:9444
+node-listen: 0.0.0.0:9445
+# Names and addresses clients use for this machine, for the certificate.
+tls-san: cp.example.com,203.0.113.10
+
+# The node that runs in the same process.
+node-name: node-1
+address: 203.0.113.10
+min-port: 7000
+max-port: 8000

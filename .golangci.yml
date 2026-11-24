@@ -1,0 +1,89 @@
+version: "2"
+
+linters:
+  enable:
+    # Code that reads well: the limits the project sets itself.
+    - gocognit
+    - funlen
+    - nestif
+    - nolintlint
+    - misspell
+    - unconvert
+    - dupword
+    - gocritic
+    - intrange
+    - mirror
+    - predeclared
+    - unparam
+    - usestdlibvars
+    - usetesting
+    # Mistakes that compile.
+    - bodyclose
+    - contextcheck
+    - copyloopvar
+    - durationcheck
+    - errchkjson
+    - errorlint
+    - fatcontext
+    - makezero
+    - musttag
+    - nilerr
+    - nilnil
+    - nosprintfhostport
+    - reassign
+    - recvcheck
+    - rowserrcheck
+    - sqlclosecheck
+    - wastedassign
+    # What an attacker, or a number too large, could make of it.
+    - asciicheck
+    - bidichk
+    - gocheckcompilerdirectives
+    - gosec
+  settings:
+    gosec:
+      excludes:
+        # Reading the file an operator names is what a configuration is for.
+        - G304
+    usetesting:
+      # A unix socket needs a short path, and the model tests a directory
+      # in memory: neither is what t.TempDir gives.
+      os-mkdir-temp: false
+    gocognit:
+      min-complexity: 10
+    funlen:
+      lines: 50
+      statements: -1
+      ignore-comments: true
+    nestif:
+      min-complexity: 4
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+  exclusions:
+    paths:
+      - third_party
+    rules:
+      # Table-driven tests are long because the tables are. And a test may
+      # draw its numbers from math/rand, stand in for a daemon with a
+      # function that returns nothing, and leave a body for the end of the
+      # process to close.
+      - path: _test\.go
+        linters:
+          - bodyclose
+          - contextcheck
+          - errchkjson
+          - funlen
+          - gosec
+          - musttag
+          - nilnil
+          - unparam
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    paths:
+      # The Agones submodule is a reference copy and must never be rewritten.
+      - third_party

@@ -1,0 +1,34 @@
+# A FleetAutoscaler with a policy of every kind agones-lite applies, one
+# inside the other as far as they go.
+apiVersion: autoscaling.agones.dev/v1
+kind: FleetAutoscaler
+metadata:
+  name: everything
+spec:
+  fleetName: everything
+  sync:
+    type: FixedInterval
+    fixedInterval: {seconds: 30}
+  policy:
+    type: Chain
+    chain:
+      - id: weekend
+        type: Schedule
+        schedule:
+          between: {start: "2024-01-01T00:00:00Z", end: "2999-01-01T00:00:00Z"}
+          activePeriod: {timezone: Asia/Tokyo, startCron: "0 9 * * 6", duration: 12h}
+          policy:
+            type: Buffer
+            buffer: {bufferSize: 20%, minReplicas: 2, maxReplicas: 50}
+      - id: rooms
+        type: Counter
+        counter: {key: rooms, bufferSize: 5, minCapacity: 10, maxCapacity: 100}
+      - id: players
+        type: List
+        list: {key: players, bufferSize: 10%, minCapacity: 4, maxCapacity: 400}
+      - id: ask
+        type: Webhook
+        webhook: {url: "https://scaler.example.com/scale"}
+      - id: default
+        type: Buffer
+        buffer: {bufferSize: 2, maxReplicas: 10}

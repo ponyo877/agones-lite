@@ -1,0 +1,90 @@
+// The conversation between a GameServer's sidecar and the agent on its node.
+//
+// The sidecar always dials the agent. Every call carries two gRPC metadata
+// entries: "gameserver" (namespace/name) and "authorization" (Bearer token).
+// The agent gave the sidecar that token when it created the container.
+//
+// Change this file by adding fields only. A running game server keeps its
+// old sidecar across an upgrade of the agent, so both must keep talking.
+syntax = "proto3";
+
+package agoneslite.sidecar.v1;
+
+option go_package = "github.com/ponyo877/agones-lite/proto/sidecar/v1;sidecarv1";
+
+service Agent {
+  // Watch sends the GameServer as the SDK shows it: the current one at once,
+  // then a new one after every change.
+  rpc Watch(WatchRequest) returns (stream WatchResponse);
+
+  // Tell passes on what the game server asked for through the SDK, or what
+  // the sidecar noticed about it.
+  rpc Tell(TellRequest) returns (TellResponse);
+}
+
+message WatchRequest {}
+
+message WatchResponse {
+  // A serialized agones.dev.sdk.GameServer, exactly what GetGameServer returns.
+  bytes game_server = 1;
+}
+
+enum Event {
+  EVENT_UNSPECIFIED = 0;
+  EVENT_READY = 1;
+  EVENT_ALLOCATE = 2;
+  EVENT_SHUTDOWN = 3;
+  EVENT_RESERVE = 4;
+  EVENT_HEALTH_FAILED = 5;
+  EVENT_SET_METADATA = 6;
+  EVENT_UPDATE_COUNTS = 7;
+  // The time of a Reserve is up. Unlike EVENT_READY it only takes a game
+  // server that is still Reserved back to Ready: one that has allocated
+  // itself in the meantime keeps its session.
+  EVENT_RESERVE_EXPIRED = 8;
+}
+
+message TellRequest {
+  Event event = 1;
+  // For EVENT_RESERVE: how long to stay Reserved. Zero means until told otherwise.
+  int64 reserve_seconds = 2;
+  // For EVENT_SET_METADATA: what SetLabel and SetAnnotation asked for.
+  // Keys come without the "agones.dev/sdk-" prefix; the control plane adds it.
+  map<string, string> labels = 3;
+  map<string, string> annotations = 4;
+  // For EVENT_UPDATE_COUNTS: changes to Counters and Lists, in the order
+  // the game server made them.
+  repeated CounterUpdate counters = 5;
+  repeated ListUpdate lists = 6;
+  // For EVENT_UPDATE_COUNTS: a name no other change has. A request is sent
+  // again when its answer was lost, and the name lets the control plane see
+  // that it is the same change and not a second one.
+  string change_id = 7;
+}
+
+// CounterUpdate changes one Counter. Capacity is applied first, then count,
+// then count_diff.
+message CounterUpdate {
+  string name = 1;
+  // The new capacity, when set.
+  optional int64 capacity = 2;
+  // The new count, when set.
+  optional int64 count = 3;
+  // Added to the count. May be negative.
+  int64 count_diff = 4;
+}
+
+// ListUpdate changes one List. Capacity is applied first, then add, then remove.
+message ListUpdate {
+  string name = 1;
+  // The new capacity, when set.
+  optional int64 capacity = 2;
+  repeated string add = 3;
+  repeated string remove = 4;
+}
+
+message TellResponse {
+  // For EVENT_UPDATE_COUNTS: the GameServer after the change, as a
+  // serialized agones.dev.sdk.GameServer. Empty for the other events.
+  bytes game_server = 1;
+}

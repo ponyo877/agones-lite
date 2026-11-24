@@ -1,0 +1,55 @@
+# A GameServer that sets every field agones-lite carries over to Docker.
+# FuzzAdmit starts from it, so that its mutations land near every check.
+apiVersion: agones.dev/v1
+kind: GameServer
+metadata:
+  generateName: everything-
+  labels: {tier: gold}
+  annotations: {example.com/note: a seed}
+spec:
+  container: game
+  scheduling: Packed
+  ports:
+    - {name: game, portPolicy: Dynamic, containerPort: 7654, protocol: UDP}
+    - {name: query, portPolicy: Static, containerPort: 27015, hostPort: 27015, protocol: TCP}
+    - {name: voice, portPolicy: Passthrough, protocol: TCPUDP}
+    - {name: debug, portPolicy: None, containerPort: 6060, protocol: TCP, container: logs}
+  health: {initialDelaySeconds: 5, periodSeconds: 5, failureThreshold: 3}
+  sdkServer: {logLevel: Info, grpcPort: 9357, httpPort: 9358}
+  counters:
+    rooms: {count: 1, capacity: 10}
+  lists:
+    players: {capacity: 4, values: [ann, bob]}
+  eviction: {safe: OnUpgrade}
+  template:
+    metadata:
+      labels: {app: game}
+      annotations: {example.com/note: kept}
+    spec:
+      terminationGracePeriodSeconds: 30
+      volumes:
+        - name: scratch
+          emptyDir: {}
+        - name: maps
+          hostPath: {path: /srv/maps}
+      containers:
+        - name: game
+          image: gcr.io/example/game:1.2
+          command: [/game]
+          args: [--port, "7654"]
+          workingDir: /srv
+          env:
+            - {name: MODE, value: ranked}
+            - {name: EMPTY}
+          ports:
+            - {name: game, containerPort: 7654, protocol: UDP}
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 128Mi}
+          imagePullPolicy: IfNotPresent
+          securityContext: {runAsUser: 1000, runAsGroup: 1000, readOnlyRootFilesystem: true}
+          volumeMounts:
+            - {name: scratch, mountPath: /tmp}
+            - {name: maps, mountPath: /maps, readOnly: true}
+        - name: logs
+          image: example/logs@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
