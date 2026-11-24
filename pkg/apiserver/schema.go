@@ -109,10 +109,23 @@ func gameServerPortSchema(p agonesv1.GameServerPort, at *field.Path) field.Error
 		oneOf(p.Protocol, at.Child("protocol"), corev1.ProtocolUDP, corev1.ProtocolTCP, agonesv1.ProtocolTCPUDP),
 		portNumber(p.ContainerPort, at.Child("containerPort")),
 		portNumber(p.HostPort, at.Child("hostPort")),
+		staticHostPort(p, at.Child("hostPort")),
 		// The schema takes any name. Upstream then looks the name up among
 		// the port ranges of its installation; here a node has one range.
 		oneOf(p.Range, at.Child("range"), agonesv1.DefaultPortRange),
 	)
+}
+
+// staticHostPort asks a Static port for its host port. Static means that
+// the manifest says which port of the node the game server takes. With
+// none, Docker would be asked for port 0, takes that to mean any port that
+// is free, and nobody would be told which one it was. The CRD schema does
+// not ask for it.
+func staticHostPort(p agonesv1.GameServerPort, at *field.Path) field.ErrorList {
+	if p.PortPolicy != agonesv1.Static || p.HostPort != 0 {
+		return nil
+	}
+	return field.ErrorList{field.Required(at, "a Static port says which port of the node it takes")}
 }
 
 // staticPortsSchema refuses two Static ports on one host port and protocol.

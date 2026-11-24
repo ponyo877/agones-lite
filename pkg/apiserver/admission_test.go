@@ -175,6 +175,11 @@ func refusedByTheSchema(t testing.TB) map[string]refusal {
 			replace(t, manifest, "containerPort: 7654", "containerPort: 7654\n      portPolicy: Static\n      hostPort: 99999"),
 			"spec.ports[0].hostPort",
 		},
+		"a Static port that does not say which port of the node it takes": {
+			http.MethodPost, gameServersPath,
+			replace(t, manifest, "containerPort: 7654", "containerPort: 7654\n      portPolicy: Static"),
+			"spec.ports[0].hostPort",
+		},
 		"a container port that is not a port": {
 			http.MethodPost, gameServersPath,
 			replace(t, manifest, "containerPort: 7654", "containerPort: 70000"),
