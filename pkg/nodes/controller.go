@@ -59,6 +59,32 @@ func GivenUp(node *litev1.Node, onNode []*agonesv1.GameServer, graces Graces, no
 	return lost
 }
 
+// MostAreGone reports whether more than half of the nodes are out of reach.
+//
+// Then the one thing they have in common is the likeliest to be broken:
+// this control plane, or its network. From here that looks exactly like
+// every one of those machines failing at once, and the two call for
+// opposite things. If the machines are fine, giving up their idle
+// GameServers has them all taken down and started again the moment the
+// agents are back, and for as long as that takes there is nothing to
+// allocate. So while most nodes are gone, nothing is given up. Borg holds
+// back for the same reason, "because it cannot distinguish between
+// large-scale machine failure and a network partition" (Verma et al.,
+// "Large-scale cluster management at Google with Borg", EuroSys 2015), and
+// Kubernetes stops evicting in a small cluster where most nodes look dead.
+//
+// The price: when most of the machines really are lost, what ran on them is
+// not replaced until an operator deletes those nodes, which says they are.
+func MostAreGone(nodes []*litev1.Node) bool {
+	gone := 0
+	for _, node := range nodes {
+		if node.Status.Phase == litev1.NodeDisconnected {
+			gone++
+		}
+	}
+	return 2*gone > len(nodes)
+}
+
 // Drained returns the GameServers a draining node should now shut down:
 // those without a session. Allocated and Reserved ones are left to finish.
 func Drained(node *litev1.Node, onNode []*agonesv1.GameServer) []*agonesv1.GameServer {
@@ -179,12 +205,13 @@ func (c *Controller) sync(_ context.Context, key store.Key) error {
 	return c.report(key.Name, Drained(node, onNode), gameservers.ScaledDown, "its node is being drained")
 }
 
-// givenUp is GivenUp, except during the warm-up after a start. The warm-up
-// is never longer than the shorter grace: whoever sets that to seconds
-// does not want to wait half a minute.
+// givenUp is GivenUp, except when the trouble is likelier to be on this
+// side: during the warm-up after a start, and while most nodes are gone at
+// once. The warm-up is never longer than the shorter grace: whoever sets
+// that to seconds does not want to wait half a minute.
 func (c *Controller) givenUp(node *litev1.Node, onNode []*agonesv1.GameServer) []*agonesv1.GameServer {
 	now := c.now()
-	if now.Sub(c.started) < min(warmUp, c.graces.Unallocated) {
+	if now.Sub(c.started) < min(warmUp, c.graces.Unallocated) || MostAreGone(c.nodes.View("")) {
 		return nil
 	}
 	return GivenUp(node, onNode, c.graces, now)
