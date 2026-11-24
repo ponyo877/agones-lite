@@ -132,7 +132,17 @@ make dist   # release binaries for every platform, into dist/
 
 # 1,000 game servers on 10 simulated nodes, 50 allocations a second
 AGONES_LITE_LOAD=1 go test ./pkg/controlplane/ -run TestLoad -v
+
+# How fast it goes at most: a Fleet of 1,000 and of 10,000 until all are
+# Ready, and allocations by 1 and by 64 matchmakers that do not pause
+go test ./pkg/controlplane/ -run '^$' -bench ScaleUp -benchtime 3x
+go test ./pkg/controlplane/ -run '^$' -bench Allocate -benchtime 3000x
 ```
+
+On one arm64 core with a disk that takes 1.5 ms to sync, a Fleet of 1,000
+is Ready after about a second and one of 10,000 after about ten; 64
+matchmakers get a thousand allocations a second. The design document says
+where the time goes.
 
 `test/conformance` drives the sidecar with the official Go SDK and over
 REST; `pkg/controlplane` has the tests that tell the whole story, including
