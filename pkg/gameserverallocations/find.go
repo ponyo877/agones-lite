@@ -6,6 +6,8 @@ import (
 	"agones.dev/agones/pkg/apis"
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	allocationv1 "agones.dev/agones/pkg/apis/allocation/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 
 	"github.com/ponyo877/agones-lite/pkg/gameservers"
 )
@@ -36,17 +38,38 @@ func Find(gsa *allocationv1.GameServerAllocation, servers []*agonesv1.GameServer
 		_, counted := counts[gs.Status.NodeName]
 		return counted && candidate(gsa, gs)
 	})
-	slices.SortFunc(list, orderOf(gsa, counts))
-	choose := first
-	if random(gsa) {
-		choose = pick
-	}
+	before := orderOf(gsa, counts)
 	for i := range gsa.Spec.Selectors {
-		if matches := filter(list, gsa.Spec.Selectors[i].Matches); len(matches) > 0 {
-			return matches[choose(len(matches))], true
+		matches := filter(list, matcher(&gsa.Spec.Selectors[i]))
+		switch {
+		case len(matches) == 0:
+			continue
+		case random(gsa):
+			// Sorted only so that the same pick gives the same GameServer.
+			slices.SortFunc(matches, before)
+			return matches[pick(len(matches))], true
 		}
+		// The one that sorts first, without sorting the rest: with ten
+		// thousand candidates that is most of the work saved.
+		return slices.MinFunc(matches, before), true
 	}
 	return nil, false
+}
+
+// matcher returns what selector.Matches says, made for asking it about many
+// GameServers. The labels are compared here, with a selector that is made
+// once for all of them, and Matches is left with the rest: the state, the
+// Counters and the Lists.
+func matcher(selector *allocationv1.GameServerSelector) func(*agonesv1.GameServer) bool {
+	byLabels, err := metav1.LabelSelectorAsSelector(&selector.LabelSelector)
+	if err != nil {
+		return selector.Matches // it says what is wrong with the request, loudly
+	}
+	rest := *selector
+	rest.LabelSelector = metav1.LabelSelector{}
+	return func(gs *agonesv1.GameServer) bool {
+		return byLabels.Matches(labels.Set(gs.Labels)) && rest.Matches(gs)
+	}
 }
 
 // candidate reports whether gsa may be given gs at all, whatever its
@@ -68,9 +91,6 @@ func candidate(gsa *allocationv1.GameServerAllocation, gs *agonesv1.GameServer) 
 func random(gsa *allocationv1.GameServerAllocation) bool {
 	return gsa.Spec.Scheduling == apis.Distributed && len(gsa.Spec.Priorities) == 0
 }
-
-// first is the choice when the matches are sorted: the best one.
-func first(int) int { return 0 }
 
 func filter(list []*agonesv1.GameServer, keep func(*agonesv1.GameServer) bool) []*agonesv1.GameServer {
 	var kept []*agonesv1.GameServer

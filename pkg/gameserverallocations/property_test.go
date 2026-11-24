@@ -154,6 +154,24 @@ func firstMatches(gsa *allocationv1.GameServerAllocation, servers []*agonesv1.Ga
 	return nil
 }
 
+// Find asks a selector about every candidate through matcher, which
+// compares the labels itself and leaves the rest to Matches. The two must
+// say the same of any GameServer: by its labels, its state, its Counters
+// and its Lists.
+func TestMatcherSaysWhatMatchesSays(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		gsa := aRequest(t)
+		servers := aCrowd(t)
+		for i := range gsa.Spec.Selectors {
+			selector := &gsa.Spec.Selectors[i]
+			quick := matcher(selector)
+			for _, gs := range servers {
+				require.Equal(t, selector.Matches(gs), quick(gs), "selector %d about %s", i, gs.Name)
+			}
+		}
+	})
+}
+
 // A player is sent to whatever Find returns. So it must be a GameServer
 // the request asked for: one that the first selector with any match
 // accepts, that is up, in the request's namespace, not on its way out, and
