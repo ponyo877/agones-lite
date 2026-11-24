@@ -17,6 +17,7 @@ import (
 
 	"github.com/ponyo877/agones-lite/pkg/agones"
 	"github.com/ponyo877/agones-lite/pkg/docker"
+	"github.com/ponyo877/agones-lite/test/testenv"
 )
 
 func server(change func(*corev1.PodSpec)) *agonesv1.GameServer {
@@ -292,7 +293,7 @@ func TestCheckAcceptsTheUpstreamSample(t *testing.T) {
 	require.NoError(t, agones.Setup())
 	raw, err := os.ReadFile("../../third_party/agones/examples/simple-game-server/gameserver.yaml")
 	if err != nil {
-		t.Skip("the Agones submodule is not checked out")
+		testenv.Missing(t, "the Agones submodule is not checked out")
 	}
 	gs := &agonesv1.GameServer{}
 	require.NoError(t, yaml.UnmarshalStrict(raw, gs))

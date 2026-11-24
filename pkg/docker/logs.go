@@ -18,7 +18,7 @@ func (c *Client) Logs(ctx context.Context, id string, follow bool, tail int) (io
 	if tail > 0 {
 		query.Set("tail", strconv.Itoa(tail))
 	}
-	resp, err := c.send(ctx, http.MethodGet, "/containers/"+id+"/logs", query, nil)
+	resp, err := c.send(ctx, http.MethodGet, "/containers/"+id+"/logs", query, nil) //nolint:bodyclose // the body is the log: whoever reads it closes it
 	if err != nil {
 		return nil, err
 	}

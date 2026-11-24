@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -54,6 +55,18 @@ func TestAPortRangeWithoutPortsIsRefusedAtStartup(t *testing.T) {
 	one := nodeOptions{dockerHost: fakeDocker(t), minPort: 7000, maxPort: 7000}
 	_, err := one.connect(context.Background())
 	assert.NoError(t, err, "a range of one port is a range")
+}
+
+// The limit is kept in an int32. A number that does not fit one would be
+// cut to a limit nobody asked for.
+func TestALimitThatIsNoNumberOfGameServersIsRefusedAtStartup(t *testing.T) {
+	for _, limit := range []int{-1, math.MaxInt32 + 1} {
+		n := nodeOptions{dockerHost: fakeDocker(t), minPort: 7000, maxPort: 7100, maxServers: limit}
+
+		_, err := n.connect(context.Background())
+
+		assert.ErrorContains(t, err, "--max-gameservers", "%d", limit)
+	}
 }
 
 func TestTheDockerConfigIsLookedForWhereDockerKeepsIt(t *testing.T) {

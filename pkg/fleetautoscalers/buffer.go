@@ -33,7 +33,7 @@ func (p pass) buffer(b *autoscalingv1.BufferPolicy) (int32, bool, error) {
 	if size > int64(b.MaxReplicas) {
 		size, limited = int64(b.MaxReplicas), true
 	}
-	return int32(size), limited, nil
+	return int32(size), limited, nil //nolint:gosec // held between MinReplicas and MaxReplicas above, which are int32
 }
 
 // bufferFor returns how much has to be free next to what is allocated.

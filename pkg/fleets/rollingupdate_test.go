@@ -1,6 +1,7 @@
 package fleets
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -267,4 +268,21 @@ func TestRollingUpdateStopsWhenNewGameServersDoNotGetReady(t *testing.T) {
 		"old:75 new:50",
 		"old:75 new:50",
 	}, history)
+}
+
+// A share may be more than the whole. Of a Fleet large enough, 150% is
+// more than an int32 holds, and used to come out as a negative number of
+// GameServers.
+func TestAShareOfAVeryLargeFleetIsHeldAtTheLargestNumberThereIs(t *testing.T) {
+	fleet := newFleet(t)
+	fleet.Spec.Replicas, fleet.Status.ReadyReplicas = math.MaxInt32, math.MaxInt32
+	rollingBy(fleet, "150%", "150%")
+
+	surge, err := maxSurge(fleet)
+	require.NoError(t, err)
+	unavailable, err := maxUnavailable(fleet)
+	require.NoError(t, err)
+
+	assert.Equal(t, int32(math.MaxInt32), surge)
+	assert.Equal(t, int32(math.MaxInt32), unavailable)
 }

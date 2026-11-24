@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 
 	"github.com/ponyo877/agones-lite/pkg/agent"
 	"github.com/ponyo877/agones-lite/pkg/store"
@@ -72,7 +73,10 @@ func (r *remoteLogs) Logs(ctx context.Context, req agent.LogRequest) (io.ReadClo
 	r.server.expect(id, writer)
 	request := &nodev1.LogRequest{
 		Id: id, Namespace: req.Namespace, Name: req.Name,
-		Container: req.Container, Follow: req.Follow, Tail: int32(req.Tail),
+		Container: req.Container, Follow: req.Follow,
+		// More lines than an int32 counts are as good as that many: cut to
+		// size, three thousand million would arrive as a few, or as none.
+		Tail: int32(min(req.Tail, math.MaxInt32)), //nolint:gosec // held at the limit
 	}
 	select {
 	case r.requests <- request:
