@@ -78,6 +78,7 @@ func (r *Room) Place(gs *agonesv1.GameServer) (*agonesv1.GameServer, bool) {
 		if !l.fits(gs) {
 			continue
 		}
+		l.passTaken()
 		placed := gs.DeepCopy()
 		if !portallocator.Allocate(placed, l.free, l.ports) {
 			continue
@@ -103,6 +104,16 @@ func (r *Room) ranked(strategy apis.SchedulingStrategy) []*lot {
 		return cmp.Or(byFill, cmp.Compare(a.node.Name, b.node.Name))
 	})
 	return out
+}
+
+// passTaken moves the low end of the free range past the ports that are
+// taken. A node whose ports have all gone is then seen to be full at a
+// glance: Packed tries the fullest nodes first, and would otherwise walk
+// the whole range of each of them for every GameServer it places.
+func (l *lot) passTaken() {
+	for l.free.Min < l.free.Max && l.ports[l.free.Min] {
+		l.free.Min++
+	}
 }
 
 // take counts gs among the residents.
