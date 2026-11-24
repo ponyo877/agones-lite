@@ -1,14 +1,17 @@
 package gameservers
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -92,7 +95,15 @@ type Controller struct {
 	// waiting holds the GameServers that found no node, so that the reason
 	// is recorded once and not on every pass. Only the sync loop touches it.
 	waiting map[store.Key]bool
+	// heard holds every node as it was when last heard of, to tell a change
+	// from a sign of life. Only what follows the nodes touches it.
+	heard map[string]*litev1.Node
 }
+
+// thoseWaiting is the key under which the GameServers without a node are
+// looked at: all of them in one pass, see placeWaiting. No GameServer has
+// this key, because none is without a name.
+var thoseWaiting = store.Key{Kind: store.GameServers}
 
 // NewController returns a Controller working on s. History goes to recorder,
 // which may be nil.
@@ -103,6 +114,7 @@ func NewController(s *store.Store, recorder *events.Recorder) *Controller {
 		events:  recorder,
 		now:     s.Now,
 		waiting: map[store.Key]bool{},
+		heard:   map[string]*litev1.Node{},
 	}
 }
 
@@ -110,9 +122,8 @@ func NewController(s *store.Store, recorder *events.Recorder) *Controller {
 // step through it with a control.Stepper instead.
 func (c *Controller) Loop() (control.Loop, []control.Watch) {
 	return control.Loop{Sync: c.sync, All: c.all, Resync: resyncPeriod}, []control.Watch{
-		{Subscribe: c.servers.Watch, Keys: c.afterServerChange},
-		// A new or changed node may have room for the servers that wait.
-		{Subscribe: c.nodes.Watch},
+		{Subscribe: c.servers.Watch, Keys: afterServerChange},
+		{Subscribe: c.nodes.Watch, Keys: c.afterNodeChange},
 	}
 }
 
@@ -121,17 +132,58 @@ func (c *Controller) Run(ctx context.Context) {
 	control.Run(ctx, c)
 }
 
-// afterServerChange names what to look at after a GameServer changed. One
-// that is gone has left room on its node, which any waiting server may use.
-func (c *Controller) afterServerChange(e store.Event) []store.Key {
-	if e.Type == store.Deleted {
-		return c.all()
+// afterServerChange names what to look at after a GameServer changed:
+// itself, and those that wait for a node when it is one of them. One that
+// is gone has left room on its node, which any of them may use.
+func afterServerChange(e store.Event) []store.Key {
+	switch {
+	case e.Type == store.Deleted:
+		return []store.Key{thoseWaiting}
+	case e.Object.(*agonesv1.GameServer).Status.NodeName == "":
+		return []store.Key{e.Key, thoseWaiting}
 	}
 	return control.Self(e)
 }
 
+// afterNodeChange names what to look at after a node changed: those that
+// wait for a node, which may have room now, and the GameServers on it that
+// are being deleted, which are dropped when its agent cannot be reached.
+//
+// Every node says that it is still there every few seconds, and that is a
+// change to its record too. It concerns no GameServer. Looking at all of
+// them each time would be work in proportion to nodes times GameServers,
+// for ever, with nothing going on.
+func (c *Controller) afterNodeChange(e store.Event) []store.Key {
+	node := e.Object.(*litev1.Node)
+	was := c.heard[node.Name]
+	c.heard[node.Name] = node
+	if e.Type == store.Deleted {
+		delete(c.heard, node.Name)
+	} else if onlyASignOfLife(was, node) {
+		return nil
+	}
+	keys := []store.Key{thoseWaiting}
+	for _, gs := range store.OnNode(c.servers, node.Name) {
+		if gs.DeletionTimestamp != nil {
+			keys = append(keys, store.KeyOf(store.GameServers, gs))
+		}
+	}
+	return keys
+}
+
+// onlyASignOfLife reports whether a node differs from what it was in
+// nothing but the time it was last heard from.
+func onlyASignOfLife(was, node *litev1.Node) bool {
+	if was == nil {
+		return false
+	}
+	before, after := was.Status, node.Status
+	before.LastHeartbeatTime, after.LastHeartbeatTime = metav1.Time{}, metav1.Time{}
+	return apiequality.Semantic.DeepEqual(was.Spec, node.Spec) && apiequality.Semantic.DeepEqual(before, after)
+}
+
 func (c *Controller) all() []store.Key {
-	var keys []store.Key
+	keys := []store.Key{thoseWaiting}
 	for _, gs := range c.servers.View("") {
 		keys = append(keys, store.KeyOf(store.GameServers, gs))
 	}
@@ -170,15 +222,18 @@ func decide(gs *agonesv1.GameServer, reachable bool) step {
 	return wait
 }
 
-// sync is the execution half: it carries out what decide chose.
+// sync is the execution half: it carries out what decide chose. A node is
+// not chosen here, for one GameServer: placeWaiting does that for all that
+// wait, under a key of its own.
 func (c *Controller) sync(_ context.Context, key store.Key) error {
-	gs, ok := c.servers.Get(key.Namespace, key.Name)
+	if key == thoseWaiting {
+		return c.placeWaiting()
+	}
+	gs, ok := c.servers.Peek(key.Namespace, key.Name) // only to decide: most of the time there is nothing to do
 	if !ok {
 		return nil
 	}
 	switch decide(gs, c.reachable(gs.Status.NodeName)) {
-	case place:
-		return c.place(gs)
 	case grantReady:
 		return c.Report(Report{Namespace: gs.Namespace, Name: gs.Name, Event: Readied})
 	case startDelete:
@@ -191,27 +246,72 @@ func (c *Controller) sync(_ context.Context, key store.Key) error {
 
 // reachable reports whether the node's agent is connected.
 func (c *Controller) reachable(nodeName string) bool {
-	node, ok := c.nodes.Get("", nodeName)
+	node, ok := c.nodes.Peek("", nodeName)
 	return ok && node.Status.Phase == litev1.NodeReady
 }
 
-func (c *Controller) place(gs *agonesv1.GameServer) error {
-	key := store.KeyOf(store.GameServers, gs)
-	placed, ok := scheduling.Place(gs, c.nodes.View(""), c.servers.View(""))
-	if !ok {
-		if !c.waiting[key] {
-			c.waiting[key] = true
-			c.events.Record(Kind, gs.Namespace, gs.Name, events.Warning, "Unschedulable", "no node has room; waiting for one")
-		}
+// placeWaiting chooses a node and host ports for every GameServer that has
+// none, the one that has waited longest first.
+//
+// It is one pass for all of them because the choice needs to know what
+// every node holds, which takes a look at every GameServer. Looking once
+// per GameServer, a Fleet of ten thousand would look a hundred million
+// times.
+func (c *Controller) placeWaiting() error {
+	waiting := waitingForANode(store.OnNode(c.servers, ""))
+	if len(waiting) == 0 {
+		clear(c.waiting)
 		return nil
 	}
-	placed.Status.State, _ = Next(gs.Status.State, Placed)
+	room := scheduling.RoomOn(c.nodes.View(""), c.servers.View(""))
+	noRoom := map[store.Key]bool{}
+	var errs error
+	for _, gs := range waiting {
+		if placed, found := room.Place(gs); found {
+			errs = errors.Join(errs, c.settle(placed))
+		} else {
+			noRoom[store.KeyOf(store.GameServers, gs)] = true
+		}
+	}
+	c.sayWhoWaits(noRoom)
+	return errs
+}
+
+// waitingForANode returns those of the GameServers without a node that
+// are to be placed, by how long they have waited, and by name where that
+// does not tell them apart.
+func waitingForANode(unplaced []*agonesv1.GameServer) []*agonesv1.GameServer {
+	var waiting []*agonesv1.GameServer
+	for _, gs := range unplaced {
+		if decide(gs, false) == place {
+			waiting = append(waiting, gs)
+		}
+	}
+	slices.SortFunc(waiting, func(a, b *agonesv1.GameServer) int {
+		return cmp.Or(a.CreationTimestamp.Compare(b.CreationTimestamp.Time), cmp.Compare(a.Namespace, b.Namespace), cmp.Compare(a.Name, b.Name))
+	})
+	return waiting
+}
+
+// settle stores a GameServer that was given its node.
+func (c *Controller) settle(placed *agonesv1.GameServer) error {
+	placed.Status.State, _ = Next(placed.Status.State, Placed)
 	if _, err := c.servers.Update(placed); err != nil {
 		return err
 	}
-	delete(c.waiting, key)
-	c.events.Record(Kind, gs.Namespace, gs.Name, events.Normal, "Placed", "on node %s", placed.Status.NodeName)
+	c.events.Record(Kind, placed.Namespace, placed.Name, events.Normal, "Placed", "on node %s", placed.Status.NodeName)
 	return nil
+}
+
+// sayWhoWaits records, for each GameServer that found no node, why it is
+// waiting: once, and not again on every pass that finds the same.
+func (c *Controller) sayWhoWaits(noRoom map[store.Key]bool) {
+	for key := range noRoom {
+		if !c.waiting[key] {
+			c.events.Record(Kind, key.Namespace, key.Name, events.Warning, "Unschedulable", "no node has room; waiting for one")
+		}
+	}
+	c.waiting = noRoom
 }
 
 // Delete asks for a GameServer to be removed. The record stays until its
@@ -233,7 +333,7 @@ func (c *Controller) Report(r Report) error {
 		if !ok || gs.DeletionTimestamp != nil || !r.about(gs) {
 			return false
 		}
-		node, known := c.nodes.Get("", gs.Status.NodeName)
+		node, known := c.nodes.Peek("", gs.Status.NodeName)
 		if !known && reachable(next) {
 			// Players would be sent to a node nobody knows any more: it was
 			// deleted, and the node controller is about to give this
@@ -264,7 +364,7 @@ func severity(s agonesv1.GameServerState) events.Type {
 
 // forgetDeleted drops the record of a GameServer whose containers are gone.
 func (c *Controller) forgetDeleted(r Report) error {
-	gs, ok := c.servers.Get(r.Namespace, r.Name)
+	gs, ok := c.servers.Peek(r.Namespace, r.Name)
 	if !ok || gs.DeletionTimestamp == nil || !r.about(gs) {
 		return nil
 	}

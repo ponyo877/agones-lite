@@ -55,9 +55,12 @@ func Run(ctx context.Context, c Controller) {
 	loop.Run(ctx, watches...)
 }
 
-// Run works until ctx is done.
+// Run works until ctx is done. It begins by queueing everything, before
+// anything else runs: what was there before the loop started is looked at
+// first, and at a moment that does not depend on which goroutine is quick.
 func (l Loop) Run(ctx context.Context, watches ...Watch) {
 	q := queue.New[store.Key]()
+	l.addAll(q)
 	for _, w := range watches {
 		go l.follow(ctx, q, w)
 	}
@@ -110,16 +113,16 @@ func (l Loop) addAll(q *queue.Queue[store.Key]) {
 	}
 }
 
-// resync queues everything at the start and then every Resync.
+// resync queues everything every Resync.
 func (l Loop) resync(ctx context.Context, q *queue.Queue[store.Key]) {
 	tick := time.NewTicker(l.Resync)
 	defer tick.Stop()
 	for {
-		l.addAll(q)
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
+			l.addAll(q)
 		}
 	}
 }

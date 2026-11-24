@@ -50,7 +50,7 @@ func (l *Local) Register(node *litev1.Node) error {
 	existing, ok := l.nodes.Get("", node.Name)
 	if !ok {
 		_, err := l.nodes.Create(node)
-		return err
+		return l.saved(err)
 	}
 	// Keep what the operator set, such as a cordon; take the rest from the agent.
 	lastHeard, wasGone := existing.Status.LastHeartbeatTime, existing.Status.Phase == litev1.NodeDisconnected
@@ -66,19 +66,15 @@ func (l *Local) Register(node *litev1.Node) error {
 	if errors.Is(err, store.ErrConflict) {
 		return l.Register(node)
 	}
-	return err
+	return l.saved(err)
 }
 
 // Assigned returns the GameServers placed on the node. Read straight from
-// the store, the answer is always current.
+// the store, the answer is always current. An agent starts containers on
+// it, so it is given once the file has it.
 func (l *Local) Assigned(node string) ([]*agonesv1.GameServer, bool) {
-	var out []*agonesv1.GameServer
-	for _, gs := range l.servers.View("") {
-		if gs.Status.NodeName == node {
-			out = append(out, gs)
-		}
-	}
-	return out, true
+	placed := store.OnNode(l.servers, node)
+	return placed, l.servers.Sync() == nil
 }
 
 // Changes signals after any GameServer changed. Signals that pile up while
@@ -103,13 +99,24 @@ func (l *Local) Changes() (<-chan struct{}, func()) {
 
 // Report passes an Event to the GameServer controller.
 func (l *Local) Report(r gameservers.Report) error {
-	return l.controller.Report(r)
+	return l.saved(l.controller.Report(r))
+}
+
+// saved is how every call that changes something ends. The caller is an
+// agent, or a game server behind it, and will take the change for made: so
+// the answer waits until the file has it (store.Run).
+func (l *Local) saved(err error) error {
+	if err != nil {
+		return err
+	}
+	return l.servers.Sync()
 }
 
 // UpdateCounts passes changes to Counters and Lists to the GameServer
 // controller. This is where they leave the wire format behind.
 func (l *Local) UpdateCounts(namespace, name, change string, counters []*sidecarv1.CounterUpdate, lists []*sidecarv1.ListUpdate) (*agonesv1.GameServer, error) {
-	return l.controller.UpdateCounts(namespace, name, change, counterUpdates(counters), listUpdates(lists))
+	gs, err := l.controller.UpdateCounts(namespace, name, change, counterUpdates(counters), listUpdates(lists))
+	return gs, l.saved(err)
 }
 
 func counterUpdates(wire []*sidecarv1.CounterUpdate) []gameservers.CounterUpdate {
@@ -134,5 +141,5 @@ func listUpdates(wire []*sidecarv1.ListUpdate) []gameservers.ListUpdate {
 
 // SetMetadata passes SDK labels and annotations to the GameServer controller.
 func (l *Local) SetMetadata(namespace, name string, labels, annotations map[string]string) error {
-	return l.controller.SetMetadata(namespace, name, labels, annotations)
+	return l.saved(l.controller.SetMetadata(namespace, name, labels, annotations))
 }

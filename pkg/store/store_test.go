@@ -1,8 +1,12 @@
 package store
 
 import (
+	"context"
+	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -256,4 +260,205 @@ func TestListAndWatchStartsTheEventsWhereTheListEnds(t *testing.T) {
 	change := <-events
 	assert.Equal(t, Added, change.Type)
 	assert.Equal(t, "after", change.Key.Name, "what was listed is not told again")
+}
+
+// While Run saves in the background a write does not wait for the file,
+// and Sync does. What Sync has waited for outlasts a crash.
+func TestSyncWaitsForTheFileWhileRunSavesBehind(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	s := open(t, path)
+	ctx, stop := context.WithCancel(context.Background())
+	var running sync.WaitGroup
+	running.Go(func() { s.Run(ctx) })
+	defer running.Wait()
+	defer stop()
+
+	servers := GameServersOf(s)
+	for i := range 200 {
+		_, err := servers.Create(gameServer(fmt.Sprint("gs-", i)))
+		require.NoError(t, err)
+	}
+	require.NoError(t, servers.Sync())
+	require.NoError(t, s.Abandon())
+
+	assert.Len(t, GameServersOf(open(t, path)).List(""), 200)
+}
+
+// Run does its saving when it is told to stop, too.
+func TestWhatRunHasNotSavedItSavesWhenItStops(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	s := open(t, path)
+	ctx, stop := context.WithCancel(context.Background())
+	var running sync.WaitGroup
+	running.Go(func() { s.Run(ctx) })
+
+	_, err := GameServersOf(s).Create(gameServer("a"))
+	require.NoError(t, err)
+	stop()
+	running.Wait()
+	require.NoError(t, s.Abandon())
+
+	assert.Len(t, GameServersOf(open(t, path)).List(""), 1)
+}
+
+// With nobody saving behind, the file comes first: a change it refuses was
+// never made, as far as anyone can tell.
+func TestAChangeTheFileRefusesIsTakenBack(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "state.db"))
+	servers := GameServersOf(s)
+	kept, err := servers.Create(gameServer("kept"))
+	require.NoError(t, err)
+	events, cancel := servers.Watch()
+	defer cancel()
+	require.NoError(t, s.file.db.Close())
+
+	_, createErr := servers.Create(gameServer("new"))
+	_, updateErr := servers.Update(kept)
+	deleteErr := servers.Delete("default", "kept")
+
+	assert.Error(t, createErr)
+	assert.Error(t, updateErr)
+	assert.Error(t, deleteErr)
+	assert.Equal(t, []*agonesv1.GameServer{kept}, servers.List(""))
+	assert.Equal(t, []*agonesv1.GameServer{kept}, OnNode(servers, ""), "and is in no group")
+	assert.Empty(t, events, "nobody is told of a change that was taken back")
+}
+
+func TestOnNodeFindsTheGameServersOfANodeAndFollowsThemAsTheyMove(t *testing.T) {
+	servers := GameServersOf(open(t, filepath.Join(t.TempDir(), "state.db")))
+	names := func(node string) []string {
+		var out []string
+		for _, gs := range OnNode(servers, node) {
+			out = append(out, gs.Name)
+		}
+		slices.Sort(out)
+		return out
+	}
+	a, err := servers.Create(gameServer("a"))
+	require.NoError(t, err)
+	_, err = servers.Create(gameServer("b"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a", "b"}, names(""), "neither has a node yet")
+
+	a.Status.NodeName = "node-1"
+	_, err = servers.Update(a)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a"}, names("node-1"))
+	assert.Equal(t, []string{"b"}, names(""))
+
+	require.NoError(t, servers.Delete("default", "a"))
+	assert.Empty(t, names("node-1"))
+}
+
+// Five random characters do not go far among ten thousand names. A name
+// that is taken is drawn again, and only one that keeps coming up is given
+// up on.
+func TestAGeneratedNameThatIsTakenIsDrawnAgain(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "state.db"))
+	draws := []string{"aaaaa", "aaaaa", "aaaaa", "bbbbb"}
+	s.Suffix = func() string {
+		next := draws[0]
+		draws = append(draws[1:], next) // the last one again and again
+		return next
+	}
+	servers := GameServersOf(s)
+	generated := func() (*agonesv1.GameServer, error) {
+		gs := gameServer("")
+		gs.GenerateName = "fleet-"
+		return servers.Create(gs)
+	}
+
+	first, err := generated()
+	require.NoError(t, err)
+	second, err := generated()
+	require.NoError(t, err)
+	_, err = generated()
+
+	assert.Equal(t, []string{"fleet-aaaaa", "fleet-bbbbb"}, []string{first.Name, second.Name})
+	assert.ErrorIs(t, err, ErrExists, "every draw gave a name that is taken")
+}
+
+// One save may hold more changes than a watcher has room for, and they
+// reach it all at once. A watcher that is reading is waited for.
+func TestAWatcherThatKeepsReadingGetsALargeSaveWhole(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "state.db"))
+	s.behind.Store(true) // written behind, and saved by hand below
+	servers := GameServersOf(s)
+	events, cancel := servers.Watch()
+	defer cancel()
+	const changes = 3 * watchBuffer
+	heard := make(chan int)
+	go func() {
+		n := 0
+		for range events {
+			if n++; n == changes {
+				break
+			}
+		}
+		heard <- n
+	}()
+
+	gs, err := servers.Create(gameServer("a"))
+	require.NoError(t, err)
+	for range changes - 1 {
+		gs, err = servers.Update(gs)
+		require.NoError(t, err)
+	}
+	require.NoError(t, s.saveBehind())
+
+	assert.Equal(t, changes, <-heard)
+}
+
+// A watcher that does not read is waited for a moment, and then closed.
+// Whoever writes is not kept waiting meanwhile.
+func TestAWatcherThatIsStuckIsClosedAfterAMoment(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "state.db"))
+	s.behind.Store(true)
+	servers := GameServersOf(s)
+	stuck, cancel := servers.Watch()
+	defer cancel()
+
+	gs, err := servers.Create(gameServer("a"))
+	require.NoError(t, err)
+	for range watchBuffer { // one change more than it has room for
+		gs, err = servers.Update(gs)
+		require.NoError(t, err)
+	}
+	saved := make(chan error)
+	go func() { saved <- s.saveBehind() }()
+	_, err = servers.Update(gs) // while the save waits for the watcher
+	require.NoError(t, err)
+	require.NoError(t, <-saved)
+
+	for range watchBuffer {
+		_, open := <-stuck
+		require.True(t, open, "what it had room for is still there to read")
+	}
+	_, open := <-stuck
+	assert.False(t, open, "and then its channel ends")
+}
+
+// Run tells watchers without the store's lock, so a watcher may leave
+// between the save and the telling. It is then simply not told.
+func TestAWatcherThatLeftBeforeItWasToldIsLeftAlone(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "state.db"))
+	s.behind.Store(true)
+	servers := GameServersOf(s)
+	_, err := servers.Create(gameServer("a"))
+	require.NoError(t, err)
+	saved := s.unsaved
+
+	for range 100 { // telling used to send on the closed channel half the time
+		_, cancel := s.Watch(GameServers)
+		s.mu.Lock()
+		listening := s.listening()
+		s.mu.Unlock()
+		for _, w := range listening {
+			w.after = 0 // as if it had been watching before the change
+		}
+		cancel()
+		for _, w := range listening {
+			assert.True(t, tellAll(w, saved, patience))
+		}
+	}
 }

@@ -167,7 +167,7 @@ func nodeOf(e store.Event) []store.Key {
 }
 
 func (c *Controller) sync(_ context.Context, key store.Key) error {
-	onNode := c.onNode(key.Name)
+	onNode := store.OnNode(c.servers, key.Name)
 	node, exists := c.nodes.Get("", key.Name)
 	if !exists {
 		// The operator deleted the node: nothing on it will be heard of again.
@@ -188,16 +188,6 @@ func (c *Controller) givenUp(node *litev1.Node, onNode []*agonesv1.GameServer) [
 		return nil
 	}
 	return GivenUp(node, onNode, c.graces, now)
-}
-
-func (c *Controller) onNode(name string) []*agonesv1.GameServer {
-	var out []*agonesv1.GameServer
-	for _, gs := range c.servers.View("") {
-		if gs.Status.NodeName == name {
-			out = append(out, gs)
-		}
-	}
-	return out
 }
 
 // report applies one Event to each of the GameServers and notes why.

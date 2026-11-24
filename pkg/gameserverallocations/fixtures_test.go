@@ -79,7 +79,7 @@ func list(name string, capacity int64, values ...string) option {
 
 // request prepares a request the way the caller must before Find: defaults,
 // validation, then the conversion of required and preferred into selectors.
-func request(t *testing.T, spec allocationv1.GameServerAllocationSpec) *allocationv1.GameServerAllocation {
+func request(t testing.TB, spec allocationv1.GameServerAllocationSpec) *allocationv1.GameServerAllocation {
 	t.Helper()
 	require.NoError(t, agones.Setup())
 	gsa := &allocationv1.GameServerAllocation{

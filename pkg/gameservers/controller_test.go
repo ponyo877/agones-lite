@@ -62,8 +62,11 @@ func (f fixture) addServer() {
 	require.NoError(f.t, err)
 }
 
+// sync looks at the GameServer the way the loop does when it has changed:
+// with those that wait for a node, and by itself.
 func (f fixture) sync() {
 	f.t.Helper()
+	require.NoError(f.t, f.Controller.sync(context.Background(), thoseWaiting))
 	require.NoError(f.t, f.Controller.sync(context.Background(), store.Key{Kind: store.GameServers, Namespace: "default", Name: "gs"}))
 }
 

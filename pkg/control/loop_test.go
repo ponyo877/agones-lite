@@ -28,6 +28,20 @@ func next(t *testing.T, synced <-chan store.Key) store.Key {
 	}
 }
 
+func TestALoopLooksAtEverythingWhenItStarts(t *testing.T) {
+	synced := make(chan store.Key)
+	loop := Loop{
+		Sync:   func(_ context.Context, key store.Key) error { synced <- key; return nil },
+		All:    func() []store.Key { return []store.Key{named("there-already")} },
+		Resync: time.Hour,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go loop.Run(ctx) // with nothing to follow: nothing else would tell it
+
+	assert.Equal(t, named("there-already"), next(t, synced))
+}
+
 func TestALoopLooksAtWhatChanged(t *testing.T) {
 	events := make(chan store.Event)
 	synced := make(chan store.Key)

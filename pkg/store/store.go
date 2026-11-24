@@ -2,13 +2,13 @@ package store
 
 import (
 	"cmp"
-	"database/sql"
 	"errors"
 	"fmt"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -51,14 +51,27 @@ func KeyOf(kind Kind, obj metav1.Object) Key {
 
 // Store is safe for concurrent use.
 type Store struct {
-	mu       sync.Mutex
-	db       *sql.DB
-	revision int64
-	// objects holds everything, by kind. A stored object is never changed
-	// in place: an update swaps in a new one. That is what makes View safe.
+	mu sync.Mutex
+	// revision numbers the last change made, and objects holds everything
+	// as of that change, by kind. A stored object is never changed in
+	// place: an update swaps in a new one. That is what makes View safe.
+	revision  int64
 	objects   map[Kind]map[Key]Object
+	groupings map[Kind]map[string]sorter // the same objects, sorted into groups: see group.go
 	factories map[Kind]func() Object
 	watchers  map[*watcher]struct{}
+
+	// The file, and how far it is behind memory: see save.go.
+	file    file
+	unsaved []change     // made, but not in the file yet; oldest first
+	saved   atomic.Int64 // the revision the file holds
+	behind  atomic.Bool  // Run is saving: a write does not wait for the file
+	wake    chan struct{}
+	// Those who wait in Sync wait on a lock of their own. On the store's,
+	// a hundred answers waiting for the file would all wake at once after
+	// every save and stand in the way of the next write.
+	waiting sync.Mutex
+	settled *sync.Cond // told whenever saved moves or behind changes
 
 	// Clock tells the time, and Suffix makes the random end of a generated
 	// name. They are the machine's, unless a test puts its own in their
@@ -70,28 +83,43 @@ type Store struct {
 // Open loads the SQLite file at path, creating it when missing.
 // kinds tells the store how to make an empty object of each kind.
 func Open(path string, kinds map[Kind]func() Object) (*Store, error) {
-	db, err := openDB(path)
+	f, err := openFile(path)
 	if err != nil {
 		return nil, err
 	}
 	s := &Store{
-		db:        db,
+		file:      f,
 		objects:   map[Kind]map[Key]Object{},
+		groupings: map[Kind]map[string]sorter{},
 		factories: kinds,
 		watchers:  map[*watcher]struct{}{},
+		wake:      make(chan struct{}, 1),
 		Clock:     time.Now,
 		Suffix:    func() string { return rand.String(randomLength) },
 	}
+	s.settled = sync.NewCond(&s.waiting)
 	if err := s.load(); err != nil {
-		_ = db.Close()
+		_ = f.db.Close()
 		return nil, err
 	}
+	s.saved.Store(s.revision)
 	return s, nil
 }
 
-// Close releases the SQLite file.
+// Close saves what is not saved yet and releases the SQLite file. Run must
+// have returned by then.
 func (s *Store) Close() error {
-	return s.db.Close()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return errors.Join(s.save(), s.file.db.Close())
+}
+
+// Abandon releases the SQLite file without saving, which is what a crash
+// does to a store. It is for tests of what a crash leaves behind.
+func (s *Store) Abandon() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.file.db.Close()
 }
 
 // Now tells the time by the store's clock. Whatever works on a store asks
@@ -101,6 +129,7 @@ func (s *Store) Now() time.Time {
 }
 
 // Get returns a private copy of the object, so callers may change it freely.
+// Like every read, it shows the changes made so far, saved or not: see Run.
 func (s *Store) Get(key Key) (Object, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -109,6 +138,17 @@ func (s *Store) Get(key Key) (Object, bool) {
 		return nil, false
 	}
 	return clone(obj), true
+}
+
+// Peek returns the stored object itself, as View does for all of a kind:
+// it is shared, and strictly for reading. It is for those who look at an
+// object to decide whether anything is to be done, and mostly find that
+// nothing is.
+func (s *Store) Peek(key Key) (Object, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	obj, ok := s.objects[key.Kind][key]
+	return obj, ok
 }
 
 // List returns copies of every object of kind, ordered by namespace and name.
@@ -160,19 +200,26 @@ func (s *Store) Create(kind Kind, obj Object) (Object, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	obj = clone(obj)
-	if err := s.prepare(obj); err != nil {
+	if err := s.prepare(kind, obj); err != nil {
 		return nil, err
 	}
 	key := KeyOf(kind, obj)
 	if _, ok := s.objects[kind][key]; ok {
 		return nil, fmt.Errorf("%s: %w", key, ErrExists)
 	}
-	return s.commit(Added, key, obj)
+	return copyOf(s.commit(Added, key, obj))
 }
 
 // Update replaces an object. It fails with ErrConflict unless obj carries the
 // resourceVersion of the stored object.
 func (s *Store) Update(kind Kind, obj Object) (Object, error) {
+	return copyOf(s.replace(kind, clone(obj)))
+}
+
+// replace is Update for a caller that gives obj away: it is stored as it
+// is, and what it returns is the stored object, shared. Update puts a copy
+// on either side of it.
+func (s *Store) replace(kind Kind, obj Object) (Object, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := KeyOf(kind, obj)
@@ -183,7 +230,7 @@ func (s *Store) Update(kind Kind, obj Object) (Object, error) {
 	if obj.GetResourceVersion() != current.GetResourceVersion() {
 		return nil, fmt.Errorf("%s: %w", key, ErrConflict)
 	}
-	return s.commit(Modified, key, clone(obj))
+	return s.commit(Modified, key, obj)
 }
 
 // Delete removes an object for good.
@@ -194,19 +241,13 @@ func (s *Store) Delete(key Key) error {
 	if !ok {
 		return fmt.Errorf("%s: %w", key, ErrNotFound)
 	}
-	next := s.revision + 1
-	if err := s.remove(key, next); err != nil {
-		return err
-	}
-	s.revision = next
-	delete(s.objects[key.Kind], key)
-	s.notify(Event{Type: Deleted, Key: key, Object: obj})
-	return nil
+	return s.record(change{event: Event{Type: Deleted, Key: key, Object: obj}, revision: s.revision + 1, was: obj})
 }
 
-// commit writes obj under the next revision: disk first, then memory, then watchers.
+// commit makes obj what is stored under key, as the next revision, and
+// returns the stored object: shared, so not for the caller's caller.
 //
-// Memory gets what the file got, read back, and not obj itself. The two
+// Memory gets what the file gets, read back, and not obj itself. The two
 // differ in small ways: JSON keeps a time to the second, and an empty list
 // may come back as none. A store that answers one thing before a restart
 // and another after it would change, for one, the order of two GameServers
@@ -214,17 +255,26 @@ func (s *Store) Delete(key Key) error {
 func (s *Store) commit(t EventType, key Key, obj Object) (Object, error) {
 	next := s.revision + 1
 	obj.SetResourceVersion(strconv.FormatInt(next, 10))
-	stored, err := s.persist(key, next, obj)
+	stored, data, err := s.asStored(key, obj)
 	if err != nil {
 		return nil, err
 	}
-	s.revision = next
-	s.put(key, stored)
-	s.notify(Event{Type: t, Key: key, Object: stored})
-	return clone(stored), nil
+	c := change{event: Event{Type: t, Key: key, Object: stored}, revision: next, was: s.objects[key.Kind][key], data: data}
+	if err := s.record(c); err != nil {
+		return nil, err
+	}
+	return stored, nil
 }
 
-func (s *Store) put(key Key, obj Object) {
+// hold makes obj what memory has under key, or drops the key when obj is nil.
+func (s *Store) hold(key Key, obj Object) {
+	for _, g := range s.groupings[key.Kind] {
+		g.move(key, s.objects[key.Kind][key], obj)
+	}
+	if obj == nil {
+		delete(s.objects[key.Kind], key)
+		return
+	}
 	if s.objects[key.Kind] == nil {
 		s.objects[key.Kind] = map[Key]Object{}
 	}
@@ -232,12 +282,12 @@ func (s *Store) put(key Key, obj Object) {
 }
 
 // prepare fills in what the API server would on creation.
-func (s *Store) prepare(obj Object) error {
+func (s *Store) prepare(kind Kind, obj Object) error {
 	if obj.GetName() == "" {
 		if obj.GetGenerateName() == "" {
 			return errors.New("metadata.name or metadata.generateName is required")
 		}
-		obj.SetName(generatedName(obj.GetGenerateName(), s.Suffix()))
+		obj.SetName(s.freeName(kind, obj))
 	}
 	obj.SetUID(uuid.NewUUID())
 	obj.SetCreationTimestamp(metav1.NewTime(s.Now()))
@@ -251,7 +301,26 @@ func (s *Store) prepare(obj Object) error {
 const (
 	maxNameLength = 63
 	randomLength  = 5
+	// nameDraws is how often a generated name is drawn before Create gives
+	// up, as in Kubernetes (maxNameGenerationCreateAttempts).
+	nameDraws = 8
 )
+
+// freeName generates a name for obj that nothing of its kind has yet. Five
+// random characters make one name out of fourteen million, and among the
+// ten thousand GameServers of a large Fleet two of those meet now and then.
+// A name that is taken is drawn again; after nameDraws the last one is
+// returned as it is, and Create says that it exists.
+func (s *Store) freeName(kind Kind, obj Object) string {
+	var name string
+	for range nameDraws {
+		name = generatedName(obj.GetGenerateName(), s.Suffix())
+		if _, taken := s.objects[kind][Key{Kind: kind, Namespace: obj.GetNamespace(), Name: name}]; !taken {
+			break
+		}
+	}
+	return name
+}
 
 // generatedName makes a name from a generateName. Without the cut, the
 // GameServers of a Fleet with a long name would get names too long for a
@@ -265,4 +334,13 @@ func generatedName(base, suffix string) string {
 
 func clone(obj Object) Object {
 	return obj.DeepCopyObject().(Object)
+}
+
+// copyOf turns the stored object a write returns into a copy for the
+// caller, and passes an error on.
+func copyOf(stored Object, err error) (Object, error) {
+	if err != nil {
+		return nil, err
+	}
+	return clone(stored), nil
 }
