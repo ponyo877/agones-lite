@@ -2,6 +2,9 @@ name: release
 
 # Pushing a tag such as v1.0.0 builds the binaries, attaches them to a GitHub
 # release, and pushes the sidecar image with the same tag.
+#
+# Only what CI has checked is released: the tag must be on a commit of main
+# on which the workflow "ci" passed.
 on:
   push:
     tags: ["v*"]
@@ -9,21 +12,41 @@ on:
 permissions:
   contents: write
   packages: write
+  checks: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # Not written into the commands below: a tag is text from outside.
+  VERSION: ${{ github.ref_name }}
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # All of the history: the next step asks whether main has the tag.
+          fetch-depth: 0
+      - name: The tag is on main, and CI passed there
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?check_name=ci" \
+            --jq '.check_runs | map(.conclusion) | index("success")' | grep -x '[0-9][0-9]*'
+        env:
+          GH_TOKEN: ${{ github.token }}
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
 
       - name: Build the binaries
-        run: make dist VERSION=${{ github.ref_name }}
+        run: make dist VERSION="$VERSION"
 
       - name: Attach them to the release
-        run: gh release create "${{ github.ref_name }}" dist/agones-lite-* --generate-notes
+        run: gh release create "$VERSION" dist/agones-lite-* --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -37,5 +60,5 @@ jobs:
       - name: Push the sidecar image for both architectures
         run: |
           docker buildx build --platform linux/amd64,linux/arm64 --push \
-            --tag "ghcr.io/${{ github.repository }}-sidecar:${{ github.ref_name }}" \
+            --tag "ghcr.io/${GITHUB_REPOSITORY}-sidecar:${VERSION}" \
             --file build/sidecar/Dockerfile.release dist
