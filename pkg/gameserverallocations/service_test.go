@@ -79,10 +79,19 @@ func newSite(t *testing.T, ready int) *site {
 
 // ask is one request for any GameServer, by a caller that waits for patience.
 func (s *site) ask(patience time.Duration) (name string, code codes.Code, took time.Duration) {
+	return s.askAs("", patience)
+}
+
+// askAs is ask by a caller that names its request: see KeyAnnotation.
+func (s *site) askAs(key string, patience time.Duration) (name string, code codes.Code, took time.Duration) {
 	ctx, cancel := context.WithTimeout(context.Background(), patience)
 	defer cancel()
+	request := &pb.AllocationRequest{Namespace: namespace}
+	if key != "" {
+		request.Metadata = &pb.MetaPatch{Annotations: map[string]string{KeyAnnotation: key}}
+	}
 	asked := time.Now()
-	answer, err := s.Allocate(ctx, &pb.AllocationRequest{Namespace: namespace})
+	answer, err := s.Allocate(ctx, request)
 	return answer.GetGameServerName(), status.Code(err), time.Since(asked)
 }
 
@@ -130,15 +139,18 @@ func TestARequestThatWaitsForItsTurnLongerThanItsCallerTakesNoGameServer(t *test
 // waits for the disk, and its caller is gone before the disk is back: each
 // matchmaker takes nine that nobody plays on. With the limit, a matchmaker
 // loses the one request that was on its way when the disk stalled, and is
-// told at once from then on.
+// told at once from then on. A matchmaker that names its requests loses
+// none: what was taken for it then is what it is given in the end.
 func TestAStalledDiskWastesNoMoreThanWhatWasAskedForWithinPatience(t *testing.T) {
 	const matchmakers, stall, timeout = 8, 9500 * time.Millisecond, time.Second
 	tests := map[string]struct {
 		patience time.Duration
+		named    bool
 		wasted   int
 	}{
-		"with the limit":    {patience: timeout / 2, wasted: matchmakers},
-		"without the limit": {patience: time.Hour, wasted: matchmakers * int(stall/timeout)},
+		"with the limit":                       {patience: timeout / 2, wasted: matchmakers},
+		"with the limit, and requests by name": {patience: timeout / 2, named: true, wasted: 0},
+		"without the limit":                    {patience: time.Hour, wasted: matchmakers * int(stall/timeout)},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -151,7 +163,11 @@ func TestAStalledDiskWastesNoMoreThanWhatWasAskedForWithinPatience(t *testing.T)
 				var asking sync.WaitGroup
 				answered := make([]string, matchmakers)
 				for i := range matchmakers {
-					asking.Go(func() { answered[i] = s.untilAnswered(timeout) })
+					key := ""
+					if test.named {
+						key = fmt.Sprint("match-", i)
+					}
+					asking.Go(func() { answered[i] = s.untilAnswered(key, timeout) })
 				}
 				asking.Wait()
 				require.NoError(t, s.store.Sync(context.Background()))
@@ -166,9 +182,9 @@ func TestAStalledDiskWastesNoMoreThanWhatWasAskedForWithinPatience(t *testing.T)
 // untilAnswered asks until a request is answered with a GameServer, and
 // returns its name. A request that is refused is asked again after a
 // tenth of the timeout, as a client with a retry policy would.
-func (s *site) untilAnswered(timeout time.Duration) string {
+func (s *site) untilAnswered(key string, timeout time.Duration) string {
 	for {
-		name, code, _ := s.ask(timeout)
+		name, code, _ := s.askAs(key, timeout)
 		if code == codes.OK {
 			return name
 		}
@@ -196,5 +212,35 @@ func TestWhileTheDiskIsStalledARequestIsRefusedAtOnceAndOnceItIsBackTheNextIsAns
 		name, code, _ := s.ask(3 * time.Second)
 		assert.Equal(t, codes.OK, code)
 		assert.NotEmpty(t, name)
+	})
+}
+
+func TestAskingAgainByTheSameKeyIsAnsweredWithTheSameGameServer(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := newSite(t, 5)
+
+		first, _, _ := s.askAs("match-1", time.Second)
+		again, code, _ := s.askAs("match-1", time.Second)
+		other, _, _ := s.askAs("match-2", time.Second)
+		unnamed, _, _ := s.ask(time.Second)
+
+		require.Equal(t, codes.OK, code)
+		assert.Equal(t, first, again)
+		assert.NotEqual(t, first, other, "another match gets a GameServer of its own")
+		assert.NotContains(t, []string{first, other}, unnamed, "and so does a request without a name")
+		assert.Equal(t, 3, s.allocated())
+	})
+}
+
+func TestOnceTheSessionIsOverItsKeyIsFreeAgain(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := newSite(t, 5)
+		first, _, _ := s.askAs("match-1", time.Second)
+		require.NoError(t, store.GameServersOf(s.store).Delete(namespace, first))
+
+		next, code, _ := s.askAs("match-1", time.Second)
+
+		require.Equal(t, codes.OK, code)
+		assert.NotEqual(t, first, next)
 	})
 }

@@ -42,6 +42,30 @@ var errBehind = errors.New("the control plane cannot save what it decides right 
 // up, its file is behind by a few milliseconds.
 const patience = time.Second
 
+// KeyAnnotation is how a matchmaker names a request, so that it can ask
+// again without being given a second GameServer:
+//
+//	metadata:
+//	  annotations:
+//	    agones-lite/allocation-key: <something of its own, new for each match>
+//
+// A matchmaker that got no answer cannot know whether a GameServer was
+// taken for it. Asking again is all it can do, and without a name for the
+// request, each asking takes another one. With the key, the GameServer
+// that was taken is the answer for as long as its session lasts.
+//
+// It is an annotation, and the request has a place for those, so nothing
+// is added to the API: the allocation puts it on the GameServer like any
+// other, which is also where it is found again. A matchmaker that sets it
+// can talk to Agones unchanged, where it is an annotation and no more.
+const KeyAnnotation = "agones-lite/allocation-key"
+
+// byKey sorts GameServers by the key of the request they were given to.
+var byKey = store.By[*agonesv1.GameServer, string]{
+	Name: "allocation-key",
+	Of:   func(gs *agonesv1.GameServer) string { return gs.Annotations[KeyAnnotation] },
+}
+
 // Service is the allocation API, in the shape of upstream's allocator
 // service: the same gRPC service and the same REST path, built from the
 // same generated code. It is the thin half of this package.
@@ -159,6 +183,9 @@ func (s *Service) allocate(ctx context.Context, gsa *allocationv1.GameServerAllo
 		return nil, err
 	}
 	defer func() { <-s.turn }()
+	if gs, again := s.givenBefore(gsa); again {
+		return Allocated(gsa, gs), nil
+	}
 	for range attempts {
 		gs, found := s.find(gsa)
 		if !found {
@@ -175,6 +202,21 @@ func (s *Service) allocate(ctx context.Context, gsa *allocationv1.GameServerAllo
 		}
 	}
 	return nil, errConflict
+}
+
+// givenBefore returns the GameServer that a request with the same key was
+// given, if its session is still on: see KeyAnnotation.
+func (s *Service) givenBefore(gsa *allocationv1.GameServerAllocation) (*agonesv1.GameServer, bool) {
+	key := gsa.Spec.MetaPatch.Annotations[KeyAnnotation]
+	if key == "" {
+		return nil, false
+	}
+	for _, gs := range store.Group(s.servers, byKey, key) {
+		if candidate(gsa, gs) && gs.Status.State == agonesv1.GameServerStateAllocated {
+			return gs, true
+		}
+	}
+	return nil, false
 }
 
 // takeTurn waits until no other request is choosing, and refuses a request
