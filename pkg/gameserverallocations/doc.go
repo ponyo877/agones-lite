@@ -1,11 +1,13 @@
 // Package gameserverallocations chooses a GameServer for an allocation
 // request and marks it Allocated.
 //
-// Start with find.go: Find narrows the GameServers down to the candidates,
-// sorts them the way the request's scheduling strategy wants, and takes the
-// first one a selector accepts. order.go has the two orderings, Packed and
-// Distributed. apply.go has Apply, which is everything an allocation changes
-// on the chosen GameServer. status.go writes the answer into the request.
+// Start with find.go: Find narrows the GameServers down to the candidates
+// and returns the one a selector accepts that comes first in the order the
+// request's scheduling strategy wants. FindPacked finds the same one for
+// Packed without a look at every GameServer. order.go has the two
+// orderings, Packed and Distributed. apply.go has Apply, which is
+// everything an allocation changes on the chosen GameServer. status.go
+// writes the answer into the request.
 //
 // Every function here only looks at its arguments. Reading the store,
 // writing the result of Apply back and trying again after a lost race is the
