@@ -280,3 +280,27 @@ func TestPlaceGivesTheSameAnswerForAnyOrderOfNodesAndGameServers(t *testing.T) {
 		assert.Equal(t, want, placed)
 	})
 }
+
+// A Room places many GameServers after one look at what the nodes hold.
+// Each of them must get what Place gives it after a fresh look at
+// everything, the ones placed before it included.
+func TestARoomPlacesEachGameServerAsAFreshLookWould(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		nodes := someNodes(t)
+		servers := someNeighbours(t, nodes)
+		room := RoomOn(nodes, servers)
+
+		for i := range rapid.IntRange(1, 6).Draw(t, "arrivals") {
+			gs := aGameServer(t, fmt.Sprint("new-", i))
+			want, wantOK := Place(gs, nodes, servers)
+
+			placed, ok := room.Place(gs)
+
+			require.Equal(t, wantOK, ok, "%s", gs.Name)
+			require.Equal(t, want, placed, "%s", gs.Name)
+			if ok {
+				servers = append(servers, placed)
+			}
+		}
+	})
+}

@@ -10,7 +10,7 @@
 package portallocator
 
 import (
-	"maps"
+	"slices"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -22,13 +22,18 @@ import (
 func Used(servers []*agonesv1.GameServer) map[int32]bool {
 	used := map[int32]bool{}
 	for _, gs := range servers {
-		for _, p := range gs.Spec.Ports {
-			if p.PortPolicy != agonesv1.None && p.HostPort != 0 {
-				used[p.HostPort] = true
-			}
-		}
+		Take(used, gs)
 	}
 	return used
+}
+
+// Take adds the host ports of gs to used.
+func Take(used map[int32]bool, gs *agonesv1.GameServer) {
+	for _, p := range gs.Spec.Ports {
+		if p.PortPolicy != agonesv1.None && p.HostPort != 0 {
+			used[p.HostPort] = true
+		}
+	}
 }
 
 // Allocate gives every Dynamic and Passthrough port of gs a free host port
@@ -40,7 +45,7 @@ func Allocate(gs *agonesv1.GameServer, r litev1.PortRange, used map[int32]bool) 
 	if !staticPortsFree(gs, used) {
 		return false
 	}
-	free, ok := pickFree(countAutomatic(gs), r, withStatic(used, gs))
+	free, ok := pickFree(countAutomatic(gs), r, used, ownStatic(gs))
 	if !ok {
 		return false
 	}
@@ -49,17 +54,16 @@ func Allocate(gs *agonesv1.GameServer, r litev1.PortRange, used map[int32]bool) 
 	return true
 }
 
-// withStatic returns used plus the Static host ports of gs itself. They may
-// lie in the node's range, and are then as taken as a neighbour's.
-func withStatic(used map[int32]bool, gs *agonesv1.GameServer) map[int32]bool {
-	taken := map[int32]bool{}
-	maps.Copy(taken, used)
+// ownStatic returns the Static host ports of gs itself. They may lie in the
+// node's range, and are then as taken as a neighbour's.
+func ownStatic(gs *agonesv1.GameServer) []int32 {
+	var ports []int32
 	for _, p := range gs.Spec.Ports {
 		if p.PortPolicy == agonesv1.Static {
-			taken[p.HostPort] = true
+			ports = append(ports, p.HostPort)
 		}
 	}
-	return taken
+	return ports
 }
 
 func automatic(p agonesv1.GameServerPort) bool {
@@ -81,13 +85,14 @@ func staticPortsFree(gs *agonesv1.GameServer, used map[int32]bool) bool {
 	return true
 }
 
-// pickFree returns the n lowest free ports in r.
-func pickFree(n int, r litev1.PortRange, used map[int32]bool) ([]int32, bool) {
+// pickFree returns the n lowest ports in r that are neither used nor
+// among own.
+func pickFree(n int, r litev1.PortRange, used map[int32]bool, own []int32) ([]int32, bool) {
 	free := make([]int32, 0, n)
 	// Counted as int64: an int32 that has reached a range's end at the
 	// largest int32 starts again at the smallest, far outside the range.
 	for port := int64(r.Min); port <= int64(r.Max) && len(free) < n; port++ {
-		if !used[int32(port)] {
+		if !used[int32(port)] && !slices.Contains(own, int32(port)) {
 			free = append(free, int32(port))
 		}
 	}
