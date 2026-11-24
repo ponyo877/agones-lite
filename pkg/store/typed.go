@@ -73,6 +73,17 @@ func (t Typed[T]) Get(namespace, name string) (T, bool) {
 	return obj.(T), true
 }
 
+// Peek returns the named object itself, shared: read it, never change it.
+// See Store.Peek.
+func (t Typed[T]) Peek(namespace, name string) (T, bool) {
+	obj, ok := t.store.Peek(Key{Kind: t.kind, Namespace: namespace, Name: name})
+	if !ok {
+		var zero T
+		return zero, false
+	}
+	return obj.(T), true
+}
+
 // List returns copies of every object in namespace, or in all when it is empty.
 func (t Typed[T]) List(namespace string) []T {
 	return typed[T](t.store.List(t.kind, namespace))
@@ -132,7 +143,9 @@ func (t Typed[T]) Change(namespace, name string, change func(T) (keep bool)) err
 		if !ok || !change(obj) {
 			return nil
 		}
-		if _, err = t.Update(obj); !errors.Is(err, ErrConflict) {
+		// obj is a copy of our own, and nobody gets to see it afterwards:
+		// it can be stored as it is.
+		if _, err = t.store.replace(t.kind, obj); !errors.Is(err, ErrConflict) {
 			return err
 		}
 	}

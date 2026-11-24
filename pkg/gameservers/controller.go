@@ -229,7 +229,7 @@ func (c *Controller) sync(_ context.Context, key store.Key) error {
 	if key == thoseWaiting {
 		return c.placeWaiting()
 	}
-	gs, ok := c.servers.Get(key.Namespace, key.Name)
+	gs, ok := c.servers.Peek(key.Namespace, key.Name) // only to decide: most of the time there is nothing to do
 	if !ok {
 		return nil
 	}
@@ -246,7 +246,7 @@ func (c *Controller) sync(_ context.Context, key store.Key) error {
 
 // reachable reports whether the node's agent is connected.
 func (c *Controller) reachable(nodeName string) bool {
-	node, ok := c.nodes.Get("", nodeName)
+	node, ok := c.nodes.Peek("", nodeName)
 	return ok && node.Status.Phase == litev1.NodeReady
 }
 
@@ -333,7 +333,7 @@ func (c *Controller) Report(r Report) error {
 		if !ok || gs.DeletionTimestamp != nil || !r.about(gs) {
 			return false
 		}
-		node, known := c.nodes.Get("", gs.Status.NodeName)
+		node, known := c.nodes.Peek("", gs.Status.NodeName)
 		if !known && reachable(next) {
 			// Players would be sent to a node nobody knows any more: it was
 			// deleted, and the node controller is about to give this
@@ -364,7 +364,7 @@ func severity(s agonesv1.GameServerState) events.Type {
 
 // forgetDeleted drops the record of a GameServer whose containers are gone.
 func (c *Controller) forgetDeleted(r Report) error {
-	gs, ok := c.servers.Get(r.Namespace, r.Name)
+	gs, ok := c.servers.Peek(r.Namespace, r.Name)
 	if !ok || gs.DeletionTimestamp == nil || !r.about(gs) {
 		return nil
 	}

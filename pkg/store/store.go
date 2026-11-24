@@ -133,6 +133,17 @@ func (s *Store) Get(key Key) (Object, bool) {
 	return clone(obj), true
 }
 
+// Peek returns the stored object itself, as View does for all of a kind:
+// it is shared, and strictly for reading. It is for those who look at an
+// object to decide whether anything is to be done, and mostly find that
+// nothing is.
+func (s *Store) Peek(key Key) (Object, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	obj, ok := s.objects[key.Kind][key]
+	return obj, ok
+}
+
 // List returns copies of every object of kind, ordered by namespace and name.
 // An empty namespace means all namespaces.
 func (s *Store) List(kind Kind, namespace string) []Object {
@@ -189,12 +200,19 @@ func (s *Store) Create(kind Kind, obj Object) (Object, error) {
 	if _, ok := s.objects[kind][key]; ok {
 		return nil, fmt.Errorf("%s: %w", key, ErrExists)
 	}
-	return s.commit(Added, key, obj)
+	return copyOf(s.commit(Added, key, obj))
 }
 
 // Update replaces an object. It fails with ErrConflict unless obj carries the
 // resourceVersion of the stored object.
 func (s *Store) Update(kind Kind, obj Object) (Object, error) {
+	return copyOf(s.replace(kind, clone(obj)))
+}
+
+// replace is Update for a caller that gives obj away: it is stored as it
+// is, and what it returns is the stored object, shared. Update puts a copy
+// on either side of it.
+func (s *Store) replace(kind Kind, obj Object) (Object, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := KeyOf(kind, obj)
@@ -205,7 +223,7 @@ func (s *Store) Update(kind Kind, obj Object) (Object, error) {
 	if obj.GetResourceVersion() != current.GetResourceVersion() {
 		return nil, fmt.Errorf("%s: %w", key, ErrConflict)
 	}
-	return s.commit(Modified, key, clone(obj))
+	return s.commit(Modified, key, obj)
 }
 
 // Delete removes an object for good.
@@ -219,7 +237,8 @@ func (s *Store) Delete(key Key) error {
 	return s.record(change{event: Event{Type: Deleted, Key: key, Object: obj}, revision: s.revision + 1, was: obj})
 }
 
-// commit makes obj what is stored under key, as the next revision.
+// commit makes obj what is stored under key, as the next revision, and
+// returns the stored object: shared, so not for the caller's caller.
 //
 // Memory gets what the file gets, read back, and not obj itself. The two
 // differ in small ways: JSON keeps a time to the second, and an empty list
@@ -237,7 +256,7 @@ func (s *Store) commit(t EventType, key Key, obj Object) (Object, error) {
 	if err := s.record(c); err != nil {
 		return nil, err
 	}
-	return clone(stored), nil
+	return stored, nil
 }
 
 // hold makes obj what memory has under key, or drops the key when obj is nil.
@@ -305,4 +324,13 @@ func generatedName(base, suffix string) string {
 
 func clone(obj Object) Object {
 	return obj.DeepCopyObject().(Object)
+}
+
+// copyOf turns the stored object a write returns into a copy for the
+// caller, and passes an error on.
+func copyOf(stored Object, err error) (Object, error) {
+	if err != nil {
+		return nil, err
+	}
+	return clone(stored), nil
 }
