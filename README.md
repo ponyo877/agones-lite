@@ -126,7 +126,8 @@ has a full reading order.
 
 ```sh
 make test   # all tests; the Docker tests run when a daemon is reachable
-make lint   # golangci-lint, including the complexity limits
+make lint   # golangci-lint: the complexity limits, mistakes, security
+make check  # what CI checks before a change reaches main, as far as one machine can
 make proto  # regenerate code for the protocols in proto/
 make dist   # release binaries for every platform, into dist/
 
