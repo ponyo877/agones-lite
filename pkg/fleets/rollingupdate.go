@@ -2,6 +2,7 @@ package fleets
 
 import (
 	"fmt"
+	"math"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -161,7 +162,15 @@ func maxSurge(fleet *agonesv1.Fleet) (int32, error) {
 	if err != nil {
 		return 0, fmt.Errorf("parsing maxSurge: %w", err)
 	}
-	return int32(surge), nil
+	return count(surge), nil
+}
+
+// count brings a number of GameServers that was worked out as an int back
+// to an int32, held at the largest there is. A share may be more than the
+// whole: 150% of a very large Fleet is more than an int32 holds, and cut
+// to size it would come out negative.
+func count(n int) int32 {
+	return int32(min(n, math.MaxInt32)) //nolint:gosec // held at the limit
 }
 
 // maxUnavailable is how many Ready GameServers the Fleet may lose in one
@@ -176,7 +185,7 @@ func maxUnavailable(fleet *agonesv1.Fleet) (int32, error) {
 	if unavailable == 0 {
 		unavailable = 1
 	}
-	return min(int32(unavailable), fleet.Spec.Replicas), nil
+	return min(count(unavailable), fleet.Spec.Replicas), nil
 }
 
 // rolling returns the Fleet's rolling update settings, empty when it has

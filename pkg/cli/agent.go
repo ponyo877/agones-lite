@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -60,16 +61,18 @@ func defaultDockerConfig() string {
 	return filepath.Join(home, ".docker", "config.json")
 }
 
-// finish copies the parsed numbers into the agent's configuration.
+// finish copies the parsed numbers into the agent's configuration. They
+// are cut to the size the configuration has for them; check refuses the
+// ones that do not fit before anything is done with them.
 func (n *nodeOptions) finish() {
-	n.agent.PortRange = litev1.PortRange{Min: int32(n.minPort), Max: int32(n.maxPort)}
-	n.agent.MaxGameServers = int32(n.maxServers)
+	n.agent.PortRange = litev1.PortRange{Min: int32(n.minPort), Max: int32(n.maxPort)} //nolint:gosec // see above
+	n.agent.MaxGameServers = int32(n.maxServers)                                       //nolint:gosec // see above
 }
 
 // connect checks the node's settings and that the Docker daemon answers,
 // and fills in where the agent should listen for sidecars.
 func (n *nodeOptions) connect(ctx context.Context) (*docker.Client, error) {
-	if err := n.checkPorts(); err != nil {
+	if err := n.check(); err != nil {
 		return nil, err
 	}
 	daemon, err := docker.New(n.dockerHost)
@@ -87,11 +90,16 @@ func (n *nodeOptions) connect(ctx context.Context) (*docker.Client, error) {
 	return daemon, err
 }
 
-// checkPorts refuses a port range that holds no port. A node with one
-// would register fine and then have no port for any game server.
-func (n *nodeOptions) checkPorts() error {
+// check refuses a port range that holds no port, and a limit that is no
+// number of game servers. A node with such a range would register fine and
+// then have no port for any game server; a limit of five thousand million
+// would be cut to a number that means something else.
+func (n *nodeOptions) check() error {
 	if n.minPort < 1 || n.maxPort > 65535 || n.minPort > n.maxPort {
 		return fmt.Errorf("--min-port %d and --max-port %d are not a port range: need 1 <= min <= max <= 65535", n.minPort, n.maxPort)
+	}
+	if n.maxServers < 0 || n.maxServers > math.MaxInt32 {
+		return fmt.Errorf("--max-gameservers %d is not a number of game servers: need 0 <= n <= %d", n.maxServers, math.MaxInt32)
 	}
 	return nil
 }
