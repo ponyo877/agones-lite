@@ -178,8 +178,10 @@ func (r *Recorder) insert(batch []Event) error {
 	if err != nil {
 		return err
 	}
+	insertOne := tx.Stmt(r.insertOne)
+	defer func() { _ = insertOne.Close() }()
 	for _, e := range batch {
-		_, err := tx.Stmt(r.insertOne).Exec(e.Time.UnixMilli(), e.Kind, e.Namespace, e.Name, string(e.Type), e.Reason, e.Message)
+		_, err := insertOne.Exec(e.Time.UnixMilli(), e.Kind, e.Namespace, e.Name, string(e.Type), e.Reason, e.Message)
 		if err != nil {
 			_ = tx.Rollback()
 			return err

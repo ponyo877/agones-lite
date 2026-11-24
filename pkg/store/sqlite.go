@@ -56,7 +56,7 @@ func openFile(path string) (file, error) {
 		return file{}, fmt.Errorf("create schema: %w", err)
 	}
 	for text, compiled := range map[string]**sql.Stmt{upsertResource: &f.upsert, deleteResource: &f.remove, upsertRevision: &f.toRevision} {
-		if *compiled, err = db.Prepare(text); err != nil {
+		if *compiled, err = db.Prepare(text); err != nil { //nolint:sqlclosecheck // kept for as long as the file is open
 			_ = db.Close()
 			return file{}, err
 		}
@@ -129,18 +129,25 @@ func (f file) write(changes []change) error {
 }
 
 func (f file) writeIn(tx *sql.Tx, changes []change) error {
+	upsert, remove, toRevision := tx.Stmt(f.upsert), tx.Stmt(f.remove), tx.Stmt(f.toRevision)
+	defer func() { _, _, _ = upsert.Close(), remove.Close(), toRevision.Close() }()
 	for _, c := range lastOfEachKey(changes) {
-		key, err := c.event.Key, error(nil)
-		if c.data == nil {
-			_, err = tx.Stmt(f.remove).Exec(key.Kind, key.Namespace, key.Name)
-		} else {
-			_, err = tx.Stmt(f.upsert).Exec(key.Kind, key.Namespace, key.Name, c.revision, c.data)
-		}
-		if err != nil {
-			return fmt.Errorf("%s: %w", key, err)
+		if err := writeOne(upsert, remove, c); err != nil {
+			return fmt.Errorf("%s: %w", c.event.Key, err)
 		}
 	}
-	_, err := tx.Stmt(f.toRevision).Exec(changes[len(changes)-1].revision)
+	_, err := toRevision.Exec(changes[len(changes)-1].revision)
+	return err
+}
+
+// writeOne writes the row of an object, or takes it out.
+func writeOne(upsert, remove *sql.Stmt, c change) error {
+	key := c.event.Key
+	if c.data == nil {
+		_, err := remove.Exec(key.Kind, key.Namespace, key.Name)
+		return err
+	}
+	_, err := upsert.Exec(key.Kind, key.Namespace, key.Name, c.revision, c.data)
 	return err
 }
 
