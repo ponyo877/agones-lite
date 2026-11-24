@@ -3,10 +3,10 @@ package gameserverallocations
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"agones.dev/agones/pkg/allocation/converters"
@@ -34,6 +34,14 @@ const attempts = 5
 // returns an error here too.
 var errConflict = errors.New("could not update the selected GameServer")
 
+// errBehind is returned while the store's file is too far behind for a new
+// promise: see Service.Patience.
+var errBehind = errors.New("the control plane cannot save what it decides right now, so it allocates nothing; try again shortly")
+
+// patience is Service.Patience unless set otherwise. While the store keeps
+// up, its file is behind by a few milliseconds.
+const patience = time.Second
+
 // Service is the allocation API, in the shape of upstream's allocator
 // service: the same gRPC service and the same REST path, built from the
 // same generated code. It is the thin half of this package.
@@ -43,6 +51,20 @@ var errConflict = errors.New("could not update the selected GameServer")
 // side, and the file takes them in one write (store.Run). Upstream gets
 // the same effect by batching requests and updating a hundred GameServers
 // in parallel.
+//
+// A request is given up at two points, both before a GameServer is taken
+// for it. One is when its caller has stopped waiting: the answer would
+// reach nobody, and the GameServer would be gone from the Ready ones all
+// the same. The other is when the file is behind by more than Patience: a
+// disk that stalls keeps every answer waiting, matchmakers time out and
+// ask again, and each asking would take another GameServer. Refusing at
+// once keeps what a stall can waste to what was asked for within Patience,
+// and tells a matchmaker in milliseconds what it would otherwise learn
+// from its own timeout. This is the delay budget of Protego (Cho et al.,
+// NSDI 2023), applied to the one thing requests queue for here; that
+// retries are what keeps an overload going after its cause has gone is
+// from Bronson et al., "Metastable Failures in Distributed Systems"
+// (HotOS 2021).
 type Service struct {
 	pb.UnimplementedAllocationServiceServer
 	servers store.Typed[*agonesv1.GameServer]
@@ -55,18 +77,23 @@ type Service struct {
 	// Observe, when set, is told how each request ended and how long it
 	// took. It is how the metrics learn of allocations.
 	Observe func(fleet, status, strategy string, took time.Duration)
+	// Patience is how long the store's file may be behind before requests
+	// are refused.
+	Patience time.Duration
 
-	mu sync.Mutex // one allocation at a time
+	turn chan struct{} // one allocation at a time: whoever has put its token in
 }
 
 // NewService returns a Service working on s.
 func NewService(s *store.Store, recorder *events.Recorder) *Service {
 	return &Service{
-		servers: store.GameServersOf(s),
-		nodes:   store.NodesOf(s),
-		events:  recorder,
-		now:     s.Now,
-		Pick:    rand.IntN,
+		servers:  store.GameServersOf(s),
+		nodes:    store.NodesOf(s),
+		events:   recorder,
+		now:      s.Now,
+		Pick:     rand.IntN,
+		Patience: patience,
+		turn:     make(chan struct{}, 1),
 	}
 }
 
@@ -84,7 +111,7 @@ func (s *Service) Allocate(ctx context.Context, in *pb.AllocationRequest) (*pb.A
 		return nil, status.Error(codes.Unimplemented, "agones-lite does not allocate across clusters")
 	}
 	started := s.now()
-	result, err := s.allocate(gsa)
+	result, err := s.allocate(ctx, gsa)
 	if err == nil {
 		// Players are sent on this answer, so it waits for the file. The
 		// next request does not: see allocate.
@@ -92,9 +119,21 @@ func (s *Service) Allocate(ctx context.Context, in *pb.AllocationRequest) (*pb.A
 	}
 	s.observe(gsa, result, s.now().Sub(started))
 	if err != nil {
-		return nil, status.Error(codes.Aborted, err.Error())
+		return nil, refusal(err)
 	}
 	return converters.ConvertGSAToAllocationResponse(result, codes.ResourceExhausted)
+}
+
+// refusal says in gRPC's terms why a request got no answer. Unavailable is
+// the one a client is expected to try again after a pause.
+func refusal(err error) error {
+	switch {
+	case errors.Is(err, errBehind):
+		return status.Error(codes.Unavailable, err.Error())
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return status.FromContextError(err).Err()
+	}
+	return status.Error(codes.Aborted, err.Error())
 }
 
 // observe reports the outcome of a request. A failed one has no result.
@@ -115,9 +154,11 @@ func (s *Service) observe(gsa, result *allocationv1.GameServerAllocation, took t
 // allocate finds a GameServer and writes it back as Allocated. Losing the
 // write to a concurrent change, such as the game server shutting down, means
 // starting over with a fresh look.
-func (s *Service) allocate(gsa *allocationv1.GameServerAllocation) (*allocationv1.GameServerAllocation, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *Service) allocate(ctx context.Context, gsa *allocationv1.GameServerAllocation) (*allocationv1.GameServerAllocation, error) {
+	if err := s.takeTurn(ctx); err != nil {
+		return nil, err
+	}
+	defer func() { <-s.turn }()
 	for range attempts {
 		gs, found := s.find(gsa)
 		if !found {
@@ -134,6 +175,24 @@ func (s *Service) allocate(gsa *allocationv1.GameServerAllocation) (*allocationv
 		}
 	}
 	return nil, errConflict
+}
+
+// takeTurn waits until no other request is choosing, and refuses a request
+// that should not get a GameServer any more: see Service.
+func (s *Service) takeTurn(ctx context.Context) error {
+	select {
+	case s.turn <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	err := ctx.Err() // it may have had the turn and the end at once
+	if lag := s.servers.Lag(); err == nil && lag > s.Patience {
+		err = fmt.Errorf("%w (its file is %s behind)", errBehind, lag.Round(time.Millisecond))
+	}
+	if err != nil {
+		<-s.turn
+	}
+	return err
 }
 
 // find chooses the GameServer for a request among those on the nodes
