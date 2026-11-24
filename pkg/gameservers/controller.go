@@ -233,8 +233,14 @@ func (c *Controller) Report(r Report) error {
 		if !ok || gs.DeletionTimestamp != nil || !r.about(gs) {
 			return false
 		}
+		node, known := c.nodes.Get("", gs.Status.NodeName)
+		if !known && reachable(next) {
+			// Players would be sent to a node nobody knows any more: it was
+			// deleted, and the node controller is about to give this
+			// GameServer up. Until then it stays what it is.
+			return false
+		}
 		from, to, moved = gs.Status.State, next, gs
-		node, _ := c.nodes.Get("", gs.Status.NodeName)
 		apply(gs, next, r, node, c.now())
 		return true
 	})
@@ -278,7 +284,7 @@ func apply(gs *agonesv1.GameServer, next agonesv1.GameServerState, r Report, nod
 		// it. Upstream: moveToErrorState in pkg/gameservers/controller.go.
 		metav1.SetMetaDataAnnotation(&gs.ObjectMeta, agonesv1.GameServerErroredAtAnnotation, now.UTC().Format(time.RFC3339))
 	}
-	if node != nil && reachable(next) {
+	if reachable(next) {
 		publishAddress(gs, node)
 	}
 }

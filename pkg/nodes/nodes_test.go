@@ -166,7 +166,9 @@ func TestWhyACreationFailedTravelsWithTheReport(t *testing.T) {
 func TestAReserveTooLongForADurationLastsAsLongAsOneCan(t *testing.T) {
 	cp := newControlPlane(t)
 	servers := store.GameServersOf(cp.store)
-	_, err := servers.Create(inState("gs", agonesv1.GameServerStateReady))
+	_, err := store.NodesOf(cp.store).Create(node("node-1"))
+	require.NoError(t, err)
+	_, err = servers.Create(inState("gs", agonesv1.GameServerStateReady))
 	require.NoError(t, err)
 
 	// So many seconds that, as nanoseconds, they wrap around to 0.3s.

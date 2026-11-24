@@ -122,6 +122,25 @@ func TestReadyBeforeTheAgentReportsRunning(t *testing.T) {
 	assert.Equal(t, "203.0.113.10", gs.Status.Address, "Ready publishes the address when Scheduled never happened")
 }
 
+// Found by the model test of the control plane: the operator deletes a node
+// while a game server on it is asking for Ready, and this controller gets to
+// look before the node controller does.
+func TestAGameServerOnANodeThatWasDeletedIsNotMadeReady(t *testing.T) {
+	f := newFixture(t)
+	f.addNode()
+	f.addServer()
+	f.sync()
+	f.report(ContainersCreated)
+	f.report(SDKReady)
+	require.NoError(t, f.nodes.Delete("", "node-1"))
+
+	f.sync()
+	f.report(SDKAllocate)
+
+	gs := f.server()
+	assert.Equal(t, agonesv1.GameServerStateRequestReady, gs.Status.State, "there is no address to send players to")
+}
+
 // A game server may call Allocate or Reserve as soon as it starts, before
 // its agent reports it running. Upstream has an answer for Ready only.
 func TestAllocatedOrReservedBeforeTheAgentReportsRunning(t *testing.T) {
