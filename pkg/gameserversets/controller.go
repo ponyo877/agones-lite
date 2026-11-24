@@ -40,7 +40,7 @@ func NewController(s *store.Store, gameServers *gameservers.Controller, recorder
 		servers:     store.GameServersOf(s),
 		gameServers: gameServers,
 		events:      recorder,
-		now:         time.Now,
+		now:         s.Now,
 	}
 }
 

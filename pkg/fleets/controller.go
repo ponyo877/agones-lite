@@ -38,7 +38,7 @@ func NewController(s *store.Store, recorder *events.Recorder) *Controller {
 		sets:    store.GameServerSetsOf(s),
 		servers: store.GameServersOf(s),
 		events:  recorder,
-		now:     time.Now,
+		now:     s.Now,
 	}
 }
 

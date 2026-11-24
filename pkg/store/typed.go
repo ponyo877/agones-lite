@@ -6,6 +6,7 @@ import (
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	autoscalingv1 "agones.dev/agones/pkg/apis/autoscaling/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
 )
@@ -146,10 +147,15 @@ func (t Typed[T]) MarkDeleted(namespace, name string, now time.Time) error {
 		if obj.GetDeletionTimestamp() != nil {
 			return false
 		}
-		stamp := toTheSecond(now)
+		stamp := metav1.NewTime(now)
 		obj.SetDeletionTimestamp(&stamp)
 		return true
 	})
+}
+
+// Now tells the time by the store's clock.
+func (t Typed[T]) Now() time.Time {
+	return t.store.Now()
 }
 
 // Watch delivers every change to this kind until cancel is called.

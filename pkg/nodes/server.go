@@ -57,7 +57,7 @@ func NewServer(s *store.Store, local *Local) *Server {
 		local:   local,
 		servers: store.GameServersOf(s),
 		nodes:   store.NodesOf(s),
-		now:     time.Now,
+		now:     s.Now,
 		streams: map[string]int{},
 		logs:    map[string]*io.PipeWriter{},
 	}

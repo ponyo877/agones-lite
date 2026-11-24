@@ -86,19 +86,25 @@ func (s *Store) loadRow(rows *sql.Rows) error {
 	return nil
 }
 
-// persist writes one object and the new revision in a single transaction.
-func (s *Store) persist(key Key, revision int64, obj Object) error {
+// persist writes one object and the new revision in a single transaction,
+// and returns the object as a later Open would read it.
+func (s *Store) persist(key Key, revision int64, obj Object) (Object, error) {
 	data, err := json.Marshal(obj)
 	if err != nil {
-		return fmt.Errorf("%s: %w", key, err)
+		return nil, fmt.Errorf("%s: %w", key, err)
 	}
-	return s.inTx(func(tx *sql.Tx) error {
+	stored := s.factories[key.Kind]()
+	if err := json.Unmarshal(data, stored); err != nil {
+		return nil, fmt.Errorf("%s: %w", key, err)
+	}
+	err = s.inTx(func(tx *sql.Tx) error {
 		if _, err := tx.Exec(upsertResource, key.Kind, key.Namespace, key.Name, revision, data); err != nil {
 			return err
 		}
 		_, err := tx.Exec(upsertRevision, revision)
 		return err
 	})
+	return stored, err
 }
 
 // remove deletes one object and records the new revision.

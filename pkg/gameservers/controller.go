@@ -101,7 +101,7 @@ func NewController(s *store.Store, recorder *events.Recorder) *Controller {
 		servers: store.GameServersOf(s),
 		nodes:   store.NodesOf(s),
 		events:  recorder,
-		now:     time.Now,
+		now:     s.Now,
 		waiting: map[store.Key]bool{},
 	}
 }

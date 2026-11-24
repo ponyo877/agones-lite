@@ -93,7 +93,7 @@ func NewController(s *store.Store, gameServers *gameservers.Controller, recorder
 		gameServers: gameServers,
 		events:      recorder,
 		graces:      graces,
-		now:         time.Now,
+		now:         s.Now,
 	}
 }
 

@@ -54,7 +54,7 @@ func NewController(s *store.Store, recorder *events.Recorder, call Webhook) *Con
 		servers: store.GameServersOf(s),
 		events:  recorder,
 		call:    call,
-		now:     time.Now,
+		now:     s.Now,
 		passed:  map[store.Key]visit{},
 	}
 }

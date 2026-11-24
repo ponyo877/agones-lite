@@ -59,6 +59,12 @@ type Store struct {
 	objects   map[Kind]map[Key]Object
 	factories map[Kind]func() Object
 	watchers  map[*watcher]struct{}
+
+	// Clock tells the time, and Suffix makes the random end of a generated
+	// name. They are the machine's, unless a test puts its own in their
+	// place before the store is used, to have the same run twice.
+	Clock  func() time.Time
+	Suffix func() string
 }
 
 // Open loads the SQLite file at path, creating it when missing.
@@ -73,6 +79,8 @@ func Open(path string, kinds map[Kind]func() Object) (*Store, error) {
 		objects:   map[Kind]map[Key]Object{},
 		factories: kinds,
 		watchers:  map[*watcher]struct{}{},
+		Clock:     time.Now,
+		Suffix:    func() string { return rand.String(randomLength) },
 	}
 	if err := s.load(); err != nil {
 		_ = db.Close()
@@ -84,6 +92,12 @@ func Open(path string, kinds map[Kind]func() Object) (*Store, error) {
 // Close releases the SQLite file.
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+// Now tells the time by the store's clock. Whatever works on a store asks
+// it for the time, so that one clock moves a whole control plane.
+func (s *Store) Now() time.Time {
+	return s.Clock()
 }
 
 // Get returns a private copy of the object, so callers may change it freely.
@@ -146,7 +160,7 @@ func (s *Store) Create(kind Kind, obj Object) (Object, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	obj = clone(obj)
-	if err := prepare(obj); err != nil {
+	if err := s.prepare(obj); err != nil {
 		return nil, err
 	}
 	key := KeyOf(kind, obj)
@@ -191,16 +205,23 @@ func (s *Store) Delete(key Key) error {
 }
 
 // commit writes obj under the next revision: disk first, then memory, then watchers.
+//
+// Memory gets what the file got, read back, and not obj itself. The two
+// differ in small ways: JSON keeps a time to the second, and an empty list
+// may come back as none. A store that answers one thing before a restart
+// and another after it would change, for one, the order of two GameServers
+// made within a second, and with it which of them a scale-down removes.
 func (s *Store) commit(t EventType, key Key, obj Object) (Object, error) {
 	next := s.revision + 1
 	obj.SetResourceVersion(strconv.FormatInt(next, 10))
-	if err := s.persist(key, next, obj); err != nil {
+	stored, err := s.persist(key, next, obj)
+	if err != nil {
 		return nil, err
 	}
 	s.revision = next
-	s.put(key, obj)
-	s.notify(Event{Type: t, Key: key, Object: obj})
-	return clone(obj), nil
+	s.put(key, stored)
+	s.notify(Event{Type: t, Key: key, Object: stored})
+	return clone(stored), nil
 }
 
 func (s *Store) put(key Key, obj Object) {
@@ -211,15 +232,15 @@ func (s *Store) put(key Key, obj Object) {
 }
 
 // prepare fills in what the API server would on creation.
-func prepare(obj Object) error {
+func (s *Store) prepare(obj Object) error {
 	if obj.GetName() == "" {
 		if obj.GetGenerateName() == "" {
 			return errors.New("metadata.name or metadata.generateName is required")
 		}
-		obj.SetName(generatedName(obj.GetGenerateName()))
+		obj.SetName(generatedName(obj.GetGenerateName(), s.Suffix()))
 	}
 	obj.SetUID(uuid.NewUUID())
-	obj.SetCreationTimestamp(toTheSecond(time.Now()))
+	obj.SetCreationTimestamp(metav1.NewTime(s.Now()))
 	obj.SetGeneration(1)
 	return nil
 }
@@ -235,19 +256,11 @@ const (
 // generatedName makes a name from a generateName. Without the cut, the
 // GameServers of a Fleet with a long name would get names too long for a
 // label, which is where their names also go.
-func generatedName(base string) string {
+func generatedName(base, suffix string) string {
 	if most := maxNameLength - randomLength; len(base) > most {
 		base = base[:most]
 	}
-	return base + rand.String(randomLength)
-}
-
-// toTheSecond is t the way the file keeps it. JSON holds a time to the
-// second, so a finer one in memory would change when the file is read
-// again: two objects made within one second would be in order before a
-// restart and tied after it.
-func toTheSecond(t time.Time) metav1.Time {
-	return metav1.NewTime(t.Truncate(time.Second))
+	return base + suffix
 }
 
 func clone(obj Object) Object {

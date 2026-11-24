@@ -11,7 +11,6 @@ package nodes
 import (
 	"errors"
 	"sync"
-	"time"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -47,7 +46,7 @@ func NewLocal(s *store.Store, controller *gameservers.Controller) *Local {
 // calling, one on another machine is judged by Server.
 func (l *Local) Register(node *litev1.Node) error {
 	node = node.DeepCopy()
-	node.Status.LastHeartbeatTime = metav1.NewTime(time.Now())
+	node.Status.LastHeartbeatTime = metav1.NewTime(l.nodes.Now())
 	existing, ok := l.nodes.Get("", node.Name)
 	if !ok {
 		_, err := l.nodes.Create(node)

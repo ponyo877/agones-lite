@@ -2,7 +2,6 @@ package apiserver
 
 import (
 	"net/http"
-	"time"
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
@@ -100,7 +99,7 @@ func (r resource[T]) remove(w http.ResponseWriter, req *http.Request) {
 		fail(w, store.ErrNotFound)
 		return
 	}
-	if err := r.typed.MarkDeleted(namespace, name, time.Now()); err != nil {
+	if err := r.typed.MarkDeleted(namespace, name, r.typed.Now()); err != nil {
 		fail(w, err)
 		return
 	}

@@ -46,7 +46,9 @@ type Service struct {
 	nodes   store.Typed[*litev1.Node]
 	events  *events.Recorder
 	now     func() time.Time
-	pick    func(n int) int
+	// Pick chooses among n GameServers that are equally good, by giving a
+	// number below n. It is random unless a test says otherwise.
+	Pick func(n int) int
 	// Observe, when set, is told how each request ended and how long it
 	// took. It is how the metrics learn of allocations.
 	Observe func(fleet, status, strategy string, took time.Duration)
@@ -60,8 +62,8 @@ func NewService(s *store.Store, recorder *events.Recorder) *Service {
 		servers: store.GameServersOf(s),
 		nodes:   store.NodesOf(s),
 		events:  recorder,
-		now:     time.Now,
-		pick:    rand.IntN,
+		now:     s.Now,
+		Pick:    rand.IntN,
 	}
 }
 
@@ -110,7 +112,7 @@ func (s *Service) allocate(gsa *allocationv1.GameServerAllocation) (*allocationv
 	defer s.mu.Unlock()
 	for range attempts {
 		all := s.servers.View("")
-		gs, found := Find(gsa, s.reachable(gsa.Namespace, all), gameservers.CountByNode(all), s.pick)
+		gs, found := Find(gsa, s.reachable(gsa.Namespace, all), gameservers.CountByNode(all), s.Pick)
 		if !found {
 			return Unallocated(gsa), nil
 		}
