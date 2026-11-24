@@ -379,6 +379,22 @@ func (m *storeModel) groupsAgree(t *rapid.T, kind Kind) {
 		m.lend(got...)
 		slices.SortFunc(got, byNamespaceAndName)
 		m.sameList(t, want, got, "the group of node "+strconv.Quote(node))
+		byPlace := m.memberByMember(kind, node)
+		slices.SortFunc(byPlace, byNamespaceAndName)
+		m.sameList(t, want, byPlace, "the group of node "+strconv.Quote(node)+", taken member by member")
+	}
+}
+
+// memberByMember collects a group through Member, place after place, until
+// there is no such place.
+func (m *storeModel) memberByMember(kind Kind, node string) []Object {
+	var members []Object
+	for place := 0; ; place++ {
+		gs, there := Member(m.typed(kind), byNode, node, place)
+		if !there {
+			return members
+		}
+		members = append(members, gs)
 	}
 }
 
