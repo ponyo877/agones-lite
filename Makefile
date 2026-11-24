@@ -1,4 +1,4 @@
-.PHONY: build test lint dist
+.PHONY: build test lint check dist
 
 VERSION ?= dev
 LDFLAGS := -s -w -X github.com/ponyo877/agones-lite/pkg/version.Version=$(VERSION)
@@ -21,6 +21,20 @@ test:
 
 lint:
 	golangci-lint run ./...
+
+# What CI checks, as far as one machine can: see .github/workflows/ci.yml,
+# which also builds for every platform, tests on three kinds of machine and
+# regenerates the protocol code. Run this before a pull request, and CI has
+# less to say.
+check: lint
+	go mod tidy -diff
+	go test -race -shuffle=on -count=1 ./...
+	build/ci/properties.sh 1000
+	build/ci/coverage.sh 75
+	build/ci/fuzz.sh 10
+	build/ci/pinned.sh
+	go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
+	cd formal && lake build --wfail
 
 .PHONY: proto sidecar-image
 
