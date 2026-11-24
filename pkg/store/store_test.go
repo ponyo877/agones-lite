@@ -377,3 +377,88 @@ func TestAGeneratedNameThatIsTakenIsDrawnAgain(t *testing.T) {
 	assert.Equal(t, []string{"fleet-aaaaa", "fleet-bbbbb"}, []string{first.Name, second.Name})
 	assert.ErrorIs(t, err, ErrExists, "every draw gave a name that is taken")
 }
+
+// One save may hold more changes than a watcher has room for, and they
+// reach it all at once. A watcher that is reading is waited for.
+func TestAWatcherThatKeepsReadingGetsALargeSaveWhole(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "state.db"))
+	s.behind.Store(true) // written behind, and saved by hand below
+	servers := GameServersOf(s)
+	events, cancel := servers.Watch()
+	defer cancel()
+	const changes = 3 * watchBuffer
+	heard := make(chan int)
+	go func() {
+		n := 0
+		for range events {
+			if n++; n == changes {
+				break
+			}
+		}
+		heard <- n
+	}()
+
+	gs, err := servers.Create(gameServer("a"))
+	require.NoError(t, err)
+	for range changes - 1 {
+		gs, err = servers.Update(gs)
+		require.NoError(t, err)
+	}
+	require.NoError(t, s.saveBehind())
+
+	assert.Equal(t, changes, <-heard)
+}
+
+// A watcher that does not read is waited for a moment, and then closed.
+// Whoever writes is not kept waiting meanwhile.
+func TestAWatcherThatIsStuckIsClosedAfterAMoment(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "state.db"))
+	s.behind.Store(true)
+	servers := GameServersOf(s)
+	stuck, cancel := servers.Watch()
+	defer cancel()
+
+	gs, err := servers.Create(gameServer("a"))
+	require.NoError(t, err)
+	for range watchBuffer { // one change more than it has room for
+		gs, err = servers.Update(gs)
+		require.NoError(t, err)
+	}
+	saved := make(chan error)
+	go func() { saved <- s.saveBehind() }()
+	_, err = servers.Update(gs) // while the save waits for the watcher
+	require.NoError(t, err)
+	require.NoError(t, <-saved)
+
+	for range watchBuffer {
+		_, open := <-stuck
+		require.True(t, open, "what it had room for is still there to read")
+	}
+	_, open := <-stuck
+	assert.False(t, open, "and then its channel ends")
+}
+
+// Run tells watchers without the store's lock, so a watcher may leave
+// between the save and the telling. It is then simply not told.
+func TestAWatcherThatLeftBeforeItWasToldIsLeftAlone(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "state.db"))
+	s.behind.Store(true)
+	servers := GameServersOf(s)
+	_, err := servers.Create(gameServer("a"))
+	require.NoError(t, err)
+	saved := s.unsaved
+
+	for range 100 { // telling used to send on the closed channel half the time
+		_, cancel := s.Watch(GameServers)
+		s.mu.Lock()
+		listening := s.listening()
+		s.mu.Unlock()
+		for _, w := range listening {
+			w.after = 0 // as if it had been watching before the change
+		}
+		cancel()
+		for _, w := range listening {
+			assert.True(t, tellAll(w, saved, patience))
+		}
+	}
+}

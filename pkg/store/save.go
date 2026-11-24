@@ -107,7 +107,7 @@ func (s *Store) record(c change) error {
 }
 
 // save writes every unsaved change to the file. Called with the lock held,
-// and keeps it.
+// and keeps it: so it does not wait for a watcher that has no room.
 func (s *Store) save() error {
 	if len(s.unsaved) == 0 {
 		return nil
@@ -115,7 +115,12 @@ func (s *Store) save() error {
 	if err := s.file.write(s.unsaved); err != nil {
 		return err
 	}
-	s.settle(len(s.unsaved))
+	saved := s.settle(len(s.unsaved))
+	for _, w := range s.listening() {
+		if !tellAll(w, saved, 0) {
+			s.drop(w) // too far behind: see Watch
+		}
+	}
 	return nil
 }
 
@@ -132,20 +137,40 @@ func (s *Store) saveBehind() error {
 		return err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.settle(len(round))
+	saved, listening := s.settle(len(round)), s.listening()
+	s.mu.Unlock()
+	// Without the lock: a watcher gets a moment to make room, and nobody
+	// who writes or reads is kept waiting for it meanwhile.
+	for _, w := range listening {
+		if !tellAll(w, saved, patience) {
+			s.mu.Lock()
+			s.drop(w) // stuck: see Watch
+			s.mu.Unlock()
+		}
+	}
 	return nil
 }
 
 // settle is called with the lock held once the file has the first n
-// unsaved changes. Watchers hear of them now, and Sync may return.
-func (s *Store) settle(n int) {
-	for _, c := range s.unsaved[:n] {
-		s.notify(c)
-	}
-	s.saved.Store(s.unsaved[n-1].revision)
+// unsaved changes. Sync may return, and what it returns is for the
+// watchers to hear of.
+func (s *Store) settle(n int) (saved []change) {
+	saved = s.unsaved[:n:n]
+	s.saved.Store(saved[n-1].revision)
 	s.unsaved = slices.Clone(s.unsaved[n:]) // a copy, to let go of the saved ones
 	s.tellWaiting()
+	return saved
+}
+
+// tellAll tells a watcher of changes, in order, and reports false when it
+// could not keep up.
+func tellAll(w *watcher, changes []change, wait time.Duration) (kept bool) {
+	for _, c := range changes {
+		if !w.tell(c, wait) {
+			return false
+		}
+	}
+	return true
 }
 
 // setBehind says whether Run is saving. When it stops, what it has left is
