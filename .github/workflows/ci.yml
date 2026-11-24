@@ -24,6 +24,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+defaults:
+  run:
+    # Named, so that a command that fails before a pipe fails the step.
+    shell: bash
+
 jobs:
   # Code that is hard to read, mistakes that compile, and files that are
   # not what a tool would have written.
@@ -69,7 +74,8 @@ jobs:
   # Every test, on the three kinds of machine agones-lite runs on, with the
   # race detector and in an order drawn anew each time. On Linux nothing a
   # test needs is missing, Docker included, so a test that cannot run fails
-  # (test/testenv). macOS has no Docker daemon here.
+  # (test/testenv), and so does the job when one was skipped all the same.
+  # macOS has no Docker daemon here.
   test:
     strategy:
       fail-fast: false
@@ -95,8 +101,12 @@ jobs:
           go-version-file: go.mod
       - name: Test
         run: go test -race -shuffle=on -count=1 ./...
+      - name: No test was skipped
+        if: matrix.complete
+        run: build/ci/skipped.sh
 
-  # Code that came in without tests shows as a drop.
+  # Code that came in without tests shows as a drop. The floor is a little
+  # under what the tests reach today, and is raised when they reach more.
   coverage:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -109,8 +119,8 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
-      - name: The tests reach at least three quarters of the code
-        run: build/ci/coverage.sh 75
+      - name: The tests reach no less of the code than they did
+        run: build/ci/coverage.sh 79
 
   # The property tests and the model tests, with ten times the tries a
   # plain "go test" gives them.
@@ -165,9 +175,11 @@ jobs:
         with:
           go-version-file: go.mod
       - name: 1,000 game servers, 50 allocations a second
-        run: go test ./pkg/controlplane/ -run '^TestLoad$' -count=1 -v
+        run: go test ./pkg/controlplane/ -run '^TestLoad$' -count=1 -v | tee load.txt
         env:
           AGONES_LITE_LOAD: "1"
+      - name: The load test did run
+        run: grep -- '--- PASS[:] TestLoad ' load.txt
       - name: Every benchmark, once
         run: go test ./... -run '^$' -bench . -benchtime 1x
 
@@ -180,11 +192,12 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
-      - uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          # The version the files in the repository name in their headers.
-          version: "33.4"
-          repo-token: ${{ github.token }}
+      - name: Install protoc (the version the generated files name in their headers)
+        run: |
+          curl -sSfLo protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v33.4/protoc-33.4-linux-x86_64.zip
+          echo "c0040ea9aef08fdeb2c74ca609b18d5fdbfc44ea0042fcfbfb38860d35f7dd66  protoc.zip" | sha256sum --check
+          unzip -q protoc.zip -d "$HOME/protoc" && rm protoc.zip
+          echo "$HOME/protoc/bin" >> "$GITHUB_PATH"
       - name: Generating the code again changes nothing
         run: make proto && git diff --exit-code -- proto
 
@@ -199,8 +212,11 @@ jobs:
         run: |
           curl -sSfL https://raw.githubusercontent.com/leanprover/elan/3cc76985a1becb3c03cd65c1c5007e6f186ae474/elan-init.sh | sh -s -- -y --default-toolchain none
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
-      - name: No proof is put off
-        run: "! grep -rnwE 'sorry|admit' formal/Formal formal/*.lean"
+      - name: No proof is put off, assumed, or left to the compiler
+        run: |
+          found=0
+          grep -rnwE 'sorry|admit|axiom|native_decide' formal/Formal formal/*.lean || found=$?
+          test "$found" -eq 1 # 1 is grep for "none"; 2 would be "could not look"
       - name: Check every proof, and let no warning pass
         working-directory: formal
         run: lake build --wfail

@@ -30,7 +30,7 @@ check: lint
 	go mod tidy -diff
 	go test -race -shuffle=on -count=1 ./...
 	build/ci/properties.sh 1000
-	build/ci/coverage.sh 75
+	build/ci/coverage.sh 79
 	build/ci/fuzz.sh 10
 	build/ci/pinned.sh
 	go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...

@@ -10,10 +10,14 @@
 set -eu
 seconds=${1:-30}
 skip=${FUZZ_SKIP:-^$}
+ran=0
 
 for pkg in $(go list ./...); do
 	for target in $(go test -list '^Fuzz' "$pkg" | grep '^Fuzz' | grep -Ev "$skip" || true); do
 		echo "== $target in $pkg, for ${seconds}s"
 		go test "$pkg" -run '^$' -fuzz "^${target}\$" -fuzztime "${seconds}s" -fuzzminimizetime 10s
+		ran=$((ran + 1))
 	done
 done
+echo "$ran fuzz targets ran"
+[ "$ran" -gt 0 ]
