@@ -55,6 +55,11 @@ const (
 // (Schroeder, Wierman and Harchol-Balter, "Open Versus Closed: A
 // Cautionary Tale", NSDI 2006). And the 99th percentile of a sample is not
 // that of what was sampled: see atMost.
+//
+// A slow answer has three places to come from, and the test says which:
+// the disk (the slowest save), the machine the test is on (how long the
+// test itself was kept from running), or the control plane, when it is
+// neither of the two.
 func TestLoad(t *testing.T) {
 	if os.Getenv("SCRIM_LOAD") == "" {
 		t.Skip("set SCRIM_LOAD=1 to run the load test")
@@ -68,12 +73,17 @@ func TestLoad(t *testing.T) {
 	t.Logf("%d game servers on %d nodes were Ready after %s", loadGameServers, loadNodes, time.Since(started).Round(time.Millisecond))
 
 	const seconds = 60 // 3,000 requests: fewer say little about one in a hundred
+	w.saves.forget()
+	held, stopWatching := heldUp()
 	took := w.allocateAtRate(loadAllocations, seconds)
+	stopWatching()
 	slices.Sort(took)
 	median, p99, slowest := took[len(took)/2], took[len(took)*99/100], took[len(took)-1]
 	t.Logf("%d allocations at %d per second: median %s, 99th percentile %s (at most %s, with 95%% confidence), slowest %s",
 		len(took), loadAllocations, median.Round(time.Microsecond), p99.Round(time.Microsecond),
 		atMost(took, 0.99).Round(time.Microsecond), slowest.Round(time.Microsecond))
+	t.Logf("meanwhile the slowest save took %s, and the test itself was kept from running for at most %s",
+		w.saves.seen().Round(time.Microsecond), held.seen().Round(time.Microsecond))
 
 	require.Len(t, took, loadAllocations*seconds, "every allocation got a game server, and one of its own")
 	require.Less(t, atMost(took, 0.99), 100*time.Millisecond, "an allocation should not take a noticeable part of a second")
@@ -93,6 +103,46 @@ func atMost(sorted []time.Duration, q float64) time.Duration {
 	n := float64(len(sorted))
 	rank := int(math.Ceil(n*q+1.96*math.Sqrt(n*q*(1-q)))) + 1
 	return sorted[min(rank, len(sorted))-1]
+}
+
+// longest keeps the longest of the times it is shown.
+type longest struct {
+	mu   sync.Mutex
+	time time.Duration
+}
+
+func (l *longest) show(d time.Duration) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.time = max(l.time, d)
+}
+
+func (l *longest) seen() time.Duration {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.time
+}
+
+func (l *longest) forget() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.time = 0
+}
+
+// heldUp watches how long the test itself is kept from running, until stop
+// is called: it asks to be woken every millisecond, and notes how much later
+// than that it was. A machine that stands still for a moment, as a shared
+// one does now and then, shows here, and in every request due meanwhile.
+func heldUp() (held *longest, stop func()) {
+	held = &longest{}
+	watching, stop := context.WithCancel(context.Background())
+	go func() {
+		for last := time.Now(); watching.Err() == nil; last = time.Now() {
+			time.Sleep(time.Millisecond)
+			held.show(time.Since(last) - time.Millisecond)
+		}
+	}()
+	return held, stop
 }
 
 // BenchmarkScaleUp measures a new Fleet from the moment it is applied to
@@ -180,6 +230,11 @@ func newLoadWorld(t testing.TB, nodeCount int) (w world, stop func()) {
 	require.NoError(t, err)
 	cp, err := New(s, recorder, metrics.New(s), nodes.DefaultGraces)
 	require.NoError(t, err)
+	saves, measure := &longest{}, s.Saved
+	s.Saved = func(changes int, took time.Duration) {
+		measure(changes, took)
+		saves.show(took)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var running sync.WaitGroup
@@ -197,7 +252,7 @@ func newLoadWorld(t testing.TB, nodeCount int) (w world, stop func()) {
 		}
 		running.Go(func() { _ = agent.NewSimulator(node, cp.Agents).Run(ctx) })
 	}
-	return world{t: t, cp: cp, api: cp.API.Handler(), store: s}, func() {
+	return world{t: t, cp: cp, api: cp.API.Handler(), store: s, saves: saves}, func() {
 		cancel()
 		running.Wait()
 		_ = recorder.Close()
