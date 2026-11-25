@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-agones-lite is pre-1.0. Fixes go to `main` and into the next release; only
+scrim is pre-1.0. Fixes go to `main` and into the next release; only
 the latest release is supported.
 
 ## Reporting a vulnerability
@@ -10,13 +10,13 @@ the latest release is supported.
 Please do not open a public issue for a security problem.
 
 Report it in private through GitHub: on the
-[Security tab](https://github.com/ponyo877/agones-lite/security) of this
+[Security tab](https://github.com/ponyo877/scrim/security) of this
 repository, choose **Report a vulnerability**. Only the maintainer sees the
 report.
 
 It helps to say:
 
-- the commit you ran, and how agones-lite was started,
+- the commit you ran, and how scrim was started,
 - what you did, what happened, and what you expected,
 - what someone could do with it.
 

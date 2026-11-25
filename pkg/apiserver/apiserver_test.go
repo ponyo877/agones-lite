@@ -21,11 +21,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 
-	"github.com/ponyo877/agones-lite/pkg/agent"
-	"github.com/ponyo877/agones-lite/pkg/agones"
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/store"
-	"github.com/ponyo877/agones-lite/test/testenv"
+	"github.com/ponyo877/scrim/pkg/agent"
+	"github.com/ponyo877/scrim/pkg/agones"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/store"
+	"github.com/ponyo877/scrim/test/testenv"
 )
 
 const manifest = `
@@ -295,7 +295,7 @@ func TestHealthzSaysWhenNothingCanBeSaved(t *testing.T) {
 		api := New(s, nil, nil, nil).Handler()
 		require.Equal(t, http.StatusOK, call(t, api, http.MethodGet, "/healthz", "").Code)
 
-		_, err = store.NodesOf(s).Create(&litev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "a"}})
+		_, err = store.NodesOf(s).Create(&scrimv1.Node{ObjectMeta: metav1.ObjectMeta{Name: "a"}})
 		require.NoError(t, err)
 		time.Sleep(unwell)
 		assert.Equal(t, http.StatusOK, call(t, api, http.MethodGet, "/healthz", "").Code, "a disk may take its time")

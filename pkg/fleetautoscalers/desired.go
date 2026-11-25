@@ -8,7 +8,7 @@ import (
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	autoscalingv1 "agones.dev/agones/pkg/apis/autoscaling/v1"
 
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/gameservers"
 )
 
 // Desired returns how many replicas the policy wants for the Fleet, and

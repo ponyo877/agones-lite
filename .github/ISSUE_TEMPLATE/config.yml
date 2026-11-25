@@ -1,7 +1,7 @@
 blank_issues_enabled: true
 contact_links:
   - name: A security problem
-    url: https://github.com/ponyo877/agones-lite/security/advisories/new
+    url: https://github.com/ponyo877/scrim/security/advisories/new
     about: Please report it in private, not in an issue. SECURITY.md says how.
   - name: A question about Agones itself
     url: https://agones.dev/site/docs/

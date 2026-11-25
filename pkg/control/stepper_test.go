@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ponyo877/agones-lite/pkg/store"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
 // recorder is a Loop that writes down what it was asked to look at.

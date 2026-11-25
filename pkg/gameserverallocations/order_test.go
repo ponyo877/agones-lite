@@ -7,7 +7,7 @@ import (
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/gameservers"
 )
 
 // sortedBy returns the names of servers in the given order.

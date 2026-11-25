@@ -10,7 +10,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
-	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
+	sidecarv1 "github.com/ponyo877/scrim/proto/sidecar/v1"
 )
 
 // maxListCapacity is the largest capacity a List may be given.

@@ -33,12 +33,12 @@ func TestFlagsMayComeBeforeOrAfterPositionalArguments(t *testing.T) {
 
 func TestAConfigFileFillsInWhatTheCommandLineLeftOut(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "server.yaml")
-	require.NoError(t, os.WriteFile(file, []byte("data-dir: /var/lib/agones-lite\nmax-gameservers: 50\nno-agent: true\nlisten: 0.0.0.0:9443\n"), 0o600))
+	require.NoError(t, os.WriteFile(file, []byte("data-dir: /var/lib/scrim\nmax-gameservers: 50\nno-agent: true\nlisten: 0.0.0.0:9443\n"), 0o600))
 
 	o, err := serverFlags([]string{"--config", file, "--listen", "127.0.0.1:1234"})
 
 	require.NoError(t, err)
-	assert.Equal(t, "/var/lib/agones-lite", o.dataDir)
+	assert.Equal(t, "/var/lib/scrim", o.dataDir)
 	assert.Equal(t, int32(50), o.node.agent.MaxGameServers)
 	assert.True(t, o.noAgent)
 	assert.Equal(t, "127.0.0.1:1234", o.listen, "the command line wins over the file")
@@ -273,6 +273,6 @@ func TestBufferAsksForARateAndAStartupTimeThatMakeSense(t *testing.T) {
 		{"--rate", "2", "--startup", "5s", "--miss", "0"},
 		{"--rate", "2", "--startup", "5s", "--miss", "1"},
 	} {
-		assert.ErrorContains(t, runBuffer(context.Background(), args, io.Discard), "usage: agones-lite buffer", "%v", args)
+		assert.ErrorContains(t, runBuffer(context.Background(), args, io.Discard), "usage: scrim buffer", "%v", args)
 	}
 }

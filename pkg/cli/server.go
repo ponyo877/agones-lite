@@ -17,15 +17,15 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 
-	"github.com/ponyo877/agones-lite/pkg/agent"
-	"github.com/ponyo877/agones-lite/pkg/agones"
-	"github.com/ponyo877/agones-lite/pkg/auth"
-	"github.com/ponyo877/agones-lite/pkg/controlplane"
-	"github.com/ponyo877/agones-lite/pkg/events"
-	"github.com/ponyo877/agones-lite/pkg/metrics"
-	"github.com/ponyo877/agones-lite/pkg/nodes"
-	"github.com/ponyo877/agones-lite/pkg/store"
-	nodev1 "github.com/ponyo877/agones-lite/proto/node/v1"
+	"github.com/ponyo877/scrim/pkg/agent"
+	"github.com/ponyo877/scrim/pkg/agones"
+	"github.com/ponyo877/scrim/pkg/auth"
+	"github.com/ponyo877/scrim/pkg/controlplane"
+	"github.com/ponyo877/scrim/pkg/events"
+	"github.com/ponyo877/scrim/pkg/metrics"
+	"github.com/ponyo877/scrim/pkg/nodes"
+	"github.com/ponyo877/scrim/pkg/store"
+	nodev1 "github.com/ponyo877/scrim/proto/node/v1"
 )
 
 const (
@@ -54,7 +54,7 @@ type serverOptions struct {
 func serverFlags(args []string) (*serverOptions, error) {
 	o := &serverOptions{}
 	fs := flag.NewFlagSet("server", flag.ContinueOnError)
-	fs.StringVar(&o.dataDir, "data-dir", env("AGONES_LITE_DATA_DIR", defaultDataDir), "directory for the state database, certificates and tokens")
+	fs.StringVar(&o.dataDir, "data-dir", env("SCRIM_DATA_DIR", defaultDataDir), "directory for the state database, certificates and tokens")
 	fs.StringVar(&o.listen, "listen", "127.0.0.1:9443", "address of the management API")
 	fs.StringVar(&o.allocationListen, "allocation-listen", "127.0.0.1:9444", "address of the allocation API")
 	fs.StringVar(&o.nodeListen, "node-listen", "", "address where agents on other machines connect, for example :9445 (default: none)")
@@ -105,8 +105,8 @@ func runServer(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(out, "agones-lite: management API on https://%s, allocation API on https://%s\n", o.listen, o.allocationListen)
-	_, _ = fmt.Fprintf(out, "agones-lite: tokens and the CA certificate are in %s\n", o.dataDir)
+	_, _ = fmt.Fprintf(out, "scrim: management API on https://%s, allocation API on https://%s\n", o.listen, o.allocationListen)
+	_, _ = fmt.Fprintf(out, "scrim: tokens and the CA certificate are in %s\n", o.dataDir)
 	return runAll(ctx, parts...)
 }
 

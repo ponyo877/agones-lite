@@ -20,11 +20,11 @@ import (
 	"google.golang.org/grpc/status"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/ponyo877/agones-lite/pkg/agent"
-	"github.com/ponyo877/agones-lite/pkg/agones"
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/nodes"
-	"github.com/ponyo877/agones-lite/pkg/store"
+	"github.com/ponyo877/scrim/pkg/agent"
+	"github.com/ponyo877/scrim/pkg/agones"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/nodes"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
 const fleetManifest = `
@@ -53,6 +53,7 @@ type world struct {
 	cp    *ControlPlane
 	api   http.Handler
 	store *store.Store
+	saves *longest // how long the slowest save took: only the load test looks
 }
 
 func newWorld(t *testing.T) world {
@@ -62,17 +63,17 @@ func newWorld(t *testing.T) world {
 	require.NoError(t, err)
 	cp, err := New(s, nil, nil, nodes.DefaultGraces)
 	require.NoError(t, err)
-	node := &litev1.Node{
+	node := &scrimv1.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
-		Status: litev1.NodeStatus{
-			Phase:     litev1.NodeReady,
+		Status: scrimv1.NodeStatus{
+			Phase:     scrimv1.NodeReady,
 			Address:   "203.0.113.10",
-			PortRange: litev1.PortRange{Min: 7000, Max: 7100},
+			PortRange: scrimv1.PortRange{Min: 7000, Max: 7100},
 		},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	var running sync.WaitGroup
-	running.Go(func() { s.Run(ctx) }) // the file is written behind, as in "agones-lite server"
+	running.Go(func() { s.Run(ctx) }) // the file is written behind, as in "scrim server"
 	running.Go(func() { cp.Run(ctx) })
 	go func() { _ = agent.NewSimulator(node, cp.Agents).Run(ctx) }()
 	t.Cleanup(func() {

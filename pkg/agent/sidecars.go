@@ -17,10 +17,10 @@ import (
 	"google.golang.org/protobuf/proto"
 	"k8s.io/apimachinery/pkg/types"
 
-	"github.com/ponyo877/agones-lite/pkg/docker"
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
-	"github.com/ponyo877/agones-lite/pkg/podspec"
-	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
+	"github.com/ponyo877/scrim/pkg/docker"
+	"github.com/ponyo877/scrim/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/podspec"
+	sidecarv1 "github.com/ponyo877/scrim/proto/sidecar/v1"
 )
 
 // sidecarServer answers the sidecars of the game servers on this node.

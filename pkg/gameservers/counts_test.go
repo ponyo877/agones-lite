@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/ponyo877/agones-lite/pkg/sdkserver"
-	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
+	"github.com/ponyo877/scrim/pkg/sdkserver"
+	sidecarv1 "github.com/ponyo877/scrim/proto/sidecar/v1"
 )
 
 func TestApplyCountsChangesCounters(t *testing.T) {

@@ -1,10 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 112 112" role="img" aria-label="agones-lite">
-  <title>agones-lite</title>
-  <!--
-    The agones-lite logo. The mark is the letter A as the Greeks wrote it
-    without its bar, over one dot: a single game server that is Ready.
-    This file is the mark alone, for places that are square.
-  -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 112 112" role="img" aria-label="scrim">
+  <title>scrim</title>
+<!--
+  The scrim logo. A scrim is a practice match. The mark is its two sides,
+  facing each other, and between them one dot: a game server that is Ready.
+  This file is the mark alone, for places that are square.
+-->
   <defs>
     <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#8B5CF6"/>
@@ -12,6 +12,6 @@
     </linearGradient>
   </defs>
   <rect x="8" y="8" width="96" height="96" rx="24" fill="url(#tile)"/>
-  <path d="M35 78 56 35 77 78" fill="none" stroke="#fff" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="56" cy="72" r="6.5" fill="#34D399"/>
+  <path d="M27 37 41 56 27 75M85 37 71 56 85 75" fill="none" stroke="#fff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="56" cy="56" r="6.5" fill="#34D399"/>
 </svg>

@@ -15,7 +15,7 @@ import (
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	corev1 "k8s.io/api/core/v1"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
 )
 
 // Used returns the host ports held by servers, which must all be on one node.
@@ -41,7 +41,7 @@ func Take(used map[int32]bool, gs *agonesv1.GameServer) {
 //
 // It reports false, leaving gs untouched, when a Static port is taken or the
 // range has too few free ports.
-func Allocate(gs *agonesv1.GameServer, r litev1.PortRange, used map[int32]bool) bool {
+func Allocate(gs *agonesv1.GameServer, r scrimv1.PortRange, used map[int32]bool) bool {
 	if !staticPortsFree(gs, used) {
 		return false
 	}
@@ -99,7 +99,7 @@ func staticPortsFree(gs *agonesv1.GameServer, used map[int32]bool) bool {
 
 // pickFree returns the n lowest ports in r that are neither used nor
 // among own.
-func pickFree(n int, r litev1.PortRange, used map[int32]bool, own []int32) ([]int32, bool) {
+func pickFree(n int, r scrimv1.PortRange, used map[int32]bool, own []int32) ([]int32, bool) {
 	free := make([]int32, 0, n)
 	// Counted as int64: an int32 that has reached a range's end at the
 	// largest int32 starts again at the smallest, far outside the range.

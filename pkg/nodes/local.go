@@ -16,16 +16,16 @@ import (
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
-	"github.com/ponyo877/agones-lite/pkg/store"
-	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/store"
+	sidecarv1 "github.com/ponyo877/scrim/proto/sidecar/v1"
 )
 
 // Local connects an agent straight to the store and the GameServer controller.
 type Local struct {
 	servers    store.Typed[*agonesv1.GameServer]
-	nodes      store.Typed[*litev1.Node]
+	nodes      store.Typed[*scrimv1.Node]
 	controller *gameservers.Controller
 
 	mu      sync.Mutex
@@ -45,7 +45,7 @@ func NewLocal(s *store.Store, controller *gameservers.Controller) *Local {
 // Register records the node, or refreshes it when it is already known. The
 // phase is the caller's to decide: an agent in this process is Ready by
 // calling, one on another machine is judged by Server.
-func (l *Local) Register(ctx context.Context, node *litev1.Node) error {
+func (l *Local) Register(ctx context.Context, node *scrimv1.Node) error {
 	node = node.DeepCopy()
 	node.Status.LastHeartbeatTime = metav1.NewTime(l.nodes.Now())
 	existing, ok := l.nodes.Get("", node.Name)
@@ -54,9 +54,9 @@ func (l *Local) Register(ctx context.Context, node *litev1.Node) error {
 		return l.saved(ctx, err)
 	}
 	// Keep what the operator set, such as a cordon; take the rest from the agent.
-	lastHeard, wasGone := existing.Status.LastHeartbeatTime, existing.Status.Phase == litev1.NodeDisconnected
+	lastHeard, wasGone := existing.Status.LastHeartbeatTime, existing.Status.Phase == scrimv1.NodeDisconnected
 	existing.Status = node.Status
-	if wasGone && node.Status.Phase == litev1.NodeDisconnected {
+	if wasGone && node.Status.Phase == scrimv1.NodeDisconnected {
 		// Gone before and gone still: it was last heard from when its
 		// connection ended. An agent that manages to register but not to
 		// connect would otherwise put off for ever the day its GameServers

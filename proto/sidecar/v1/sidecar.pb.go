@@ -183,7 +183,7 @@ func (x *WatchResponse) GetGameServer() []byte {
 
 type TellRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	Event Event                  `protobuf:"varint,1,opt,name=event,proto3,enum=agoneslite.sidecar.v1.Event" json:"event,omitempty"`
+	Event Event                  `protobuf:"varint,1,opt,name=event,proto3,enum=scrim.sidecar.v1.Event" json:"event,omitempty"`
 	// For EVENT_RESERVE: how long to stay Reserved. Zero means until told otherwise.
 	ReserveSeconds int64 `protobuf:"varint,2,opt,name=reserve_seconds,json=reserveSeconds,proto3" json:"reserve_seconds,omitempty"`
 	// For EVENT_SET_METADATA: what SetLabel and SetAnnotation asked for.
@@ -474,18 +474,18 @@ var File_proto_sidecar_v1_sidecar_proto protoreflect.FileDescriptor
 
 const file_proto_sidecar_v1_sidecar_proto_rawDesc = "" +
 	"\n" +
-	"\x1eproto/sidecar/v1/sidecar.proto\x12\x15agoneslite.sidecar.v1\"\x0e\n" +
+	"\x1eproto/sidecar/v1/sidecar.proto\x12\x10scrim.sidecar.v1\"\x0e\n" +
 	"\fWatchRequest\"0\n" +
 	"\rWatchResponse\x12\x1f\n" +
 	"\vgame_server\x18\x01 \x01(\fR\n" +
-	"gameServer\"\x9c\x04\n" +
-	"\vTellRequest\x122\n" +
-	"\x05event\x18\x01 \x01(\x0e2\x1c.agoneslite.sidecar.v1.EventR\x05event\x12'\n" +
-	"\x0freserve_seconds\x18\x02 \x01(\x03R\x0ereserveSeconds\x12F\n" +
-	"\x06labels\x18\x03 \x03(\v2..agoneslite.sidecar.v1.TellRequest.LabelsEntryR\x06labels\x12U\n" +
-	"\vannotations\x18\x04 \x03(\v23.agoneslite.sidecar.v1.TellRequest.AnnotationsEntryR\vannotations\x12@\n" +
-	"\bcounters\x18\x05 \x03(\v2$.agoneslite.sidecar.v1.CounterUpdateR\bcounters\x127\n" +
-	"\x05lists\x18\x06 \x03(\v2!.agoneslite.sidecar.v1.ListUpdateR\x05lists\x12\x1b\n" +
+	"gameServer\"\x83\x04\n" +
+	"\vTellRequest\x12-\n" +
+	"\x05event\x18\x01 \x01(\x0e2\x17.scrim.sidecar.v1.EventR\x05event\x12'\n" +
+	"\x0freserve_seconds\x18\x02 \x01(\x03R\x0ereserveSeconds\x12A\n" +
+	"\x06labels\x18\x03 \x03(\v2).scrim.sidecar.v1.TellRequest.LabelsEntryR\x06labels\x12P\n" +
+	"\vannotations\x18\x04 \x03(\v2..scrim.sidecar.v1.TellRequest.AnnotationsEntryR\vannotations\x12;\n" +
+	"\bcounters\x18\x05 \x03(\v2\x1f.scrim.sidecar.v1.CounterUpdateR\bcounters\x122\n" +
+	"\x05lists\x18\x06 \x03(\v2\x1c.scrim.sidecar.v1.ListUpdateR\x05lists\x12\x1b\n" +
 	"\tchange_id\x18\a \x01(\tR\bchangeId\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
@@ -520,10 +520,10 @@ const file_proto_sidecar_v1_sidecar_proto_rawDesc = "" +
 	"\x13EVENT_HEALTH_FAILED\x10\x05\x12\x16\n" +
 	"\x12EVENT_SET_METADATA\x10\x06\x12\x17\n" +
 	"\x13EVENT_UPDATE_COUNTS\x10\a\x12\x19\n" +
-	"\x15EVENT_RESERVE_EXPIRED\x10\b2\xae\x01\n" +
-	"\x05Agent\x12T\n" +
-	"\x05Watch\x12#.agoneslite.sidecar.v1.WatchRequest\x1a$.agoneslite.sidecar.v1.WatchResponse0\x01\x12O\n" +
-	"\x04Tell\x12\".agoneslite.sidecar.v1.TellRequest\x1a#.agoneslite.sidecar.v1.TellResponseB<Z:github.com/ponyo877/agones-lite/proto/sidecar/v1;sidecarv1b\x06proto3"
+	"\x15EVENT_RESERVE_EXPIRED\x10\b2\x9a\x01\n" +
+	"\x05Agent\x12J\n" +
+	"\x05Watch\x12\x1e.scrim.sidecar.v1.WatchRequest\x1a\x1f.scrim.sidecar.v1.WatchResponse0\x01\x12E\n" +
+	"\x04Tell\x12\x1d.scrim.sidecar.v1.TellRequest\x1a\x1e.scrim.sidecar.v1.TellResponseB6Z4github.com/ponyo877/scrim/proto/sidecar/v1;sidecarv1b\x06proto3"
 
 var (
 	file_proto_sidecar_v1_sidecar_proto_rawDescOnce sync.Once
@@ -540,26 +540,26 @@ func file_proto_sidecar_v1_sidecar_proto_rawDescGZIP() []byte {
 var file_proto_sidecar_v1_sidecar_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_proto_sidecar_v1_sidecar_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_proto_sidecar_v1_sidecar_proto_goTypes = []any{
-	(Event)(0),            // 0: agoneslite.sidecar.v1.Event
-	(*WatchRequest)(nil),  // 1: agoneslite.sidecar.v1.WatchRequest
-	(*WatchResponse)(nil), // 2: agoneslite.sidecar.v1.WatchResponse
-	(*TellRequest)(nil),   // 3: agoneslite.sidecar.v1.TellRequest
-	(*CounterUpdate)(nil), // 4: agoneslite.sidecar.v1.CounterUpdate
-	(*ListUpdate)(nil),    // 5: agoneslite.sidecar.v1.ListUpdate
-	(*TellResponse)(nil),  // 6: agoneslite.sidecar.v1.TellResponse
-	nil,                   // 7: agoneslite.sidecar.v1.TellRequest.LabelsEntry
-	nil,                   // 8: agoneslite.sidecar.v1.TellRequest.AnnotationsEntry
+	(Event)(0),            // 0: scrim.sidecar.v1.Event
+	(*WatchRequest)(nil),  // 1: scrim.sidecar.v1.WatchRequest
+	(*WatchResponse)(nil), // 2: scrim.sidecar.v1.WatchResponse
+	(*TellRequest)(nil),   // 3: scrim.sidecar.v1.TellRequest
+	(*CounterUpdate)(nil), // 4: scrim.sidecar.v1.CounterUpdate
+	(*ListUpdate)(nil),    // 5: scrim.sidecar.v1.ListUpdate
+	(*TellResponse)(nil),  // 6: scrim.sidecar.v1.TellResponse
+	nil,                   // 7: scrim.sidecar.v1.TellRequest.LabelsEntry
+	nil,                   // 8: scrim.sidecar.v1.TellRequest.AnnotationsEntry
 }
 var file_proto_sidecar_v1_sidecar_proto_depIdxs = []int32{
-	0, // 0: agoneslite.sidecar.v1.TellRequest.event:type_name -> agoneslite.sidecar.v1.Event
-	7, // 1: agoneslite.sidecar.v1.TellRequest.labels:type_name -> agoneslite.sidecar.v1.TellRequest.LabelsEntry
-	8, // 2: agoneslite.sidecar.v1.TellRequest.annotations:type_name -> agoneslite.sidecar.v1.TellRequest.AnnotationsEntry
-	4, // 3: agoneslite.sidecar.v1.TellRequest.counters:type_name -> agoneslite.sidecar.v1.CounterUpdate
-	5, // 4: agoneslite.sidecar.v1.TellRequest.lists:type_name -> agoneslite.sidecar.v1.ListUpdate
-	1, // 5: agoneslite.sidecar.v1.Agent.Watch:input_type -> agoneslite.sidecar.v1.WatchRequest
-	3, // 6: agoneslite.sidecar.v1.Agent.Tell:input_type -> agoneslite.sidecar.v1.TellRequest
-	2, // 7: agoneslite.sidecar.v1.Agent.Watch:output_type -> agoneslite.sidecar.v1.WatchResponse
-	6, // 8: agoneslite.sidecar.v1.Agent.Tell:output_type -> agoneslite.sidecar.v1.TellResponse
+	0, // 0: scrim.sidecar.v1.TellRequest.event:type_name -> scrim.sidecar.v1.Event
+	7, // 1: scrim.sidecar.v1.TellRequest.labels:type_name -> scrim.sidecar.v1.TellRequest.LabelsEntry
+	8, // 2: scrim.sidecar.v1.TellRequest.annotations:type_name -> scrim.sidecar.v1.TellRequest.AnnotationsEntry
+	4, // 3: scrim.sidecar.v1.TellRequest.counters:type_name -> scrim.sidecar.v1.CounterUpdate
+	5, // 4: scrim.sidecar.v1.TellRequest.lists:type_name -> scrim.sidecar.v1.ListUpdate
+	1, // 5: scrim.sidecar.v1.Agent.Watch:input_type -> scrim.sidecar.v1.WatchRequest
+	3, // 6: scrim.sidecar.v1.Agent.Tell:input_type -> scrim.sidecar.v1.TellRequest
+	2, // 7: scrim.sidecar.v1.Agent.Watch:output_type -> scrim.sidecar.v1.WatchResponse
+	6, // 8: scrim.sidecar.v1.Agent.Tell:output_type -> scrim.sidecar.v1.TellResponse
 	7, // [7:9] is the sub-list for method output_type
 	5, // [5:7] is the sub-list for method input_type
 	5, // [5:5] is the sub-list for extension type_name

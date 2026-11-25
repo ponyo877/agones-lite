@@ -13,7 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"pgregory.net/rapid"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
 )
 
 // These tests state what must hold wherever Place puts a GameServer and
@@ -23,17 +23,17 @@ import (
 // someNodes draws up to four nodes that are short of everything: a few
 // host ports, room for a few GameServers, a core or two. Some are out of
 // reach, cordoned or draining.
-func someNodes(t *rapid.T) []*litev1.Node {
-	nodes := make([]*litev1.Node, rapid.IntRange(0, 4).Draw(t, "nodes"))
+func someNodes(t *rapid.T) []*scrimv1.Node {
+	nodes := make([]*scrimv1.Node, rapid.IntRange(0, 4).Draw(t, "nodes"))
 	for i := range nodes {
-		nodes[i] = node(fmt.Sprintf("n%d", i+1), func(n *litev1.Node) {
-			n.Status.Phase = rapid.SampledFrom([]litev1.NodePhase{litev1.NodeReady, litev1.NodeReady, litev1.NodeReady, litev1.NodeDisconnected}).Draw(t, "phase")
+		nodes[i] = node(fmt.Sprintf("n%d", i+1), func(n *scrimv1.Node) {
+			n.Status.Phase = rapid.SampledFrom([]scrimv1.NodePhase{scrimv1.NodeReady, scrimv1.NodeReady, scrimv1.NodeReady, scrimv1.NodeDisconnected}).Draw(t, "phase")
 			n.Spec.Unschedulable = rapid.IntRange(0, 5).Draw(t, "cordoned") == 0
 			n.Spec.Drain = rapid.IntRange(0, 5).Draw(t, "draining") == 0
 			n.Status.MaxGameServers = rapid.Int32Range(0, 3).Draw(t, "maxGameServers")
 			n.Status.Capacity.CPU = someOf(t, "cpu", "0", "1", "2")
 			n.Status.Capacity.Memory = someOf(t, "memory", "0", "1Gi")
-			n.Status.PortRange = litev1.PortRange{Min: 7000 + rapid.Int32Range(0, 2).Draw(t, "minPort"), Max: 7000 + rapid.Int32Range(0, 4).Draw(t, "maxPort")}
+			n.Status.PortRange = scrimv1.PortRange{Min: 7000 + rapid.Int32Range(0, 2).Draw(t, "minPort"), Max: 7000 + rapid.Int32Range(0, 4).Draw(t, "maxPort")}
 		})
 	}
 	return nodes
@@ -70,7 +70,7 @@ func aGameServer(t *rapid.T, name string) *agonesv1.GameServer {
 // someNeighbours draws the GameServers that are there already: placed by
 // Place itself on one of the nodes, in the order they came. Some sit on a
 // node that is gone since, and some have no node yet.
-func someNeighbours(t *rapid.T, nodes []*litev1.Node) []*agonesv1.GameServer {
+func someNeighbours(t *rapid.T, nodes []*scrimv1.Node) []*agonesv1.GameServer {
 	var servers []*agonesv1.GameServer
 	for i := range rapid.IntRange(0, 8).Draw(t, "neighbours") {
 		gs := aGameServer(t, fmt.Sprintf("gs-%d", i))
@@ -87,16 +87,16 @@ func someNeighbours(t *rapid.T, nodes []*litev1.Node) []*agonesv1.GameServer {
 
 // everyNodeOpen returns the nodes as they were before any of them was
 // cordoned, drained or lost: full nodes come from the time they were open.
-func everyNodeOpen(nodes []*litev1.Node) []*litev1.Node {
-	open := make([]*litev1.Node, len(nodes))
+func everyNodeOpen(nodes []*scrimv1.Node) []*scrimv1.Node {
+	open := make([]*scrimv1.Node, len(nodes))
 	for i, n := range nodes {
 		open[i] = n.DeepCopy()
-		open[i].Status.Phase, open[i].Spec = litev1.NodeReady, litev1.NodeSpec{}
+		open[i].Status.Phase, open[i].Spec = scrimv1.NodeReady, scrimv1.NodeSpec{}
 	}
 	return open
 }
 
-func residentsOf(node *litev1.Node, servers []*agonesv1.GameServer) []*agonesv1.GameServer {
+func residentsOf(node *scrimv1.Node, servers []*agonesv1.GameServer) []*agonesv1.GameServer {
 	var residents []*agonesv1.GameServer
 	for _, gs := range servers {
 		if gs.Status.NodeName == node.Name {
@@ -107,16 +107,16 @@ func residentsOf(node *litev1.Node, servers []*agonesv1.GameServer) []*agonesv1.
 }
 
 // canTake says whether node has everything gs needs, one question at a time.
-func canTake(node *litev1.Node, gs *agonesv1.GameServer, residents []*agonesv1.GameServer) bool {
-	open := node.Status.Phase == litev1.NodeReady && !node.Spec.Unschedulable && !node.Spec.Drain
+func canTake(node *scrimv1.Node, gs *agonesv1.GameServer, residents []*agonesv1.GameServer) bool {
+	open := node.Status.Phase == scrimv1.NodeReady && !node.Spec.Unschedulable && !node.Spec.Drain
 	return open && hasASlot(node, residents) && hasTheResources(node, gs, residents) && hasThePorts(node, gs, residents)
 }
 
-func hasASlot(node *litev1.Node, residents []*agonesv1.GameServer) bool {
+func hasASlot(node *scrimv1.Node, residents []*agonesv1.GameServer) bool {
 	return node.Status.MaxGameServers == 0 || int32(len(residents)) < node.Status.MaxGameServers
 }
 
-func hasTheResources(node *litev1.Node, gs *agonesv1.GameServer, residents []*agonesv1.GameServer) bool {
+func hasTheResources(node *scrimv1.Node, gs *agonesv1.GameServer, residents []*agonesv1.GameServer) bool {
 	var cpu, memory int64 // in thousandths of a core, and in bytes
 	for _, each := range append(slices.Clone(residents), gs) {
 		asked := each.Spec.Template.Spec.Containers[0].Resources.Requests
@@ -127,7 +127,7 @@ func hasTheResources(node *litev1.Node, gs *agonesv1.GameServer, residents []*ag
 	return (limit.CPU.IsZero() || cpu <= limit.CPU.MilliValue()) && (limit.Memory.IsZero() || memory <= limit.Memory.Value())
 }
 
-func hasThePorts(node *litev1.Node, gs *agonesv1.GameServer, residents []*agonesv1.GameServer) bool {
+func hasThePorts(node *scrimv1.Node, gs *agonesv1.GameServer, residents []*agonesv1.GameServer) bool {
 	busy := hostPortsOf(residents)
 	needed := 0
 	for _, port := range gs.Spec.Ports {
@@ -162,8 +162,8 @@ func hostPortsOf(servers []*agonesv1.GameServer) map[int32]bool {
 	return busy
 }
 
-func nodeNamed(nodes []*litev1.Node, name string) *litev1.Node {
-	i := slices.IndexFunc(nodes, func(n *litev1.Node) bool { return n.Name == name })
+func nodeNamed(nodes []*scrimv1.Node, name string) *scrimv1.Node {
+	i := slices.IndexFunc(nodes, func(n *scrimv1.Node) bool { return n.Name == name })
 	if i < 0 {
 		return nil
 	}
@@ -213,7 +213,7 @@ func TestPlaceFindsTheNodeTheStrategyPrefersWheneverOneCanTakeIt(t *testing.T) {
 		if !ok {
 			return
 		}
-		fullness := func(n *litev1.Node) int { return len(residentsOf(n, servers)) }
+		fullness := func(n *scrimv1.Node) int { return len(residentsOf(n, servers)) }
 		chosen := fullness(nodeNamed(nodes, placed.Status.NodeName))
 		for _, other := range able {
 			assert.False(t, preferred(gs.Spec.Scheduling, fullness(other), chosen),
@@ -222,8 +222,8 @@ func TestPlaceFindsTheNodeTheStrategyPrefersWheneverOneCanTakeIt(t *testing.T) {
 	})
 }
 
-func nodesThatCanTake(gs *agonesv1.GameServer, nodes []*litev1.Node, servers []*agonesv1.GameServer) []*litev1.Node {
-	var able []*litev1.Node
+func nodesThatCanTake(gs *agonesv1.GameServer, nodes []*scrimv1.Node, servers []*agonesv1.GameServer) []*scrimv1.Node {
+	var able []*scrimv1.Node
 	for _, node := range nodes {
 		if canTake(node, gs, residentsOf(node, servers)) {
 			able = append(able, node)

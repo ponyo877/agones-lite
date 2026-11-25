@@ -1,4 +1,4 @@
-// Command agones-lite is the control plane and its command line client.
+// Command scrim is the control plane and its command line client.
 // See pkg/cli for the commands.
 package main
 
@@ -10,7 +10,7 @@ import (
 	"syscall"
 	_ "time/tzdata" // schedules of FleetAutoscalers name time zones
 
-	"github.com/ponyo877/agones-lite/pkg/cli"
+	"github.com/ponyo877/scrim/pkg/cli"
 )
 
 func main() {

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/ponyo877/agones-lite/pkg/docker"
-	"github.com/ponyo877/agones-lite/pkg/podspec"
+	"github.com/ponyo877/scrim/pkg/docker"
+	"github.com/ponyo877/scrim/pkg/podspec"
 )
 
 // LogRequest says which log to read.

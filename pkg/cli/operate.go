@@ -11,7 +11,7 @@ import (
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 
-	"github.com/ponyo877/agones-lite/pkg/auth"
+	"github.com/ponyo877/scrim/pkg/auth"
 )
 
 // runNode takes a node out of service, or back in.
@@ -23,7 +23,7 @@ func runNode(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	}
 	if len(positional) != 2 {
-		return errors.New("usage: agones-lite node cordon|uncordon|drain|delete NAME")
+		return errors.New("usage: scrim node cordon|uncordon|drain|delete NAME")
 	}
 	operation, name := positional[0], positional[1]
 	c, err := conn.admin()
@@ -95,13 +95,13 @@ func gameServersOn(ctx context.Context, c client, node string) (int, error) {
 // the data directory, so it must run on the control plane's machine.
 func runToken(_ context.Context, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("token", flag.ContinueOnError)
-	dataDir := fs.String("data-dir", env("AGONES_LITE_DATA_DIR", defaultDataDir), "data directory of the control plane")
+	dataDir := fs.String("data-dir", env("SCRIM_DATA_DIR", defaultDataDir), "data directory of the control plane")
 	positional, err := parse(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(positional) != 2 {
-		return errors.New("usage: agones-lite token show|rotate admin|allocator|join")
+		return errors.New("usage: scrim token show|rotate admin|allocator|join")
 	}
 	role, err := auth.ParseRole(positional[1])
 	if err != nil {

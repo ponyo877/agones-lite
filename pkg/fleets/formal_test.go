@@ -7,7 +7,7 @@ import (
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ponyo877/agones-lite/formal/vectors"
+	"github.com/ponyo877/scrim/formal/vectors"
 )
 
 // setVector is a GameServerSet as formal/Formal/Rollout.lean has it.

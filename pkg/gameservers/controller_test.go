@@ -13,10 +13,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/ponyo877/agones-lite/pkg/agones"
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/events"
-	"github.com/ponyo877/agones-lite/pkg/store"
+	"github.com/ponyo877/scrim/pkg/agones"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/events"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
 var noon = time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
@@ -40,12 +40,12 @@ func newFixture(t *testing.T) fixture {
 
 func (f fixture) addNode() {
 	f.t.Helper()
-	_, err := f.nodes.Create(&litev1.Node{
+	_, err := f.nodes.Create(&scrimv1.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
-		Status: litev1.NodeStatus{
-			Phase:     litev1.NodeReady,
+		Status: scrimv1.NodeStatus{
+			Phase:     scrimv1.NodeReady,
 			Address:   "203.0.113.10",
-			PortRange: litev1.PortRange{Min: 7000, Max: 8000},
+			PortRange: scrimv1.PortRange{Min: 7000, Max: 8000},
 		},
 	})
 	require.NoError(f.t, err)

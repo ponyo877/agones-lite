@@ -24,8 +24,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 
-	"github.com/ponyo877/agones-lite/pkg/apiserver"
-	"github.com/ponyo877/agones-lite/pkg/store"
+	"github.com/ponyo877/scrim/pkg/apiserver"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
 // The fuzz tests of this package feed its readers what comes from outside

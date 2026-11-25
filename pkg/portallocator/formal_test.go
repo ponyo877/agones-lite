@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 
-	"github.com/ponyo877/agones-lite/formal/vectors"
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
+	"github.com/ponyo877/scrim/formal/vectors"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
 )
 
 // modelPort is a port as the Lean model sees it: "automatic", or Static
@@ -77,7 +77,7 @@ func TestAllocateAgreesWithTheLeanModel(t *testing.T) {
 	for i, v := range all {
 		gs := v.gameServer()
 
-		ok := Allocate(gs, litev1.PortRange{Min: v.Lo, Max: v.Hi}, v.used())
+		ok := Allocate(gs, scrimv1.PortRange{Min: v.Lo, Max: v.Hi}, v.used())
 
 		if v.HostPorts == nil {
 			require.False(t, ok, "vector %d: the model allocates nothing: %+v", i, v)

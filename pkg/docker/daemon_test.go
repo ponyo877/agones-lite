@@ -96,18 +96,18 @@ func TestRemoveVolumesTakesOnlyThoseThatStartWithThePrefix(t *testing.T) {
 			removed = append(removed, r.URL.Path)
 			return
 		}
-		assert.JSONEq(t, `{"name": ["agones-lite_default_gs_"]}`, r.URL.Query().Get("filters"))
+		assert.JSONEq(t, `{"name": ["scrim_default_gs_"]}`, r.URL.Query().Get("filters"))
 		_, _ = w.Write([]byte(`{"Volumes": [
-			{"Name": "agones-lite_default_gs_tmp"},
-			{"Name": "agones-lite_default_gs_cache"},
-			{"Name": "backup-of-agones-lite_default_gs_tmp"}
+			{"Name": "scrim_default_gs_tmp"},
+			{"Name": "scrim_default_gs_cache"},
+			{"Name": "backup-of-scrim_default_gs_tmp"}
 		]}`))
 	})
 
-	require.NoError(t, c.RemoveVolumes(context.Background(), "agones-lite_default_gs_"))
+	require.NoError(t, c.RemoveVolumes(context.Background(), "scrim_default_gs_"))
 
 	assert.Equal(t, []string{
-		"/v" + fakeAPI + "/volumes/agones-lite_default_gs_tmp",
-		"/v" + fakeAPI + "/volumes/agones-lite_default_gs_cache",
+		"/v" + fakeAPI + "/volumes/scrim_default_gs_tmp",
+		"/v" + fakeAPI + "/volumes/scrim_default_gs_cache",
 	}, removed)
 }

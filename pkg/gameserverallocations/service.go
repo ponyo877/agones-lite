@@ -20,10 +20,10 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/events"
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
-	"github.com/ponyo877/agones-lite/pkg/store"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/events"
+	"github.com/ponyo877/scrim/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
 // attempts is how often an allocation is tried again after losing a race
@@ -47,7 +47,7 @@ const patience = time.Second
 //
 //	metadata:
 //	  annotations:
-//	    agones-lite/allocation-key: <something of its own, new for each match>
+//	    scrim/allocation-key: <something of its own, new for each match>
 //
 // A matchmaker that got no answer cannot know whether a GameServer was
 // taken for it. Asking again is all it can do, and without a name for the
@@ -58,7 +58,7 @@ const patience = time.Second
 // is added to the API: the allocation puts it on the GameServer like any
 // other, which is also where it is found again. A matchmaker that sets it
 // can talk to Agones unchanged, where it is an annotation and no more.
-const KeyAnnotation = "agones-lite/allocation-key"
+const KeyAnnotation = "scrim/allocation-key"
 
 // byKey sorts GameServers by the key of the request they were given to.
 var byKey = store.By[*agonesv1.GameServer, string]{
@@ -92,7 +92,7 @@ var byKey = store.By[*agonesv1.GameServer, string]{
 type Service struct {
 	pb.UnimplementedAllocationServiceServer
 	servers store.Typed[*agonesv1.GameServer]
-	nodes   store.Typed[*litev1.Node]
+	nodes   store.Typed[*scrimv1.Node]
 	events  *events.Recorder
 	now     func() time.Time
 	// Pick chooses among n GameServers that are equally good, by giving a
@@ -132,7 +132,7 @@ func (s *Service) Allocate(ctx context.Context, in *pb.AllocationRequest) (*pb.A
 	}
 	gsa.Converter()
 	if gsa.Spec.MultiClusterSetting.Enabled {
-		return nil, status.Error(codes.Unimplemented, "agones-lite does not allocate across clusters")
+		return nil, status.Error(codes.Unimplemented, "scrim does not allocate across clusters")
 	}
 	started := s.now()
 	result, err := s.allocate(ctx, gsa)

@@ -1,6 +1,6 @@
-# agones-lite 企画書
+# scrim 企画書
 
-この文書は、agones-lite を何のために作り、どこまでを作るのかを定める。
+この文書は、scrim を何のために作り、どこまでを作るのかを定める。
 作り方は [設計書](design.md) に書く。
 
 ## 背景
@@ -17,7 +17,7 @@ Agones には Kubernetes なしで動く「ローカルモード」があるが�
 
 ## 目的
 
-agones-lite は、Agones の中核機能を Kubernetes なしで動かすアプリケーションサーバである。
+scrim は、Agones の中核機能を Kubernetes なしで動かすアプリケーションサーバである。
 Kubernetes が担っていた仕事のうち、ゲームサーバの運用に必要な部分だけを自前で持つ。
 
 対象は、VM 1 台から数台でゲームサーバを本番運用する個人や小規模チームである。
@@ -25,15 +25,15 @@ Kubernetes が担っていた仕事のうち、ゲームサーバの運用に必
 
 ## Agones の資産がそのまま使えること
 
-agones-lite は、Agones 向けに作られたものを書き換えずに受け入れる。
+scrim は、Agones 向けに作られたものを書き換えずに受け入れる。
 対象は次の 3 つである。
 
 - **ゲームサーバ**：公式 SDK を組み込んだゲームサーバのコンテナイメージが、無改造で動く。
 - **定義ファイル**：GameServer、Fleet、FleetAutoscaler の YAML を、対応範囲内でそのまま適用できる。
 - **割り当てクライアント**：Agones の allocator サービス向けに書かれたクライアントが、接続先を変えるだけで動く。
 
-この互換性があるので、agones-lite で始めたゲームは、規模が大きくなったら Agones に移れる。
-逆に、Agones で動いているゲームの小さな環境を agones-lite で立てることもできる。
+この互換性があるので、scrim で始めたゲームは、規模が大きくなったら Agones に移れる。
+逆に、Agones で動いているゲームの小さな環境を scrim で立てることもできる。
 
 互換の基準にする Agones のバージョンは v1.62.0 に固定する。
 リポジトリには同じバージョンを `third_party/agones` に submodule として置き、設計と実装の参照元にする。
@@ -91,8 +91,13 @@ macOS（Docker Desktop や Colima）は開発用として動作を保証する�
 
 ## 本家 Agones との関係
 
-agones-lite は Agones の非公式な派生であり、Agones のプロジェクトとは関係がない。
+scrim は Agones と互換の、非公式の独立したプロジェクトであり、Agones のプロジェクトとは関係がない。
 README にその旨を明記する。
+
+プロジェクトの名前、ロゴ、ドメインには、Agones の名前を含めない。
+Agones の名前は、何と互換であるかを述べる文の中でだけ使う（「compatible with Agones」）。
+scrim は練習試合を指す語である。
+同じ競技を小さな場で行う、という位置づけから採った。
 
 ライセンスは Agones と同じ Apache-2.0 とする。
 Agones のコードを参照して書いた箇所には出典を記す。
@@ -103,7 +108,7 @@ Agones の Go モジュール（`agones.dev/agones` v1.62.0）は、ビルドの
 
 ## 読み物として楽しめるコード
 
-agones-lite のコードは、作者自身が読んで楽しめることを要件にする。
+scrim のコードは、作者自身が読んで楽しめることを要件にする。
 Agones の仕組みを、Kubernetes の知識なしに上から下へ読める形で書き直すことが、この企画のもう一つの成果物である。
 
 そのために次のことを守る。
@@ -201,6 +206,7 @@ README の冒頭に非公式であることを書く。
 | v1 の範囲 | GameServer、Fleet、Allocation、FleetAutoscaler、Counters と Lists |
 | 自動スケールのポリシー | Buffer、Counter、List、Webhook、Schedule、Chain（Wasm は作らない） |
 | ライセンスと公開 | Apache-2.0 で公開。README は英語で、非公式と明記する |
+| 名前 | scrim。互換の相手である Agones の名前は、説明の文の中でだけ使う |
 | 成果物の文書 | `docs/planning.md` と `docs/design.md`（日本語） |
 | 実装の順序 | 1 台で端から端まで動かしてから、複数ノードに広げる |
 
@@ -264,4 +270,4 @@ README の冒頭に非公式であることを書く。
 | テスト | 純粋ロジックの単体テスト、SDK の適合テスト、実際の Docker での結合テスト、障害注入テスト |
 | 依存 | 最小限にする。CLI は標準の flag、ログは標準の slog、SQLite は cgo の要らないドライバ |
 | CI と図 | GitHub Actions、Mermaid |
-| モジュール名 | `github.com/ponyo877/agones-lite` |
+| モジュール名 | `github.com/ponyo877/scrim` |

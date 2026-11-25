@@ -10,7 +10,7 @@ import (
 	allocationv1 "agones.dev/agones/pkg/apis/allocation/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/gameservers"
 )
 
 // maxListCapacity is the largest capacity a list action may set.

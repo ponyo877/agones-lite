@@ -13,7 +13,7 @@ import (
 
 // Complete names the environment variable that says nothing is missing
 // here. CI sets it.
-const Complete = "AGONES_LITE_COMPLETE"
+const Complete = "SCRIM_COMPLETE"
 
 // Missing ends a test that cannot run for want of something on this
 // machine: with a skip, or with a failure where Complete is set.

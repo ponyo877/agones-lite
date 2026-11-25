@@ -7,11 +7,11 @@ import (
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/control"
-	"github.com/ponyo877/agones-lite/pkg/events"
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
-	"github.com/ponyo877/agones-lite/pkg/store"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/control"
+	"github.com/ponyo877/scrim/pkg/events"
+	"github.com/ponyo877/scrim/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
 // Kind is the name Nodes go by in manifests and in the event history.
@@ -41,8 +41,8 @@ var DefaultGraces = Graces{Unallocated: 5 * time.Minute, Allocated: 24 * time.Ho
 
 // GivenUp returns the GameServers on node that have been out of reach for
 // too long. Reserved counts as "without a session".
-func GivenUp(node *litev1.Node, onNode []*agonesv1.GameServer, graces Graces, now time.Time) []*agonesv1.GameServer {
-	if node.Status.Phase != litev1.NodeDisconnected {
+func GivenUp(node *scrimv1.Node, onNode []*agonesv1.GameServer, graces Graces, now time.Time) []*agonesv1.GameServer {
+	if node.Status.Phase != scrimv1.NodeDisconnected {
 		return nil
 	}
 	away := now.Sub(node.Status.LastHeartbeatTime.Time)
@@ -75,10 +75,10 @@ func GivenUp(node *litev1.Node, onNode []*agonesv1.GameServer, graces Graces, no
 //
 // The price: when most of the machines really are lost, what ran on them is
 // not replaced until an operator deletes those nodes, which says they are.
-func MostAreGone(nodes []*litev1.Node) bool {
+func MostAreGone(nodes []*scrimv1.Node) bool {
 	gone := 0
 	for _, node := range nodes {
-		if node.Status.Phase == litev1.NodeDisconnected {
+		if node.Status.Phase == scrimv1.NodeDisconnected {
 			gone++
 		}
 	}
@@ -87,7 +87,7 @@ func MostAreGone(nodes []*litev1.Node) bool {
 
 // Drained returns the GameServers a draining node should now shut down:
 // those without a session. Allocated and Reserved ones are left to finish.
-func Drained(node *litev1.Node, onNode []*agonesv1.GameServer) []*agonesv1.GameServer {
+func Drained(node *scrimv1.Node, onNode []*agonesv1.GameServer) []*agonesv1.GameServer {
 	if !node.Spec.Drain {
 		return nil
 	}
@@ -102,7 +102,7 @@ func Drained(node *litev1.Node, onNode []*agonesv1.GameServer) []*agonesv1.GameS
 
 // Controller carries out GivenUp and Drained for every node.
 type Controller struct {
-	nodes       store.Typed[*litev1.Node]
+	nodes       store.Typed[*scrimv1.Node]
 	servers     store.Typed[*agonesv1.GameServer]
 	gameServers *gameservers.Controller
 	events      *events.Recorder
@@ -138,10 +138,10 @@ func NewController(s *store.Store, gameServers *gameservers.Controller, recorder
 func (c *Controller) StartOver() error {
 	c.started = c.now()
 	for _, node := range c.nodes.List("") {
-		if node.Status.Phase == litev1.NodeDisconnected {
+		if node.Status.Phase == scrimv1.NodeDisconnected {
 			continue
 		}
-		node.Status.Phase = litev1.NodeDisconnected
+		node.Status.Phase = scrimv1.NodeDisconnected
 		node.Status.LastHeartbeatTime = metav1.NewTime(c.now())
 		if _, err := c.nodes.Update(node); err != nil {
 			return err
@@ -209,7 +209,7 @@ func (c *Controller) sync(_ context.Context, key store.Key) error {
 // side: during the warm-up after a start, and while most nodes are gone at
 // once. The warm-up is never longer than the shorter grace: whoever sets
 // that to seconds does not want to wait half a minute.
-func (c *Controller) givenUp(node *litev1.Node, onNode []*agonesv1.GameServer) []*agonesv1.GameServer {
+func (c *Controller) givenUp(node *scrimv1.Node, onNode []*agonesv1.GameServer) []*agonesv1.GameServer {
 	now := c.now()
 	if now.Sub(c.started) < min(warmUp, c.graces.Unallocated) || MostAreGone(c.nodes.View("")) {
 		return nil
@@ -234,7 +234,7 @@ func (c *Controller) report(node string, servers []*agonesv1.GameServer, event g
 // Cordon stops new game servers and allocations from landing on a node.
 // With drain, the node also sheds the game servers that have no session.
 func (c *Controller) Cordon(name string, drain bool) error {
-	return c.nodes.Change("", name, func(node *litev1.Node) bool {
+	return c.nodes.Change("", name, func(node *scrimv1.Node) bool {
 		node.Spec.Unschedulable, node.Spec.Drain = true, drain
 		return true
 	})
@@ -242,7 +242,7 @@ func (c *Controller) Cordon(name string, drain bool) error {
 
 // Uncordon makes a node available again.
 func (c *Controller) Uncordon(name string) error {
-	return c.nodes.Change("", name, func(node *litev1.Node) bool {
+	return c.nodes.Change("", name, func(node *scrimv1.Node) bool {
 		node.Spec.Unschedulable, node.Spec.Drain = false, false
 		return true
 	})

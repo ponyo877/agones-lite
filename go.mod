@@ -1,4 +1,4 @@
-module github.com/ponyo877/agones-lite
+module github.com/ponyo877/scrim
 
 go 1.27.4
 

@@ -1,4 +1,4 @@
-// Package store keeps every resource agones-lite knows about.
+// Package store keeps every resource scrim knows about.
 //
 // It stands in for the Kubernetes API server and etcd. One SQLite file makes
 // the state durable; a copy of everything in memory makes reads cheap. All

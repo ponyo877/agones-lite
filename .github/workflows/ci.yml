@@ -66,12 +66,12 @@ jobs:
       - name: The binaries, for four platforms
         run: make dist VERSION=ci
       - name: The one for this machine runs
-        run: test "$(dist/agones-lite-linux-amd64 version)" = "agones-lite ci"
+        run: test "$(dist/scrim-linux-amd64 version)" = "scrim ci"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: The sidecar image, for both architectures
         run: docker buildx build --platform linux/amd64,linux/arm64 --file build/sidecar/Dockerfile.release dist
 
-  # Every test, on the three kinds of machine agones-lite runs on, with the
+  # Every test, on the three kinds of machine scrim runs on, with the
   # race detector and in an order drawn anew each time. On Linux nothing a
   # test needs is missing, Docker included, so a test that cannot run fails
   # (test/testenv), and so does the job when one was skipped all the same.
@@ -90,7 +90,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
-      AGONES_LITE_COMPLETE: ${{ matrix.complete }}
+      SCRIM_COMPLETE: ${{ matrix.complete }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -111,7 +111,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      AGONES_LITE_COMPLETE: "1"
+      SCRIM_COMPLETE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -128,7 +128,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      AGONES_LITE_COMPLETE: "1"
+      SCRIM_COMPLETE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -164,7 +164,7 @@ jobs:
           path: "**/testdata/fuzz/**"
           if-no-files-found: ignore
 
-  # The scale agones-lite is designed for, held against its targets, and
+  # The scale scrim is designed for, held against its targets, and
   # every benchmark run once so that it still runs.
   load:
     runs-on: ubuntu-24.04
@@ -177,7 +177,7 @@ jobs:
       - name: 1,000 game servers, 50 allocations a second
         run: go test ./pkg/controlplane/ -run '^TestLoad$' -count=1 -v | tee load.txt
         env:
-          AGONES_LITE_LOAD: "1"
+          SCRIM_LOAD: "1"
       - name: The load test did run
         run: grep -- '--- PASS[:] TestLoad ' load.txt
       - name: Every benchmark, once

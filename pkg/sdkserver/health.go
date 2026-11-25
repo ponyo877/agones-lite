@@ -8,7 +8,7 @@ import (
 
 	"agones.dev/agones/pkg/sdk"
 
-	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
+	sidecarv1 "github.com/ponyo877/scrim/proto/sidecar/v1"
 )
 
 // health counts missed Health pings. The rule is upstream's checkHealth: a

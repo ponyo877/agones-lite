@@ -1,14 +1,14 @@
 # Agent for a further machine that runs game servers.
-# Install the binary as /usr/local/bin/agones-lite, then:
-#   systemctl enable --now agones-lite-agent
+# Install the binary as /usr/local/bin/scrim, then:
+#   systemctl enable --now scrim-agent
 [Unit]
-Description=agones-lite agent
+Description=scrim agent
 After=docker.service network-online.target
 Wants=network-online.target
 Requires=docker.service
 
 [Service]
-ExecStart=/usr/local/bin/agones-lite agent --config /etc/agones-lite/agent.yaml
+ExecStart=/usr/local/bin/scrim agent --config /etc/scrim/agent.yaml
 Restart=always
 RestartSec=2
 KillMode=process

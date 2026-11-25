@@ -15,9 +15,9 @@ import (
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	"github.com/ponyo877/agones-lite/pkg/docker"
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
-	"github.com/ponyo877/agones-lite/pkg/podspec"
+	"github.com/ponyo877/scrim/pkg/docker"
+	"github.com/ponyo877/scrim/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/podspec"
 )
 
 // Key names a GameServer.

@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/protobuf/proto"
 
-	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
+	sidecarv1 "github.com/ponyo877/scrim/proto/sidecar/v1"
 )
 
 // counter and list are a Counter and a List in a shape that is easy to

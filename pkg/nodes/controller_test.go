@@ -13,10 +13,10 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/ponyo877/agones-lite/pkg/agones"
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
-	"github.com/ponyo877/agones-lite/pkg/store"
+	"github.com/ponyo877/scrim/pkg/agones"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
 var noon = time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
@@ -27,9 +27,9 @@ func inState(name string, state agonesv1.GameServerState) *agonesv1.GameServer {
 	return gs
 }
 
-func disconnectedFor(d time.Duration) *litev1.Node {
+func disconnectedFor(d time.Duration) *scrimv1.Node {
 	n := node("node-1")
-	n.Status.Phase = litev1.NodeDisconnected
+	n.Status.Phase = scrimv1.NodeDisconnected
 	n.Status.LastHeartbeatTime = metav1.NewTime(noon.Add(-d))
 	return n
 }
@@ -50,7 +50,7 @@ func TestGivenUp(t *testing.T) {
 		inState("already-unhealthy", agonesv1.GameServerStateUnhealthy),
 	}
 	tests := map[string]struct {
-		node *litev1.Node
+		node *scrimv1.Node
 		want []string
 	}{
 		"a connected node loses nothing":                 {node: node("node-1")},
@@ -124,8 +124,8 @@ func (f controllerFixture) othersAreBack() {
 	f.t.Helper()
 	for _, n := range f.nodes.List("") {
 		if strings.HasPrefix(n.Name, "other-") {
-			require.NoError(f.t, f.nodes.Change("", n.Name, func(n *litev1.Node) bool {
-				n.Status.Phase = litev1.NodeReady
+			require.NoError(f.t, f.nodes.Change("", n.Name, func(n *scrimv1.Node) bool {
+				n.Status.Phase = scrimv1.NodeReady
 				return true
 			}))
 		}
@@ -225,7 +225,7 @@ func TestStartingOverKeepsCountingForANodeThatWasAlreadyGone(t *testing.T) {
 
 	assert.Equal(t, agonesv1.GameServerStateUnhealthy, f.state("ready"), "seven minutes out of reach, restarts or not")
 	n, _ := f.nodes.Get("", "node-2")
-	assert.Equal(t, litev1.NodeDisconnected, n.Status.Phase)
+	assert.Equal(t, scrimv1.NodeDisconnected, n.Status.Phase)
 	assert.Equal(t, noon.Add(time.Minute), n.Status.LastHeartbeatTime.UTC(), "a node that was Ready is waited for from the first start on")
 }
 
@@ -246,8 +246,8 @@ func TestWhileMostNodesAreGoneNothingIsGivenUp(t *testing.T) {
 	f.sync()
 	assert.Equal(t, agonesv1.GameServerStateReady, f.state("ready"), "two of three: it is likelier us than both of them")
 
-	require.NoError(t, f.nodes.Change("", "node-2", func(n *litev1.Node) bool {
-		n.Status.Phase = litev1.NodeReady
+	require.NoError(t, f.nodes.Change("", "node-2", func(n *scrimv1.Node) bool {
+		n.Status.Phase = scrimv1.NodeReady
 		return true
 	}))
 	f.sync()
@@ -270,7 +270,7 @@ func TestMostAreGone(t *testing.T) {
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			var nodes []*litev1.Node
+			var nodes []*scrimv1.Node
 			for range test.gone {
 				nodes = append(nodes, disconnectedFor(time.Minute))
 			}

@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 
-	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
+	sidecarv1 "github.com/ponyo877/scrim/proto/sidecar/v1"
 )
 
 // A read must show every write from the moment the write is accepted. The

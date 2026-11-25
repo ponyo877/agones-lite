@@ -21,11 +21,11 @@ import (
 	apiresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/docker"
-	"github.com/ponyo877/agones-lite/pkg/podspec"
-	"github.com/ponyo877/agones-lite/pkg/portallocator"
-	"github.com/ponyo877/agones-lite/pkg/store"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/docker"
+	"github.com/ponyo877/scrim/pkg/podspec"
+	"github.com/ponyo877/scrim/pkg/portallocator"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
 // safe is the oracle of FuzzAdmit: what must hold of everything admission
@@ -239,7 +239,7 @@ func badContainers(servers []*agonesv1.GameServer) []string {
 	for _, gs := range servers {
 		gs = gs.DeepCopy()
 		gs.Status.NodeName = "node-1"
-		if !portallocator.Allocate(gs, litev1.PortRange{Min: 7000, Max: 7999}, map[int32]bool{}) {
+		if !portallocator.Allocate(gs, scrimv1.PortRange{Min: 7000, Max: 7999}, map[int32]bool{}) {
 			continue // it asks for more ports than a node has, and waits: that is safe
 		}
 		specs := podspec.Containers(gs, podspec.Sidecar{Image: "example/sidecar:1", AgentAddress: "host.docker.internal:9447", Token: "secret"})
@@ -401,7 +401,7 @@ func properBind(parts []string) bool {
 		return false
 	}
 	source, target := parts[0], parts[1]
-	volume := dockerName.MatchString(source) && len(source) <= longestName && strings.HasPrefix(source, "agones-lite_")
+	volume := dockerName.MatchString(source) && len(source) <= longestName && strings.HasPrefix(source, "scrim_")
 	return (volume || strings.HasPrefix(source, "/")) && strings.HasPrefix(target, "/") && target != "/"
 }
 

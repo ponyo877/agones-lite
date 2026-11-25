@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/gameservers"
 )
 
 const (

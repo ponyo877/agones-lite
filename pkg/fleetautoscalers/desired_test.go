@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
-	"github.com/ponyo877/agones-lite/pkg/agones"
+	"github.com/ponyo877/scrim/pkg/agones"
 )
 
 // Upstream: TestComputeDesiredFleetSize.

@@ -9,7 +9,7 @@ import (
 	autoscalingv1 "agones.dev/agones/pkg/apis/autoscaling/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
-	"github.com/ponyo877/agones-lite/pkg/gameserversets"
+	"github.com/ponyo877/scrim/pkg/gameserversets"
 )
 
 // usage is a Counter or a List as two numbers.

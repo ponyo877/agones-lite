@@ -32,12 +32,12 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Nodes_Register_FullMethodName     = "/agoneslite.node.v1.Nodes/Register"
-	Nodes_Watch_FullMethodName        = "/agoneslite.node.v1.Nodes/Watch"
-	Nodes_Report_FullMethodName       = "/agoneslite.node.v1.Nodes/Report"
-	Nodes_SetMetadata_FullMethodName  = "/agoneslite.node.v1.Nodes/SetMetadata"
-	Nodes_UpdateCounts_FullMethodName = "/agoneslite.node.v1.Nodes/UpdateCounts"
-	Nodes_Logs_FullMethodName         = "/agoneslite.node.v1.Nodes/Logs"
+	Nodes_Register_FullMethodName     = "/scrim.node.v1.Nodes/Register"
+	Nodes_Watch_FullMethodName        = "/scrim.node.v1.Nodes/Watch"
+	Nodes_Report_FullMethodName       = "/scrim.node.v1.Nodes/Report"
+	Nodes_SetMetadata_FullMethodName  = "/scrim.node.v1.Nodes/SetMetadata"
+	Nodes_UpdateCounts_FullMethodName = "/scrim.node.v1.Nodes/UpdateCounts"
+	Nodes_Logs_FullMethodName         = "/scrim.node.v1.Nodes/Logs"
 )
 
 // NodesClient is the client API for Nodes service.
@@ -305,7 +305,7 @@ type Nodes_LogsServer = grpc.ClientStreamingServer[LogChunk, LogsResponse]
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var Nodes_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "agoneslite.node.v1.Nodes",
+	ServiceName: "scrim.node.v1.Nodes",
 	HandlerType: (*NodesServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{

@@ -7,8 +7,8 @@ import (
 	autoscalingv1 "agones.dev/agones/pkg/apis/autoscaling/v1"
 	"github.com/prometheus/client_golang/prometheus"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/store"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
 // The gauges, with upstream's names, help texts and label names.
@@ -39,7 +39,7 @@ type collector struct {
 	servers store.Typed[*agonesv1.GameServer]
 	fleets  store.Typed[*agonesv1.Fleet]
 	scalers store.Typed[*autoscalingv1.FleetAutoscaler]
-	nodes   store.Typed[*litev1.Node]
+	nodes   store.Typed[*scrimv1.Node]
 }
 
 func newCollector(s *store.Store) *collector {

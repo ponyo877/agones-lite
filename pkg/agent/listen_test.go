@@ -46,10 +46,10 @@ func TestListenOnTCPStillWorks(t *testing.T) {
 }
 
 func TestASidecarReachesAUnixSocketThroughAMountOfItsDirectory(t *testing.T) {
-	socket := Config{SidecarListen: "unix:///run/agones-lite/node-1/agent.sock", SidecarDial: "ignored:1"}
+	socket := Config{SidecarListen: "unix:///run/scrim/node-1/agent.sock", SidecarDial: "ignored:1"}
 	address, binds := socket.sidecarAccess()
-	assert.Equal(t, "unix:///run/agones-lite/agent.sock", address)
-	assert.Equal(t, []string{"/run/agones-lite/node-1:/run/agones-lite"}, binds,
+	assert.Equal(t, "unix:///run/scrim/agent.sock", address)
+	assert.Equal(t, []string{"/run/scrim/node-1:/run/scrim"}, binds,
 		"the directory, not the socket: a restarted agent makes a new socket in it")
 
 	tcp := Config{SidecarListen: "172.17.0.1:9447", SidecarDial: "host.docker.internal:9447"}

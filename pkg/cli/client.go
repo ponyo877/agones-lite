@@ -15,11 +15,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ponyo877/agones-lite/pkg/apiserver"
-	"github.com/ponyo877/agones-lite/pkg/auth"
+	"github.com/ponyo877/scrim/pkg/apiserver"
+	"github.com/ponyo877/scrim/pkg/auth"
 )
 
-const defaultDataDir = "agones-lite-data"
+const defaultDataDir = "scrim-data"
 
 // client calls one of the control plane's HTTP APIs.
 type client struct {
@@ -42,10 +42,10 @@ type connection struct {
 // clientFlags adds the flags every client command has.
 func clientFlags(fs *flag.FlagSet) *connection {
 	c := &connection{}
-	fs.StringVar(&c.server, "server", env("AGONES_LITE_SERVER", "https://127.0.0.1:9443"), "address of the management API (or $AGONES_LITE_SERVER)")
-	fs.StringVar(&c.token, "token", os.Getenv("AGONES_LITE_TOKEN"), "token to present (or $AGONES_LITE_TOKEN)")
-	fs.StringVar(&c.caFile, "ca-file", os.Getenv("AGONES_LITE_CA_FILE"), "CA certificate of the control plane (or $AGONES_LITE_CA_FILE)")
-	fs.StringVar(&c.dataDir, "data-dir", env("AGONES_LITE_DATA_DIR", defaultDataDir), "data directory of a control plane on this machine, for its token and CA")
+	fs.StringVar(&c.server, "server", env("SCRIM_SERVER", "https://127.0.0.1:9443"), "address of the management API (or $SCRIM_SERVER)")
+	fs.StringVar(&c.token, "token", os.Getenv("SCRIM_TOKEN"), "token to present (or $SCRIM_TOKEN)")
+	fs.StringVar(&c.caFile, "ca-file", os.Getenv("SCRIM_CA_FILE"), "CA certificate of the control plane (or $SCRIM_CA_FILE)")
+	fs.StringVar(&c.dataDir, "data-dir", env("SCRIM_DATA_DIR", defaultDataDir), "data directory of a control plane on this machine, for its token and CA")
 	fs.StringVar(&c.namespace, "n", "default", "namespace")
 	return c
 }

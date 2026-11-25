@@ -18,11 +18,11 @@ import (
 	"google.golang.org/grpc/status"
 	"k8s.io/apimachinery/pkg/types"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/auth"
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
-	nodev1 "github.com/ponyo877/agones-lite/proto/node/v1"
-	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/auth"
+	"github.com/ponyo877/scrim/pkg/gameservers"
+	nodev1 "github.com/ponyo877/scrim/proto/node/v1"
+	sidecarv1 "github.com/ponyo877/scrim/proto/sidecar/v1"
 )
 
 const (
@@ -63,7 +63,7 @@ type Remote struct {
 func Dial(address, joinToken string) (*Remote, error) {
 	fingerprint, _, ok := strings.Cut(joinToken, ".")
 	if !ok {
-		return nil, errors.New("the join token has the wrong shape; copy it from `agones-lite token show join`")
+		return nil, errors.New("the join token has the wrong shape; copy it from `scrim token show join`")
 	}
 	conn, err := grpc.NewClient(address,
 		grpc.WithTransportCredentials(credentials.NewTLS(auth.TrustPinned(fingerprint))),
@@ -117,7 +117,7 @@ func explain(err error, refusedBefore bool) (refused bool) {
 	}
 	if !refusedBefore {
 		slog.Error("the control plane refuses this agent's join token, which was probably rotated; " +
-			"start the agent again with the new one, which `agones-lite token show join` prints on the control plane")
+			"start the agent again with the new one, which `scrim token show join` prints on the control plane")
 	}
 	return true
 }
@@ -204,7 +204,7 @@ func (r *Remote) Changes() (<-chan struct{}, func()) {
 }
 
 // Register announces the node.
-func (r *Remote) Register(ctx context.Context, node *litev1.Node) error {
+func (r *Remote) Register(ctx context.Context, node *scrimv1.Node) error {
 	data, err := json.Marshal(node)
 	if err != nil {
 		return err

@@ -19,15 +19,15 @@ import (
 	"google.golang.org/grpc/status"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/ponyo877/agones-lite/pkg/agent"
-	"github.com/ponyo877/agones-lite/pkg/agones"
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/auth"
-	"github.com/ponyo877/agones-lite/pkg/events"
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
-	"github.com/ponyo877/agones-lite/pkg/store"
-	nodev1 "github.com/ponyo877/agones-lite/proto/node/v1"
-	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
+	"github.com/ponyo877/scrim/pkg/agent"
+	"github.com/ponyo877/scrim/pkg/agones"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/auth"
+	"github.com/ponyo877/scrim/pkg/events"
+	"github.com/ponyo877/scrim/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/store"
+	nodev1 "github.com/ponyo877/scrim/proto/node/v1"
+	sidecarv1 "github.com/ponyo877/scrim/proto/sidecar/v1"
 )
 
 // controlPlane is a store with the node API served over TLS on a local port.
@@ -64,10 +64,10 @@ func newControlPlane(t *testing.T) controlPlane {
 	return controlPlane{store: s, history: history, local: local, server: agents, secrets: secrets, address: listener.Addr().String()}
 }
 
-func node(name string) *litev1.Node {
-	return &litev1.Node{
+func node(name string) *scrimv1.Node {
+	return &scrimv1.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Status:     litev1.NodeStatus{Phase: litev1.NodeReady, Address: "203.0.113.10"},
+		Status:     scrimv1.NodeStatus{Phase: scrimv1.NodeReady, Address: "203.0.113.10"},
 	}
 }
 
@@ -217,12 +217,12 @@ func TestTheNodeIsDisconnectedOnceItsAgentIsGone(t *testing.T) {
 	go remote.Run(ctx, "node-1")
 	soon(t, func() bool { _, current := remote.Assigned("node-1"); return current }, "the agent connects")
 	n, _ := nodes.Get("", "node-1")
-	assert.Equal(t, litev1.NodeReady, n.Status.Phase)
+	assert.Equal(t, scrimv1.NodeReady, n.Status.Phase)
 
 	cancel()
 	soon(t, func() bool {
 		n, _ := nodes.Get("", "node-1")
-		return n.Status.Phase == litev1.NodeDisconnected
+		return n.Status.Phase == scrimv1.NodeDisconnected
 	}, "the control plane notices the agent is gone")
 }
 
@@ -231,7 +231,7 @@ func TestARemoteNodeIsOnlyReadyWhileItWatches(t *testing.T) {
 	remote, err := Dial(cp.address, cp.secrets.Token(auth.Node))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = remote.Close() })
-	phase := func() litev1.NodePhase {
+	phase := func() scrimv1.NodePhase {
 		n, _ := store.NodesOf(cp.store).Get("", "node-1")
 		return n.Status.Phase
 	}
@@ -239,19 +239,19 @@ func TestARemoteNodeIsOnlyReadyWhileItWatches(t *testing.T) {
 	// An agent that registers and dies before it watches leaves no call
 	// whose end would tell us so.
 	require.NoError(t, remote.Register(context.Background(), node("node-1")))
-	assert.Equal(t, litev1.NodeDisconnected, phase())
+	assert.Equal(t, scrimv1.NodeDisconnected, phase())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go remote.Run(ctx, "node-1")
-	soon(t, func() bool { return phase() == litev1.NodeReady }, "watching is what connects the node")
+	soon(t, func() bool { return phase() == scrimv1.NodeReady }, "watching is what connects the node")
 	require.NoError(t, remote.Register(context.Background(), node("node-1")))
-	assert.Equal(t, litev1.NodeReady, phase(), "a heartbeat changes nothing about that")
+	assert.Equal(t, scrimv1.NodeReady, phase(), "a heartbeat changes nothing about that")
 
 	cancel()
-	soon(t, func() bool { return phase() == litev1.NodeDisconnected }, "the control plane notices the agent is gone")
+	soon(t, func() bool { return phase() == scrimv1.NodeDisconnected }, "the control plane notices the agent is gone")
 	// The agent's last heartbeat was still on its way.
 	require.NoError(t, remote.Register(context.Background(), node("node-1")))
-	assert.Equal(t, litev1.NodeDisconnected, phase(), "or the node would be Ready for ever")
+	assert.Equal(t, scrimv1.NodeDisconnected, phase(), "or the node would be Ready for ever")
 }
 
 // An agent whose calls get through but whose Watch does not, behind a proxy
@@ -264,7 +264,7 @@ func TestRegisteringWithoutWatchingDoesNotPutOffTheDayANodeIsGivenUp(t *testing.
 	t.Cleanup(func() { _ = remote.Close() })
 	require.NoError(t, remote.Register(context.Background(), node("node-1")))
 	longAgo := metav1.NewTime(time.Now().Add(-time.Hour).Truncate(time.Second))
-	require.NoError(t, store.NodesOf(cp.store).Change("", "node-1", func(n *litev1.Node) bool {
+	require.NoError(t, store.NodesOf(cp.store).Change("", "node-1", func(n *scrimv1.Node) bool {
 		n.Status.LastHeartbeatTime = longAgo
 		return true
 	}))
@@ -272,7 +272,7 @@ func TestRegisteringWithoutWatchingDoesNotPutOffTheDayANodeIsGivenUp(t *testing.
 	require.NoError(t, remote.Register(context.Background(), node("node-1")))
 
 	n, _ := store.NodesOf(cp.store).Get("", "node-1")
-	assert.Equal(t, litev1.NodeDisconnected, n.Status.Phase)
+	assert.Equal(t, scrimv1.NodeDisconnected, n.Status.Phase)
 	assert.True(t, n.Status.LastHeartbeatTime.Equal(&longAgo), "last heard from at %s, not an hour ago", n.Status.LastHeartbeatTime)
 }
 
@@ -290,21 +290,21 @@ func TestARemoteNodeThatWatchesBeforeItRegistersIsReady(t *testing.T) {
 	require.NoError(t, remote.Register(context.Background(), node("node-1")))
 
 	n, _ := store.NodesOf(cp.store).Get("", "node-1")
-	assert.Equal(t, litev1.NodeReady, n.Status.Phase)
+	assert.Equal(t, scrimv1.NodeReady, n.Status.Phase)
 }
 
 func TestAnAgentInTheSameProcessIsReadyByRegistering(t *testing.T) {
 	cp := newControlPlane(t)
 	nodes := store.NodesOf(cp.store)
 	n := node("node-1")
-	n.Status.Phase = litev1.NodeDisconnected // as StartOver leaves every node
+	n.Status.Phase = scrimv1.NodeDisconnected // as StartOver leaves every node
 	_, err := nodes.Create(n)
 	require.NoError(t, err)
 
 	require.NoError(t, cp.local.Register(context.Background(), node("node-1")))
 
 	n, _ = nodes.Get("", "node-1")
-	assert.Equal(t, litev1.NodeReady, n.Status.Phase, "it has no Watch call to be judged by")
+	assert.Equal(t, scrimv1.NodeReady, n.Status.Phase, "it has no Watch call to be judged by")
 }
 
 // stalledStream is the control plane's end of a Watch call whose agent has

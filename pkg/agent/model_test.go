@@ -19,11 +19,11 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"pgregory.net/rapid"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/docker"
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
-	"github.com/ponyo877/agones-lite/pkg/podspec"
-	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/docker"
+	"github.com/ponyo877/scrim/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/podspec"
+	sidecarv1 "github.com/ponyo877/scrim/proto/sidecar/v1"
 )
 
 // This is a model test of the agent against a Docker that remembers.
@@ -346,7 +346,7 @@ func (p *placements) standing(c docker.Container) bool {
 	return gs.Status.State != agonesv1.GameServerStateCreating && !gameservers.Final(gs.Status.State)
 }
 
-func (p *placements) Register(context.Context, *litev1.Node) error { return nil }
+func (p *placements) Register(context.Context, *scrimv1.Node) error { return nil }
 
 func (p *placements) Assigned(string) ([]*agonesv1.GameServer, bool) {
 	p.mu.Lock()

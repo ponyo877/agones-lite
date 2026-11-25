@@ -15,9 +15,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/yaml"
 
-	"github.com/ponyo877/agones-lite/pkg/agones"
-	"github.com/ponyo877/agones-lite/pkg/docker"
-	"github.com/ponyo877/agones-lite/test/testenv"
+	"github.com/ponyo877/scrim/pkg/agones"
+	"github.com/ponyo877/scrim/pkg/docker"
+	"github.com/ponyo877/scrim/test/testenv"
 )
 
 func server(change func(*corev1.PodSpec)) *agonesv1.GameServer {
@@ -331,24 +331,24 @@ func TestContainers(t *testing.T) {
 	require.Len(t, specs, 3)
 	sidecar, game, logs := specs[0], specs[1], specs[2]
 
-	assert.Equal(t, "agones-lite_default_gs_agones-gameserver-sidecar", sidecar.Name)
+	assert.Equal(t, "scrim_default_gs_agones-gameserver-sidecar", sidecar.Name)
 	assert.Equal(t, "sidecar:dev", sidecar.Image)
 	assert.Equal(t, []docker.Port{{Container: 7654, Host: 7000, Protocol: "udp"}}, sidecar.Ports, "None ports are not published")
 	assert.Empty(t, sidecar.ShareNetworkWith, "the sidecar owns the network")
-	assert.Contains(t, sidecar.Env, "AGONES_LITE_AGENT=host.docker.internal:9447")
-	assert.Contains(t, sidecar.Env, "AGONES_LITE_GAMESERVER=default/gs")
-	assert.Contains(t, sidecar.Env, "AGONES_LITE_TOKEN=secret")
+	assert.Contains(t, sidecar.Env, "SCRIM_AGENT=host.docker.internal:9447")
+	assert.Contains(t, sidecar.Env, "SCRIM_GAMESERVER=default/gs")
+	assert.Contains(t, sidecar.Env, "SCRIM_TOKEN=secret")
 	assert.Equal(t, RoleSidecar, sidecar.Labels[LabelRole])
 	assert.Equal(t, "secret", sidecar.Labels[LabelToken])
 
-	assert.Equal(t, "agones-lite_default_gs_game", game.Name)
+	assert.Equal(t, "scrim_default_gs_game", game.Name)
 	assert.Equal(t, sidecar.Name, game.ShareNetworkWith)
 	assert.Empty(t, game.Ports, "only the network's owner publishes ports")
 	assert.Equal(t, []string{"MODE=ranked", "AGONES_SDK_GRPC_PORT=9357", "AGONES_SDK_HTTP_PORT=9358"}, game.Env)
 	assert.Equal(t, int64(500_000_000), game.NanoCPUs)
 	assert.Equal(t, int64(64<<20), game.MemoryBytes)
 	assert.Equal(t, "1000", game.User)
-	assert.Equal(t, []string{"agones-lite_default_gs_tmp:/tmp", "/srv/maps:/maps:ro"}, game.Binds)
+	assert.Equal(t, []string{"scrim_default_gs_tmp:/tmp", "/srv/maps:/maps:ro"}, game.Binds)
 	assert.Equal(t, RoleGame, game.Labels[LabelRole])
 	assert.Empty(t, game.Labels[LabelToken], "the game container must not learn the sidecar's token")
 
@@ -360,7 +360,7 @@ func TestContainers(t *testing.T) {
 // the prefix of one GameServer must never start the names of another's.
 // The separator sees to that: no name the management API admits holds it.
 func TestAPrefixBelongsToOneGameServer(t *testing.T) {
-	assert.Equal(t, "agones-lite_default_gs_", Prefix("default", "gs"))
+	assert.Equal(t, "scrim_default_gs_", Prefix("default", "gs"))
 
 	assert.NotEmpty(t, validation.IsDNS1123Label("default"+separator+"gs"), "a namespace cannot hold the separator")
 	assert.NotEmpty(t, validation.IsDNS1123Subdomain("gs"+separator+"x"), "a name cannot hold the separator")

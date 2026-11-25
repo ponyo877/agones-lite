@@ -15,7 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"pgregory.net/rapid"
 
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/gameservers"
 )
 
 // These tests state what must hold for any GameServerSet and let rapid look

@@ -138,7 +138,7 @@ func verifyPinned(chain []*x509.Certificate, fingerprint string) error {
 func caTemplate() *x509.Certificate {
 	return &x509.Certificate{
 		SerialNumber:          serial(),
-		Subject:               pkix.Name{CommonName: "agones-lite CA"},
+		Subject:               pkix.Name{CommonName: "scrim CA"},
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().Add(caLifetime),
 		IsCA:                  true,
@@ -151,7 +151,7 @@ func caTemplate() *x509.Certificate {
 func serverTemplate(names []string) *x509.Certificate {
 	template := &x509.Certificate{
 		SerialNumber: serial(),
-		Subject:      pkix.Name{CommonName: "agones-lite"},
+		Subject:      pkix.Name{CommonName: "scrim"},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(serverLifetime),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

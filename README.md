@@ -1,21 +1,21 @@
 <p align="center">
-  <a href="https://github.com/ponyo877/agones-lite">
+  <a href="https://github.com/ponyo877/scrim">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.svg">
-      <img src="docs/images/logo.svg" alt="agones-lite" width="440">
+      <img src="docs/images/logo.svg" alt="scrim" width="260">
     </picture>
   </a>
 </p>
 
 <p align="center">
-  <strong>Agones without Kubernetes.</strong><br>
-  Host, scale and allocate dedicated game servers on plain Docker hosts,<br>
-  with the SDKs, manifests and Allocation API of Agones.
+  <strong>Game server hosting on plain Docker hosts, compatible with Agones.</strong><br>
+  One binary hosts, scales and allocates dedicated game servers, with the SDKs,<br>
+  manifests and Allocation API of Agones. There is no cluster to operate.
 </p>
 
 <p align="center">
-  <a href="https://github.com/ponyo877/agones-lite/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/ponyo877/agones-lite/ci.yml?branch=main&label=CI" alt="CI"></a>
-  <a href="go.mod"><img src="https://img.shields.io/github/go-mod/go-version/ponyo877/agones-lite" alt="Go version"></a>
+  <a href="https://github.com/ponyo877/scrim/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/ponyo877/scrim/ci.yml?branch=main&label=CI" alt="CI"></a>
+  <a href="go.mod"><img src="https://img.shields.io/github/go-mod/go-version/ponyo877/scrim" alt="Go version"></a>
   <a href="https://github.com/agones-dev/agones/releases/tag/v1.62.0"><img src="https://img.shields.io/badge/compatible%20with-Agones%20v1.62.0-7C3AED" alt="Compatible with Agones v1.62.0"></a>
   <a href="#project-status"><img src="https://img.shields.io/badge/platform-linux%20%7C%20macOS-555" alt="Platforms: Linux and macOS"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
@@ -35,11 +35,11 @@
 
 ---
 
-agones-lite is one binary that runs the core of
-[Agones](https://agones.dev/site/) on machines that have Docker and nothing
-else. There is no cluster to operate: one process is the control plane, an
-agent on each machine starts the containers, and a SQLite file keeps the
-state.
+scrim is one binary that hosts dedicated game servers on machines that have
+Docker and nothing else, and is compatible with
+[Agones](https://agones.dev/site/). There is no cluster to operate: one
+process is the control plane, an agent on each machine starts the
+containers, and a SQLite file keeps the state.
 
 What was built for Agones works here unchanged:
 
@@ -49,16 +49,19 @@ What was built for Agones works here unchanged:
   Agones is accepted, for the subset of the Pod definition that Docker can
   express.
 - **Matchmakers.** A client written for the Agones allocator service works
-  once it is pointed at agones-lite, with a token or with the client
+  once it is pointed at scrim, with a token or with the client
   certificate it already has.
 
 So a game can start on a single VM, and move to Agones on Kubernetes when it
-outgrows that, without a change to the game server or the matchmaker.
+outgrows that, without a change to the game server or the matchmaker. A
+scrim is a practice match: the same game, on a smaller field.
 
 > [!NOTE]
-> **Unofficial.** agones-lite is an independent project. It is not affiliated
+> **Unofficial.** scrim is an independent project. It is not affiliated
 > with or endorsed by the [Agones](https://github.com/agones-dev/agones)
-> project.
+> project. Questions and bug reports about scrim belong in
+> [this repository's issues](https://github.com/ponyo877/scrim/issues), not
+> in the channels of Agones.
 
 ## Why does this project exist?
 
@@ -68,17 +71,22 @@ cluster is more to operate than the game. That is the case for many small
 studios, for prototypes and playtests, and for a region that needs only a
 handful of machines.
 
-agones-lite is for those. It keeps everything a game server and a matchmaker
+scrim is for those. It keeps everything a game server and a matchmaker
 see of Agones, and replaces what Kubernetes did with the least that does the
 job:
 
-| The job | Agones on Kubernetes | agones-lite |
+| The job | Agones on Kubernetes | scrim |
 |---|---|---|
 | Keeping the resources | API server and etcd | a SQLite file |
 | Starting and watching containers | kubelet | an agent and Docker |
 | Choosing a node and its ports | kube-scheduler | a small scheduler of its own |
 | Defaults and validation | admission webhooks | the same Agones code, called directly |
-| Day-to-day operation | `kubectl`, Helm | the `agones-lite` CLI |
+| Day-to-day operation | `kubectl`, Helm | the `scrim` CLI |
+
+**When to use Agones instead.** scrim has one control plane, and it is made
+for about ten machines. A game that needs more machines than that, a
+control plane that survives the loss of its machine, allocation across
+clusters, or anything else that Kubernetes brings, is a game for Agones.
 
 ## Features
 
@@ -98,7 +106,7 @@ job:
   that pins the control plane's certificate authority
 - **Observability**: Prometheus metrics, an event history, and game server
   logs through the CLI. `/healthz` says when nothing can be saved, and
-  `agones-lite buffer` works out the `bufferSize` for a rate of allocations
+  `scrim buffer` works out the `bufferSize` for a rate of allocations
 - **Private registries**, with the credentials that `docker login` stored
 
 ## How it works
@@ -132,15 +140,15 @@ flowchart LR
 
 - The **control plane** keeps the state and decides what should run. It
   serves the management API, the Allocation API and the API for agents.
-  `agones-lite server` starts it.
+  `scrim server` starts it.
 - An **agent** runs on every machine. It has Docker create the containers of
   the game servers placed there, and reports what became of them.
-  `agones-lite agent` starts it.
+  `scrim agent` starts it.
 - A **sidecar** runs beside every game server and is what the game server's
   SDK talks to.
 - The **CLI** is the same binary.
 
-`agones-lite server` runs an agent inside itself, so one VM needs one
+`scrim server` runs an agent inside itself, so one VM needs one
 process. Every connection is made from the inside out: sidecar to agent,
 agent to control plane. The only ports a machine has to open are the ones
 players connect to.
@@ -148,14 +156,14 @@ players connect to.
 ## Quick start
 
 You need a machine with Docker. Download the binary for it from the
-[latest release](https://github.com/ponyo877/agones-lite/releases/latest)
+[latest release](https://github.com/ponyo877/scrim/releases/latest)
 and start the control plane:
 
 ```sh
 # Linux on amd64. There are also linux-arm64, darwin-arm64 and darwin-amd64.
-curl -fsSLo agones-lite https://github.com/ponyo877/agones-lite/releases/latest/download/agones-lite-linux-amd64
-chmod +x agones-lite
-./agones-lite server
+curl -fsSLo scrim https://github.com/ponyo877/scrim/releases/latest/download/scrim-linux-amd64
+chmod +x scrim
+./scrim server
 ```
 
 In another terminal, apply the sample Fleet of Agones and take a game server
@@ -163,9 +171,9 @@ from it, as a matchmaker would:
 
 ```sh
 examples=https://raw.githubusercontent.com/agones-dev/agones/v1.62.0/examples/simple-game-server
-curl -fsSL $examples/fleet.yaml | ./agones-lite apply -f -
-./agones-lite get gameservers
-./agones-lite allocate --fleet simple-game-server
+curl -fsSL $examples/fleet.yaml | ./scrim apply -f -
+./scrim get gameservers
+./scrim allocate --fleet simple-game-server
 ```
 
 ```text
@@ -178,10 +186,10 @@ simple-game-server-96p7v-dt658 127.0.0.1 7000
 Let the Fleet grow and shrink by itself, then look at what happened:
 
 ```sh
-curl -fsSL $examples/fleetautoscaler.yaml | ./agones-lite apply -f -
-./agones-lite get gameservers -w          # every change, until Ctrl-C
-./agones-lite describe fleet simple-game-server
-./agones-lite logs simple-game-server-96p7v-dt658
+curl -fsSL $examples/fleetautoscaler.yaml | ./scrim apply -f -
+./scrim get gameservers -w          # every change, until Ctrl-C
+./scrim describe fleet simple-game-server
+./scrim logs simple-game-server-96p7v-dt658
 ```
 
 If Docker does not listen on `/var/run/docker.sock` (Colima, for example),
@@ -194,9 +202,9 @@ export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
 To build it yourself, you need Go and `make` as well:
 
 ```sh
-git clone --recurse-submodules https://github.com/ponyo877/agones-lite.git
-cd agones-lite
-make build sidecar-image    # bin/agones-lite, and the sidecar image it uses
+git clone --recurse-submodules https://github.com/ponyo877/scrim.git
+cd scrim
+make build sidecar-image    # bin/scrim, and the sidecar image it uses
 ```
 
 The samples are then in `third_party/agones/examples/simple-game-server`.
@@ -209,15 +217,15 @@ authority, so an agent cannot be pointed at an impostor.
 
 ```sh
 # on the control plane's machine
-agones-lite server --node-listen 0.0.0.0:9445 --tls-san cp.example.com
-agones-lite token show join
+scrim server --node-listen 0.0.0.0:9445 --tls-san cp.example.com
+scrim token show join
 
 # on every further machine
-agones-lite agent --server cp.example.com:9445 --token-file join-token \
+scrim agent --server cp.example.com:9445 --token-file join-token \
     --address 203.0.113.11
 ```
 
-`agones-lite node cordon`, `drain` and `delete` take a machine out of
+`scrim node cordon`, `drain` and `delete` take a machine out of
 service. [deploy/](deploy) has systemd units and example configuration files.
 
 Two things have to get through firewalls: players to the game server ports
@@ -227,7 +235,7 @@ agent through a unix socket, so the host's own firewall is not in the way.
 
 ## Compatibility with Agones
 
-Compatibility is pinned to **Agones v1.62.0**. agones-lite uses the Agones
+Compatibility is pinned to **Agones v1.62.0**. scrim uses the Agones
 API types and their own defaulting and validation as a Go module, so a
 manifest means here what it means there.
 
@@ -248,7 +256,7 @@ what is out, and why.
 
 ## Performance
 
-agones-lite is designed for 10 machines, 1,000 game servers and 50
+scrim is designed for 10 machines, 1,000 game servers and 50
 allocations a second, and is held to that in CI. Measured on **one arm64
 core** with a disk that takes 1.5 ms to sync:
 
@@ -271,7 +279,7 @@ servers they are asking for.
 
 ```sh
 # 1,000 game servers on 10 simulated machines, 50 allocations a second
-AGONES_LITE_LOAD=1 go test ./pkg/controlplane/ -run TestLoad -v
+SCRIM_LOAD=1 go test ./pkg/controlplane/ -run TestLoad -v
 
 # How fast it goes at most
 go test ./pkg/controlplane/ -run '^$' -bench ScaleUp -benchtime 3x
@@ -315,7 +323,7 @@ vulnerabilities.
 
 ## Project status
 
-agones-lite is **pre-1.0**. Everything planned for the first version is in
+scrim is **pre-1.0**. Everything planned for the first version is in
 place and tested, but nothing has run in production yet.
 
 - **Production target:** Linux on amd64 and arm64 (tried on Ubuntu 24.04
@@ -360,9 +368,10 @@ make dist   # release binaries for every platform, into dist/
 
 ## License
 
-[Apache-2.0](LICENSE), the same as Agones. agones-lite uses the Agones API
+[Apache-2.0](LICENSE), the same as Agones. scrim uses the Agones API
 types and generated SDK code as a Go module, and parts of its logic are
 ported from Agones; those places name the file they come from.
 
-Agones is a project of its own authors. agones-lite only builds on it, with
-thanks.
+Agones is a project of its own authors, and its name is a trademark of
+LF Projects, LLC. scrim only builds on it, with thanks, and uses the name
+only to say what it is compatible with.

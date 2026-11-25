@@ -1,4 +1,4 @@
-# A GameServer that sets every field agones-lite carries over to Docker.
+# A GameServer that sets every field scrim carries over to Docker.
 # FuzzAdmit starts from it, so that its mutations land near every check.
 apiVersion: agones.dev/v1
 kind: GameServer

@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ponyo877/agones-lite/test/testenv"
+	"github.com/ponyo877/scrim/test/testenv"
 )
 
 func TestSplitTag(t *testing.T) {
@@ -158,14 +158,14 @@ func TestAgainstTheDaemon(t *testing.T) {
 		testenv.Missing(t, "no Docker daemon at %s: %v", DefaultHost(), err)
 	}
 
-	const image, label = "alpine:3.20", "agones-lite.test"
+	const image, label = "alpine:3.20", "scrim.test"
 	require.NoError(t, c.Pull(ctx, image))
 	has, err := c.HasImage(ctx, image)
 	require.NoError(t, err)
 	assert.True(t, has)
 
 	id, err := c.Create(ctx, Spec{
-		Name:    "agones-lite-docker-test",
+		Name:    "scrim-docker-test",
 		Image:   image,
 		Command: []string{"sh", "-c", "echo to stdout; echo to stderr >&2; exit 3"},
 		Labels:  map[string]string{label: "yes"},
@@ -192,6 +192,6 @@ func TestAgainstTheDaemon(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, containers)
 
-	_, err = c.HasImage(ctx, "agones-lite/no-such-image:none")
+	_, err = c.HasImage(ctx, "scrim/no-such-image:none")
 	assert.NoError(t, err)
 }

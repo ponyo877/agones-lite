@@ -13,7 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
-	"github.com/ponyo877/agones-lite/pkg/agones"
+	"github.com/ponyo877/scrim/pkg/agones"
 )
 
 var noon = time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)

@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ponyo877/agones-lite/pkg/agones"
-	"github.com/ponyo877/agones-lite/pkg/store"
+	"github.com/ponyo877/scrim/pkg/agones"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
 // FuzzAdmit hands admission anything at all as a manifest, in a namespace

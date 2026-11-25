@@ -9,8 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/ponyo877/agones-lite/pkg/docker"
-	"github.com/ponyo877/agones-lite/pkg/podspec"
+	"github.com/ponyo877/scrim/pkg/docker"
+	"github.com/ponyo877/scrim/pkg/podspec"
 )
 
 // logBook collects what is logged while a test runs.
@@ -57,7 +57,7 @@ func TestAnAgentSaysThatItsDaemonHasContainersOfOtherNodes(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(log.String(), "level=WARN"))
 	assert.Contains(t, log.String(), "containers=3")
 	assert.Contains(t, log.String(), `nodes="[another renamed]"`)
-	assert.Contains(t, log.String(), "agones-lite node delete", "the remedy is part of the message")
+	assert.Contains(t, log.String(), "scrim node delete", "the remedy is part of the message")
 	assert.Empty(t, d.calls, "nothing is removed: two agents may share one daemon on purpose")
 }
 

@@ -1,5 +1,5 @@
 name: Something does not work
-description: agones-lite does something other than what it says, or than Agones does.
+description: scrim does something other than what it says, or than Agones does.
 labels: [bug]
 body:
   - type: textarea
@@ -13,7 +13,7 @@ body:
     id: how
     attributes:
       label: How can it be seen?
-      description: The commands, and the manifest if there is one. The output of "agones-lite describe" has the events of a game server.
+      description: The commands, and the manifest if there is one. The output of "scrim describe" has the events of a game server.
       render: text
     validations:
       required: true
@@ -21,7 +21,7 @@ body:
     id: version
     attributes:
       label: Version
-      description: What "agones-lite version" prints, or the commit.
+      description: What "scrim version" prints, or the commit.
     validations:
       required: true
   - type: input

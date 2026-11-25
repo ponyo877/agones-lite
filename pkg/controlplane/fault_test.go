@@ -17,13 +17,13 @@ import (
 	"google.golang.org/grpc/credentials"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/ponyo877/agones-lite/pkg/agent"
-	"github.com/ponyo877/agones-lite/pkg/agones"
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/auth"
-	"github.com/ponyo877/agones-lite/pkg/nodes"
-	"github.com/ponyo877/agones-lite/pkg/store"
-	nodev1 "github.com/ponyo877/agones-lite/proto/node/v1"
+	"github.com/ponyo877/scrim/pkg/agent"
+	"github.com/ponyo877/scrim/pkg/agones"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/auth"
+	"github.com/ponyo877/scrim/pkg/nodes"
+	"github.com/ponyo877/scrim/pkg/store"
+	nodev1 "github.com/ponyo877/scrim/proto/node/v1"
 )
 
 // These tests break things on purpose. They need a control plane that can
@@ -100,12 +100,12 @@ func (s *site) join(name string) {
 	s.t.Helper()
 	remote, err := nodes.Dial(s.address, s.token)
 	require.NoError(s.t, err)
-	node := &litev1.Node{
+	node := &scrimv1.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Status: litev1.NodeStatus{
-			Phase:     litev1.NodeReady,
+		Status: scrimv1.NodeStatus{
+			Phase:     scrimv1.NodeReady,
 			Address:   "203.0.113.10",
-			PortRange: litev1.PortRange{Min: 7000, Max: 7100},
+			PortRange: scrimv1.PortRange{Min: 7000, Max: 7100},
 		},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -123,7 +123,7 @@ func (s *site) leave(name string) {
 	delete(s.agents, name)
 }
 
-func (s *site) phase(node string) litev1.NodePhase {
+func (s *site) phase(node string) scrimv1.NodePhase {
 	n, _ := store.NodesOf(s.store).Get("", node)
 	if n == nil {
 		return ""
@@ -149,7 +149,7 @@ func (s *site) spread() (session, node string) {
 	s.t.Helper()
 	s.join("node-1")
 	s.join("node-2")
-	s.soon(func() bool { return s.phase("node-1") == litev1.NodeReady && s.phase("node-2") == litev1.NodeReady }, "both nodes join")
+	s.soon(func() bool { return s.phase("node-1") == scrimv1.NodeReady && s.phase("node-2") == scrimv1.NodeReady }, "both nodes join")
 	manifest := strings.Replace(fleetManifest, "replicas: 3", "replicas: 4\n  scheduling: Distributed", 1)
 	s.call(http.MethodPut, "/v1/namespaces/default/fleets/simple", manifest)
 	s.soon(func() bool {
@@ -174,7 +174,7 @@ func TestALostNodeIsReplacedAndItsSessionIsKept(t *testing.T) {
 
 	// The machine with the session on it drops off the network.
 	s.leave(lost)
-	s.soon(func() bool { return s.phase(lost) == litev1.NodeDisconnected }, "the control plane notices at once")
+	s.soon(func() bool { return s.phase(lost) == scrimv1.NodeDisconnected }, "the control plane notices at once")
 
 	// Nothing on it is handed out any more, although it still looks Ready.
 	for range 2 {
@@ -193,7 +193,7 @@ func TestALostNodeIsReplacedAndItsSessionIsKept(t *testing.T) {
 
 	// The machine comes back and is used again.
 	s.join(lost)
-	s.soon(func() bool { return s.phase(lost) == litev1.NodeReady }, "the node is back")
+	s.soon(func() bool { return s.phase(lost) == scrimv1.NodeReady }, "the node is back")
 	s.call(http.MethodPut, "/v1/namespaces/default/fleets/simple/scale", `{"replicas": 8}`)
 	s.soon(func() bool { return s.fleet().Status.ReadyReplicas == 5 && len(s.on(lost)) > 1 }, "new game servers land on it")
 }
@@ -212,9 +212,9 @@ func TestACrashKeepsWhatIsStillThereAndGivesUpWhatIsNot(t *testing.T) {
 
 	// It trusts neither: the node that is still there says so, the other
 	// one is now counted as out of reach.
-	assert.Equal(t, litev1.NodeDisconnected, s.phase(lost))
-	s.soon(func() bool { return s.phase(kept) == litev1.NodeReady }, "the agent that is still there dials in again")
-	assert.Equal(t, litev1.NodeDisconnected, s.phase(lost))
+	assert.Equal(t, scrimv1.NodeDisconnected, s.phase(lost))
+	s.soon(func() bool { return s.phase(kept) == scrimv1.NodeReady }, "the agent that is still there dials in again")
+	assert.Equal(t, scrimv1.NodeDisconnected, s.phase(lost))
 
 	// The game servers that were running are the same ones, session included.
 	assert.Equal(t, before, s.on(kept))

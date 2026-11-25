@@ -40,7 +40,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
+	sidecarv1 "github.com/ponyo877/scrim/proto/sidecar/v1"
 )
 
 // Server implements the stable Agones SDK service.

@@ -20,7 +20,7 @@
 package nodev1
 
 import (
-	v1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
+	v1 "github.com/ponyo877/scrim/proto/sidecar/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -37,7 +37,7 @@ const (
 
 type RegisterRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// JSON of a Node (apiVersion agones-lite/v1).
+	// JSON of a Node (apiVersion scrim/v1).
 	Node          []byte `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -914,18 +914,18 @@ var File_proto_node_v1_node_proto protoreflect.FileDescriptor
 
 const file_proto_node_v1_node_proto_rawDesc = "" +
 	"\n" +
-	"\x18proto/node/v1/node.proto\x12\x12agoneslite.node.v1\x1a\x1eproto/sidecar/v1/sidecar.proto\"%\n" +
+	"\x18proto/node/v1/node.proto\x12\rscrim.node.v1\x1a\x1eproto/sidecar/v1/sidecar.proto\"%\n" +
 	"\x0fRegisterRequest\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\fR\x04node\"\x12\n" +
 	"\x10RegisterResponse\"\"\n" +
 	"\fWatchRequest\x12\x12\n" +
-	"\x04node\x18\x01 \x01(\tR\x04node\"\xee\x01\n" +
+	"\x04node\x18\x01 \x01(\tR\x04node\"\xdf\x01\n" +
 	"\rWatchResponse\x12!\n" +
 	"\vgame_server\x18\x01 \x01(\fH\x00R\n" +
-	"gameServer\x127\n" +
-	"\aremoved\x18\x02 \x01(\v2\x1b.agoneslite.node.v1.RemovedH\x00R\aremoved\x124\n" +
-	"\x06synced\x18\x03 \x01(\v2\x1a.agoneslite.node.v1.SyncedH\x00R\x06synced\x12A\n" +
-	"\vlog_request\x18\x04 \x01(\v2\x1e.agoneslite.node.v1.LogRequestH\x00R\n" +
+	"gameServer\x122\n" +
+	"\aremoved\x18\x02 \x01(\v2\x16.scrim.node.v1.RemovedH\x00R\aremoved\x12/\n" +
+	"\x06synced\x18\x03 \x01(\v2\x15.scrim.node.v1.SyncedH\x00R\x06synced\x12<\n" +
+	"\vlog_request\x18\x04 \x01(\v2\x19.scrim.node.v1.LogRequestH\x00R\n" +
 	"logRequestB\b\n" +
 	"\x06change\"\x98\x01\n" +
 	"\n" +
@@ -952,35 +952,35 @@ const file_proto_node_v1_node_proto_rawDesc = "" +
 	"\x0freserve_seconds\x18\x04 \x01(\x03R\x0ereserveSeconds\x12\x16\n" +
 	"\x06detail\x18\x05 \x01(\tR\x06detail\x12\x10\n" +
 	"\x03uid\x18\x06 \x01(\tR\x03uid\"\x10\n" +
-	"\x0eReportResponse\"\xe8\x02\n" +
+	"\x0eReportResponse\"\xde\x02\n" +
 	"\x12SetMetadataRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\x12J\n" +
-	"\x06labels\x18\x03 \x03(\v22.agoneslite.node.v1.SetMetadataRequest.LabelsEntryR\x06labels\x12Y\n" +
-	"\vannotations\x18\x04 \x03(\v27.agoneslite.node.v1.SetMetadataRequest.AnnotationsEntryR\vannotations\x1a9\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12E\n" +
+	"\x06labels\x18\x03 \x03(\v2-.scrim.node.v1.SetMetadataRequest.LabelsEntryR\x06labels\x12T\n" +
+	"\vannotations\x18\x04 \x03(\v22.scrim.node.v1.SetMetadataRequest.AnnotationsEntryR\vannotations\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a>\n" +
 	"\x10AnnotationsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x15\n" +
-	"\x13SetMetadataResponse\"\xdf\x01\n" +
+	"\x13SetMetadataResponse\"\xd5\x01\n" +
 	"\x13UpdateCountsRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\x12@\n" +
-	"\bcounters\x18\x03 \x03(\v2$.agoneslite.sidecar.v1.CounterUpdateR\bcounters\x127\n" +
-	"\x05lists\x18\x04 \x03(\v2!.agoneslite.sidecar.v1.ListUpdateR\x05lists\x12\x1b\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12;\n" +
+	"\bcounters\x18\x03 \x03(\v2\x1f.scrim.sidecar.v1.CounterUpdateR\bcounters\x122\n" +
+	"\x05lists\x18\x04 \x03(\v2\x1c.scrim.sidecar.v1.ListUpdateR\x05lists\x12\x1b\n" +
 	"\tchange_id\x18\x05 \x01(\tR\bchangeId\"7\n" +
 	"\x14UpdateCountsResponse\x12\x1f\n" +
 	"\vgame_server\x18\x01 \x01(\fR\n" +
-	"gameServer2\x8c\x04\n" +
-	"\x05Nodes\x12U\n" +
-	"\bRegister\x12#.agoneslite.node.v1.RegisterRequest\x1a$.agoneslite.node.v1.RegisterResponse\x12N\n" +
-	"\x05Watch\x12 .agoneslite.node.v1.WatchRequest\x1a!.agoneslite.node.v1.WatchResponse0\x01\x12O\n" +
-	"\x06Report\x12!.agoneslite.node.v1.ReportRequest\x1a\".agoneslite.node.v1.ReportResponse\x12^\n" +
-	"\vSetMetadata\x12&.agoneslite.node.v1.SetMetadataRequest\x1a'.agoneslite.node.v1.SetMetadataResponse\x12a\n" +
-	"\fUpdateCounts\x12'.agoneslite.node.v1.UpdateCountsRequest\x1a(.agoneslite.node.v1.UpdateCountsResponse\x12H\n" +
-	"\x04Logs\x12\x1c.agoneslite.node.v1.LogChunk\x1a .agoneslite.node.v1.LogsResponse(\x01B6Z4github.com/ponyo877/agones-lite/proto/node/v1;nodev1b\x06proto3"
+	"gameServer2\xd0\x03\n" +
+	"\x05Nodes\x12K\n" +
+	"\bRegister\x12\x1e.scrim.node.v1.RegisterRequest\x1a\x1f.scrim.node.v1.RegisterResponse\x12D\n" +
+	"\x05Watch\x12\x1b.scrim.node.v1.WatchRequest\x1a\x1c.scrim.node.v1.WatchResponse0\x01\x12E\n" +
+	"\x06Report\x12\x1c.scrim.node.v1.ReportRequest\x1a\x1d.scrim.node.v1.ReportResponse\x12T\n" +
+	"\vSetMetadata\x12!.scrim.node.v1.SetMetadataRequest\x1a\".scrim.node.v1.SetMetadataResponse\x12W\n" +
+	"\fUpdateCounts\x12\".scrim.node.v1.UpdateCountsRequest\x1a#.scrim.node.v1.UpdateCountsResponse\x12>\n" +
+	"\x04Logs\x12\x17.scrim.node.v1.LogChunk\x1a\x1b.scrim.node.v1.LogsResponse(\x01B0Z.github.com/ponyo877/scrim/proto/node/v1;nodev1b\x06proto3"
 
 var (
 	file_proto_node_v1_node_proto_rawDescOnce sync.Once
@@ -996,46 +996,46 @@ func file_proto_node_v1_node_proto_rawDescGZIP() []byte {
 
 var file_proto_node_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_proto_node_v1_node_proto_goTypes = []any{
-	(*RegisterRequest)(nil),      // 0: agoneslite.node.v1.RegisterRequest
-	(*RegisterResponse)(nil),     // 1: agoneslite.node.v1.RegisterResponse
-	(*WatchRequest)(nil),         // 2: agoneslite.node.v1.WatchRequest
-	(*WatchResponse)(nil),        // 3: agoneslite.node.v1.WatchResponse
-	(*LogRequest)(nil),           // 4: agoneslite.node.v1.LogRequest
-	(*LogChunk)(nil),             // 5: agoneslite.node.v1.LogChunk
-	(*LogsResponse)(nil),         // 6: agoneslite.node.v1.LogsResponse
-	(*Removed)(nil),              // 7: agoneslite.node.v1.Removed
-	(*Synced)(nil),               // 8: agoneslite.node.v1.Synced
-	(*ReportRequest)(nil),        // 9: agoneslite.node.v1.ReportRequest
-	(*ReportResponse)(nil),       // 10: agoneslite.node.v1.ReportResponse
-	(*SetMetadataRequest)(nil),   // 11: agoneslite.node.v1.SetMetadataRequest
-	(*SetMetadataResponse)(nil),  // 12: agoneslite.node.v1.SetMetadataResponse
-	(*UpdateCountsRequest)(nil),  // 13: agoneslite.node.v1.UpdateCountsRequest
-	(*UpdateCountsResponse)(nil), // 14: agoneslite.node.v1.UpdateCountsResponse
-	nil,                          // 15: agoneslite.node.v1.SetMetadataRequest.LabelsEntry
-	nil,                          // 16: agoneslite.node.v1.SetMetadataRequest.AnnotationsEntry
-	(*v1.CounterUpdate)(nil),     // 17: agoneslite.sidecar.v1.CounterUpdate
-	(*v1.ListUpdate)(nil),        // 18: agoneslite.sidecar.v1.ListUpdate
+	(*RegisterRequest)(nil),      // 0: scrim.node.v1.RegisterRequest
+	(*RegisterResponse)(nil),     // 1: scrim.node.v1.RegisterResponse
+	(*WatchRequest)(nil),         // 2: scrim.node.v1.WatchRequest
+	(*WatchResponse)(nil),        // 3: scrim.node.v1.WatchResponse
+	(*LogRequest)(nil),           // 4: scrim.node.v1.LogRequest
+	(*LogChunk)(nil),             // 5: scrim.node.v1.LogChunk
+	(*LogsResponse)(nil),         // 6: scrim.node.v1.LogsResponse
+	(*Removed)(nil),              // 7: scrim.node.v1.Removed
+	(*Synced)(nil),               // 8: scrim.node.v1.Synced
+	(*ReportRequest)(nil),        // 9: scrim.node.v1.ReportRequest
+	(*ReportResponse)(nil),       // 10: scrim.node.v1.ReportResponse
+	(*SetMetadataRequest)(nil),   // 11: scrim.node.v1.SetMetadataRequest
+	(*SetMetadataResponse)(nil),  // 12: scrim.node.v1.SetMetadataResponse
+	(*UpdateCountsRequest)(nil),  // 13: scrim.node.v1.UpdateCountsRequest
+	(*UpdateCountsResponse)(nil), // 14: scrim.node.v1.UpdateCountsResponse
+	nil,                          // 15: scrim.node.v1.SetMetadataRequest.LabelsEntry
+	nil,                          // 16: scrim.node.v1.SetMetadataRequest.AnnotationsEntry
+	(*v1.CounterUpdate)(nil),     // 17: scrim.sidecar.v1.CounterUpdate
+	(*v1.ListUpdate)(nil),        // 18: scrim.sidecar.v1.ListUpdate
 }
 var file_proto_node_v1_node_proto_depIdxs = []int32{
-	7,  // 0: agoneslite.node.v1.WatchResponse.removed:type_name -> agoneslite.node.v1.Removed
-	8,  // 1: agoneslite.node.v1.WatchResponse.synced:type_name -> agoneslite.node.v1.Synced
-	4,  // 2: agoneslite.node.v1.WatchResponse.log_request:type_name -> agoneslite.node.v1.LogRequest
-	15, // 3: agoneslite.node.v1.SetMetadataRequest.labels:type_name -> agoneslite.node.v1.SetMetadataRequest.LabelsEntry
-	16, // 4: agoneslite.node.v1.SetMetadataRequest.annotations:type_name -> agoneslite.node.v1.SetMetadataRequest.AnnotationsEntry
-	17, // 5: agoneslite.node.v1.UpdateCountsRequest.counters:type_name -> agoneslite.sidecar.v1.CounterUpdate
-	18, // 6: agoneslite.node.v1.UpdateCountsRequest.lists:type_name -> agoneslite.sidecar.v1.ListUpdate
-	0,  // 7: agoneslite.node.v1.Nodes.Register:input_type -> agoneslite.node.v1.RegisterRequest
-	2,  // 8: agoneslite.node.v1.Nodes.Watch:input_type -> agoneslite.node.v1.WatchRequest
-	9,  // 9: agoneslite.node.v1.Nodes.Report:input_type -> agoneslite.node.v1.ReportRequest
-	11, // 10: agoneslite.node.v1.Nodes.SetMetadata:input_type -> agoneslite.node.v1.SetMetadataRequest
-	13, // 11: agoneslite.node.v1.Nodes.UpdateCounts:input_type -> agoneslite.node.v1.UpdateCountsRequest
-	5,  // 12: agoneslite.node.v1.Nodes.Logs:input_type -> agoneslite.node.v1.LogChunk
-	1,  // 13: agoneslite.node.v1.Nodes.Register:output_type -> agoneslite.node.v1.RegisterResponse
-	3,  // 14: agoneslite.node.v1.Nodes.Watch:output_type -> agoneslite.node.v1.WatchResponse
-	10, // 15: agoneslite.node.v1.Nodes.Report:output_type -> agoneslite.node.v1.ReportResponse
-	12, // 16: agoneslite.node.v1.Nodes.SetMetadata:output_type -> agoneslite.node.v1.SetMetadataResponse
-	14, // 17: agoneslite.node.v1.Nodes.UpdateCounts:output_type -> agoneslite.node.v1.UpdateCountsResponse
-	6,  // 18: agoneslite.node.v1.Nodes.Logs:output_type -> agoneslite.node.v1.LogsResponse
+	7,  // 0: scrim.node.v1.WatchResponse.removed:type_name -> scrim.node.v1.Removed
+	8,  // 1: scrim.node.v1.WatchResponse.synced:type_name -> scrim.node.v1.Synced
+	4,  // 2: scrim.node.v1.WatchResponse.log_request:type_name -> scrim.node.v1.LogRequest
+	15, // 3: scrim.node.v1.SetMetadataRequest.labels:type_name -> scrim.node.v1.SetMetadataRequest.LabelsEntry
+	16, // 4: scrim.node.v1.SetMetadataRequest.annotations:type_name -> scrim.node.v1.SetMetadataRequest.AnnotationsEntry
+	17, // 5: scrim.node.v1.UpdateCountsRequest.counters:type_name -> scrim.sidecar.v1.CounterUpdate
+	18, // 6: scrim.node.v1.UpdateCountsRequest.lists:type_name -> scrim.sidecar.v1.ListUpdate
+	0,  // 7: scrim.node.v1.Nodes.Register:input_type -> scrim.node.v1.RegisterRequest
+	2,  // 8: scrim.node.v1.Nodes.Watch:input_type -> scrim.node.v1.WatchRequest
+	9,  // 9: scrim.node.v1.Nodes.Report:input_type -> scrim.node.v1.ReportRequest
+	11, // 10: scrim.node.v1.Nodes.SetMetadata:input_type -> scrim.node.v1.SetMetadataRequest
+	13, // 11: scrim.node.v1.Nodes.UpdateCounts:input_type -> scrim.node.v1.UpdateCountsRequest
+	5,  // 12: scrim.node.v1.Nodes.Logs:input_type -> scrim.node.v1.LogChunk
+	1,  // 13: scrim.node.v1.Nodes.Register:output_type -> scrim.node.v1.RegisterResponse
+	3,  // 14: scrim.node.v1.Nodes.Watch:output_type -> scrim.node.v1.WatchResponse
+	10, // 15: scrim.node.v1.Nodes.Report:output_type -> scrim.node.v1.ReportResponse
+	12, // 16: scrim.node.v1.Nodes.SetMetadata:output_type -> scrim.node.v1.SetMetadataResponse
+	14, // 17: scrim.node.v1.Nodes.UpdateCounts:output_type -> scrim.node.v1.UpdateCountsResponse
+	6,  // 18: scrim.node.v1.Nodes.Logs:output_type -> scrim.node.v1.LogsResponse
 	13, // [13:19] is the sub-list for method output_type
 	7,  // [7:13] is the sub-list for method input_type
 	7,  // [7:7] is the sub-list for extension type_name

@@ -15,11 +15,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/control"
-	"github.com/ponyo877/agones-lite/pkg/events"
-	"github.com/ponyo877/agones-lite/pkg/scheduling"
-	"github.com/ponyo877/agones-lite/pkg/store"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/control"
+	"github.com/ponyo877/scrim/pkg/events"
+	"github.com/ponyo877/scrim/pkg/scheduling"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
 const (
@@ -34,7 +34,7 @@ const (
 	// LastCountsChangeAnnotation names the last change to Counters and Lists
 	// made through the SDK. The sidecar sends a change again when the answer
 	// got lost; the name keeps it from being made twice.
-	LastCountsChangeAnnotation = "agones-lite/last-counts-change"
+	LastCountsChangeAnnotation = "scrim/last-counts-change"
 )
 
 // Report is an Event that an agent or a sidecar saw happen to a GameServer.
@@ -86,7 +86,7 @@ func brief(detail string) string {
 // Controller owns the state of every GameServer.
 type Controller struct {
 	servers store.Typed[*agonesv1.GameServer]
-	nodes   store.Typed[*litev1.Node]
+	nodes   store.Typed[*scrimv1.Node]
 	events  *events.Recorder
 	now     func() time.Time
 	// Entered, when set, is told about every state a GameServer enters.
@@ -97,7 +97,7 @@ type Controller struct {
 	waiting map[store.Key]bool
 	// heard holds every node as it was when last heard of, to tell a change
 	// from a sign of life. Only what follows the nodes touches it.
-	heard map[string]*litev1.Node
+	heard map[string]*scrimv1.Node
 }
 
 // thoseWaiting is the key under which the GameServers without a node are
@@ -114,7 +114,7 @@ func NewController(s *store.Store, recorder *events.Recorder) *Controller {
 		events:  recorder,
 		now:     s.Now,
 		waiting: map[store.Key]bool{},
-		heard:   map[string]*litev1.Node{},
+		heard:   map[string]*scrimv1.Node{},
 	}
 }
 
@@ -154,7 +154,7 @@ func afterServerChange(e store.Event) []store.Key {
 // them each time would be work in proportion to nodes times GameServers,
 // for ever, with nothing going on.
 func (c *Controller) afterNodeChange(e store.Event) []store.Key {
-	node := e.Object.(*litev1.Node)
+	node := e.Object.(*scrimv1.Node)
 	was := c.heard[node.Name]
 	c.heard[node.Name] = node
 	if e.Type == store.Deleted {
@@ -173,7 +173,7 @@ func (c *Controller) afterNodeChange(e store.Event) []store.Key {
 
 // onlyASignOfLife reports whether a node differs from what it was in
 // nothing but the time it was last heard from.
-func onlyASignOfLife(was, node *litev1.Node) bool {
+func onlyASignOfLife(was, node *scrimv1.Node) bool {
 	if was == nil {
 		return false
 	}
@@ -247,7 +247,7 @@ func (c *Controller) sync(_ context.Context, key store.Key) error {
 // reachable reports whether the node's agent is connected.
 func (c *Controller) reachable(nodeName string) bool {
 	node, ok := c.nodes.Peek("", nodeName)
-	return ok && node.Status.Phase == litev1.NodeReady
+	return ok && node.Status.Phase == scrimv1.NodeReady
 }
 
 // placeWaiting chooses a node and host ports for every GameServer that has
@@ -372,7 +372,7 @@ func (c *Controller) forgetDeleted(r Report) error {
 }
 
 // apply moves gs to next and records what comes with the move.
-func apply(gs *agonesv1.GameServer, next agonesv1.GameServerState, r Report, node *litev1.Node, now time.Time) {
+func apply(gs *agonesv1.GameServer, next agonesv1.GameServerState, r Report, node *scrimv1.Node, now time.Time) {
 	gs.Status.State = next
 	gs.Status.ReservedUntil = reservedUntil(next, r.Reserve, now)
 	if r.Event == SDKAllocate {
@@ -415,7 +415,7 @@ func reachable(s agonesv1.GameServerState) bool {
 
 // publishAddress fills in where players connect.
 // Upstream: applyGameServerAddressAndPort in pkg/gameservers/gameservers.go.
-func publishAddress(gs *agonesv1.GameServer, node *litev1.Node) {
+func publishAddress(gs *agonesv1.GameServer, node *scrimv1.Node) {
 	gs.Status.Address = node.Status.Address
 	gs.Status.Addresses = []corev1.NodeAddress{{Type: corev1.NodeExternalIP, Address: node.Status.Address}}
 	gs.Status.Ports = make([]agonesv1.GameServerStatusPort, len(gs.Spec.Ports))

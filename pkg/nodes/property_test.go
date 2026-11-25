@@ -11,8 +11,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"pgregory.net/rapid"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/gameservers"
 )
 
 // These tests state what must hold for any node and any GameServers on it,
@@ -57,13 +57,13 @@ func TestGivingUpWaitsForTheGraceAndLongestForSessions(t *testing.T) {
 		away := aTime(t, "away")
 		node := disconnectedFor(away)
 		if rapid.Bool().Draw(t, "connected after all") {
-			node.Status.Phase = litev1.NodeReady
+			node.Status.Phase = scrimv1.NodeReady
 		}
 
 		lost := GivenUp(node, servers, DefaultGraces, noon)
 
 		for _, gs := range lost {
-			require.Equal(t, litev1.NodeDisconnected, node.Status.Phase, "%s was given up on a connected node", gs.Name)
+			require.Equal(t, scrimv1.NodeDisconnected, node.Status.Phase, "%s was given up on a connected node", gs.Name)
 			require.Contains(t, servers, gs, "%s is not on this node", gs.Name)
 			require.False(t, gameservers.Final(gs.Status.State), "%s is %s: there is nothing left to give up", gs.Name, gs.Status.State)
 			require.GreaterOrEqual(t, away, graceOf(gs), "%s (%s) was given up after only %s", gs.Name, gs.Status.State, away)

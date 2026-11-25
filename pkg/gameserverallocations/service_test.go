@@ -17,9 +17,9 @@ import (
 	"google.golang.org/grpc/status"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/events"
-	"github.com/ponyo877/agones-lite/pkg/store"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/events"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
 // The tests here are about when a request is given up. They run in a
@@ -41,7 +41,7 @@ func newSite(t *testing.T, ready int) *site {
 	require.NoError(t, err)
 	recorder, err := events.Open(filepath.Join(t.TempDir(), "events.db"))
 	require.NoError(t, err)
-	_, err = store.NodesOf(s).Create(&litev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node"}, Status: litev1.NodeStatus{Phase: litev1.NodeReady}})
+	_, err = store.NodesOf(s).Create(&scrimv1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node"}, Status: scrimv1.NodeStatus{Phase: scrimv1.NodeReady}})
 	require.NoError(t, err)
 	for i := range ready {
 		_, err := store.GameServersOf(s).Create(server(fmt.Sprint("gs-", i), agonesv1.GameServerStateReady, on("node")))

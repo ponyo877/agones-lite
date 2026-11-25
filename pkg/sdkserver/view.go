@@ -9,7 +9,7 @@ import (
 	"agones.dev/agones/pkg/sdk"
 	"google.golang.org/protobuf/proto"
 
-	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
+	sidecarv1 "github.com/ponyo877/scrim/proto/sidecar/v1"
 )
 
 // The view is the GameServer as the game server sees it: the last one from
@@ -91,7 +91,7 @@ func (s *Server) adopt(gs *sdk.GameServer) {
 }
 
 // older reports whether a is an earlier version of the GameServer than b.
-// A resourceVersion in agones-lite is a decimal number that only ever grows.
+// A resourceVersion in scrim is a decimal number that only ever grows.
 // Without two such numbers to compare, a is not older.
 func older(a, b *sdk.GameServer) bool {
 	versionA, errA := strconv.ParseUint(a.GetObjectMeta().GetResourceVersion(), 10, 64)

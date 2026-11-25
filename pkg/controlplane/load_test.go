@@ -19,17 +19,17 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/ponyo877/agones-lite/pkg/agent"
-	"github.com/ponyo877/agones-lite/pkg/agones"
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/events"
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
-	"github.com/ponyo877/agones-lite/pkg/metrics"
-	"github.com/ponyo877/agones-lite/pkg/nodes"
-	"github.com/ponyo877/agones-lite/pkg/store"
+	"github.com/ponyo877/scrim/pkg/agent"
+	"github.com/ponyo877/scrim/pkg/agones"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/events"
+	"github.com/ponyo877/scrim/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/metrics"
+	"github.com/ponyo877/scrim/pkg/nodes"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
-// The scale agones-lite is designed for; see docs/planning.md.
+// The scale scrim is designed for; see docs/planning.md.
 const (
 	loadNodes       = 10
 	loadGameServers = 1000
@@ -45,7 +45,7 @@ const (
 //
 // It takes a little over a minute, so it only runs when asked:
 //
-//	AGONES_LITE_LOAD=1 go test ./pkg/controlplane/ -run TestLoad -v
+//	SCRIM_LOAD=1 go test ./pkg/controlplane/ -run TestLoad -v
 //
 // How it measures follows what is known about measuring a tail. Requests
 // come whether or not the ones before them are answered, at moments drawn
@@ -55,9 +55,14 @@ const (
 // (Schroeder, Wierman and Harchol-Balter, "Open Versus Closed: A
 // Cautionary Tale", NSDI 2006). And the 99th percentile of a sample is not
 // that of what was sampled: see atMost.
+//
+// A slow answer has three places to come from, and the test says which:
+// the disk (the slowest save), the machine the test is on (how long the
+// test itself was kept from running), or the control plane, when it is
+// neither of the two.
 func TestLoad(t *testing.T) {
-	if os.Getenv("AGONES_LITE_LOAD") == "" {
-		t.Skip("set AGONES_LITE_LOAD=1 to run the load test")
+	if os.Getenv("SCRIM_LOAD") == "" {
+		t.Skip("set SCRIM_LOAD=1 to run the load test")
 	}
 	w, stop := newLoadWorld(t, loadNodes)
 	defer stop()
@@ -68,12 +73,17 @@ func TestLoad(t *testing.T) {
 	t.Logf("%d game servers on %d nodes were Ready after %s", loadGameServers, loadNodes, time.Since(started).Round(time.Millisecond))
 
 	const seconds = 60 // 3,000 requests: fewer say little about one in a hundred
+	w.saves.forget()
+	held, stopWatching := heldUp()
 	took := w.allocateAtRate(loadAllocations, seconds)
+	stopWatching()
 	slices.Sort(took)
 	median, p99, slowest := took[len(took)/2], took[len(took)*99/100], took[len(took)-1]
 	t.Logf("%d allocations at %d per second: median %s, 99th percentile %s (at most %s, with 95%% confidence), slowest %s",
 		len(took), loadAllocations, median.Round(time.Microsecond), p99.Round(time.Microsecond),
 		atMost(took, 0.99).Round(time.Microsecond), slowest.Round(time.Microsecond))
+	t.Logf("meanwhile the slowest save took %s, and the test itself was kept from running for at most %s",
+		w.saves.seen().Round(time.Microsecond), held.seen().Round(time.Microsecond))
 
 	require.Len(t, took, loadAllocations*seconds, "every allocation got a game server, and one of its own")
 	require.Less(t, atMost(took, 0.99), 100*time.Millisecond, "an allocation should not take a noticeable part of a second")
@@ -93,6 +103,46 @@ func atMost(sorted []time.Duration, q float64) time.Duration {
 	n := float64(len(sorted))
 	rank := int(math.Ceil(n*q+1.96*math.Sqrt(n*q*(1-q)))) + 1
 	return sorted[min(rank, len(sorted))-1]
+}
+
+// longest keeps the longest of the times it is shown.
+type longest struct {
+	mu   sync.Mutex
+	time time.Duration
+}
+
+func (l *longest) show(d time.Duration) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.time = max(l.time, d)
+}
+
+func (l *longest) seen() time.Duration {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.time
+}
+
+func (l *longest) forget() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.time = 0
+}
+
+// heldUp watches how long the test itself is kept from running, until stop
+// is called: it asks to be woken every millisecond, and notes how much later
+// than that it was. A machine that stands still for a moment, as a shared
+// one does now and then, shows here, and in every request due meanwhile.
+func heldUp() (held *longest, stop func()) {
+	held = &longest{}
+	watching, stop := context.WithCancel(context.Background())
+	go func() {
+		for last := time.Now(); watching.Err() == nil; last = time.Now() {
+			time.Sleep(time.Millisecond)
+			held.show(time.Since(last) - time.Millisecond)
+		}
+	}()
+	return held, stop
 }
 
 // BenchmarkScaleUp measures a new Fleet from the moment it is applied to
@@ -167,7 +217,7 @@ func nodesFor(gameServers int) int {
 	return max(loadNodes, gameServers/500)
 }
 
-// newLoadWorld is the control plane as "agones-lite server" runs it, with
+// newLoadWorld is the control plane as "scrim server" runs it, with
 // the event history and the metrics on, and simulated nodes in place of
 // agents. stop ends it.
 func newLoadWorld(t testing.TB, nodeCount int) (w world, stop func()) {
@@ -180,6 +230,11 @@ func newLoadWorld(t testing.TB, nodeCount int) (w world, stop func()) {
 	require.NoError(t, err)
 	cp, err := New(s, recorder, metrics.New(s), nodes.DefaultGraces)
 	require.NoError(t, err)
+	saves, measure := &longest{}, s.Saved
+	s.Saved = func(changes int, took time.Duration) {
+		measure(changes, took)
+		saves.show(took)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var running sync.WaitGroup
@@ -187,17 +242,17 @@ func newLoadWorld(t testing.TB, nodeCount int) (w world, stop func()) {
 	running.Go(func() { recorder.Run(ctx) })
 	running.Go(func() { cp.Run(ctx) })
 	for i := range nodeCount {
-		node := &litev1.Node{
+		node := &scrimv1.Node{
 			ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("node-%03d", i)},
-			Status: litev1.NodeStatus{
-				Phase:     litev1.NodeReady,
+			Status: scrimv1.NodeStatus{
+				Phase:     scrimv1.NodeReady,
 				Address:   fmt.Sprintf("203.0.113.%d", i%250+1),
-				PortRange: litev1.PortRange{Min: 7000, Max: 8000},
+				PortRange: scrimv1.PortRange{Min: 7000, Max: 8000},
 			},
 		}
 		running.Go(func() { _ = agent.NewSimulator(node, cp.Agents).Run(ctx) })
 	}
-	return world{t: t, cp: cp, api: cp.API.Handler(), store: s}, func() {
+	return world{t: t, cp: cp, api: cp.API.Handler(), store: s, saves: saves}, func() {
 		cancel()
 		running.Wait()
 		_ = recorder.Close()
