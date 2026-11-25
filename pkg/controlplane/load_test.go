@@ -238,21 +238,27 @@ func (w world) waitFor(state agonesv1.GameServerState, n int) {
 func (w world) allocateAtRate(perSecond, seconds int) []time.Duration {
 	plan := arrivals(perSecond, seconds)
 	results := make(chan time.Duration, len(plan))
-	playing, stop := context.WithCancel(context.Background())
+	running, stop := context.WithCancel(context.Background())
 	defer stop()
-	var given sync.Map
+	// The game servers that are in a match, by name. A name is free again
+	// once its match is over: with a few thousand game servers coming and
+	// going, a new one now and then gets the name of one that is gone.
+	var inAMatch sync.Map
 	began := time.Now()
 	for _, after := range plan {
 		due := began.Add(after)
 		time.Sleep(time.Until(due))
 		go func() {
 			answer, err := w.allocate()
-			if _, twice := given.LoadOrStore(answer.GetGameServerName(), true); err != nil || twice {
+			name := answer.GetGameServerName()
+			if _, twice := inAMatch.LoadOrStore(name, true); err != nil || twice {
+				w.t.Errorf("an allocation got %q, %v (in a match already: %t)", name, err, twice)
 				results <- -1
 				return
 			}
 			results <- time.Since(due)
-			w.play(playing, answer.GetGameServerName())
+			w.play(running, name)
+			inAMatch.Delete(name)
 		}()
 	}
 	var took []time.Duration
