@@ -90,12 +90,10 @@ func (m *members) all() []Object {
 	return m.objects
 }
 
-// put adds the object under key, or swaps it for the one that was there.
+// put adds the object under key, at the end of the row. The key is not in
+// the group at that moment: whoever changes an object takes the old one
+// out first (move).
 func (m *members) put(key Key, obj Object) {
-	if at, there := m.place[key]; there {
-		m.objects[at] = obj
-		return
-	}
 	m.place[key] = len(m.keys)
 	m.keys, m.objects = append(m.keys, key), append(m.objects, obj)
 }
