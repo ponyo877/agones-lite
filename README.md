@@ -318,8 +318,10 @@ was looked at and left out, and why.
 Nothing reaches `main` without passing
 [CI](.github/workflows/ci.yml): the linters, the tests under the race
 detector on Linux amd64, Linux arm64 and macOS, a thousand tries of every
-property, the fuzz targets, the load test, the proofs, and a scan for known
-vulnerabilities.
+property, the fuzz targets, the load test, the proofs, a scan for known
+vulnerabilities, and the quick start above with real containers. A release
+is tried the same way once it is out, with the binary and the sidecar
+image that were published.
 
 ## Project status
 
