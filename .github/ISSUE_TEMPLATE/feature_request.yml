@@ -1,0 +1,19 @@
+name: Something is missing
+description: A part of Agones that agones-lite should have, or something that would make it easier to run.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The scope is small on purpose. [docs/planning.md](https://github.com/ponyo877/agones-lite/blob/main/docs/planning.md) lists what was left out and why: have a look first.
+  - type: textarea
+    id: what
+    attributes:
+      label: What would you like to do that you cannot do now?
+    validations:
+      required: true
+  - type: textarea
+    id: agones
+    attributes:
+      label: How does Agones do it?
+      description: If it is a part of Agones, the page of its documentation helps.

@@ -29,6 +29,10 @@
   <a href="#documentation">Documentation</a>
 </p>
 
+<p align="center">
+  <img src="docs/images/demo.svg" alt="The quick start in a terminal: a Fleet is applied, two game servers become Ready, and one of them is allocated" width="760">
+</p>
+
 ---
 
 agones-lite is one binary that runs the core of
@@ -143,24 +147,25 @@ players connect to.
 
 ## Quick start
 
-You need Go, Docker and `make`.
+You need a machine with Docker. Download the binary for it from the
+[latest release](https://github.com/ponyo877/agones-lite/releases/latest)
+and start the control plane:
 
 ```sh
-git clone --recurse-submodules https://github.com/ponyo877/agones-lite.git
-cd agones-lite
-make build sidecar-image
-
-bin/agones-lite server
+# Linux on amd64. There are also linux-arm64, darwin-arm64 and darwin-amd64.
+curl -fsSLo agones-lite https://github.com/ponyo877/agones-lite/releases/latest/download/agones-lite-linux-amd64
+chmod +x agones-lite
+./agones-lite server
 ```
 
-In another terminal, apply the sample Fleet from the Agones repository and
-take a game server from it, as a matchmaker would:
+In another terminal, apply the sample Fleet of Agones and take a game server
+from it, as a matchmaker would:
 
 ```sh
-examples=third_party/agones/examples/simple-game-server
-bin/agones-lite apply -f $examples/fleet.yaml
-bin/agones-lite get gameservers
-bin/agones-lite allocate --fleet simple-game-server
+examples=https://raw.githubusercontent.com/agones-dev/agones/v1.62.0/examples/simple-game-server
+curl -fsSL $examples/fleet.yaml | ./agones-lite apply -f -
+./agones-lite get gameservers
+./agones-lite allocate --fleet simple-game-server
 ```
 
 ```text
@@ -173,10 +178,10 @@ simple-game-server-96p7v-dt658 127.0.0.1 7000
 Let the Fleet grow and shrink by itself, then look at what happened:
 
 ```sh
-bin/agones-lite apply -f $examples/fleetautoscaler.yaml
-bin/agones-lite get gameservers -w          # every change, until Ctrl-C
-bin/agones-lite describe fleet simple-game-server
-bin/agones-lite logs simple-game-server-96p7v-dt658
+curl -fsSL $examples/fleetautoscaler.yaml | ./agones-lite apply -f -
+./agones-lite get gameservers -w          # every change, until Ctrl-C
+./agones-lite describe fleet simple-game-server
+./agones-lite logs simple-game-server-96p7v-dt658
 ```
 
 If Docker does not listen on `/var/run/docker.sock` (Colima, for example),
@@ -186,6 +191,16 @@ point `DOCKER_HOST` at its socket first:
 export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
 ```
 
+To build it yourself, you need Go and `make` as well:
+
+```sh
+git clone --recurse-submodules https://github.com/ponyo877/agones-lite.git
+cd agones-lite
+make build sidecar-image    # bin/agones-lite, and the sidecar image it uses
+```
+
+The samples are then in `third_party/agones/examples/simple-game-server`.
+
 ## Running on more machines
 
 The control plane listens for agents once it is given an address for them.
@@ -194,11 +209,11 @@ authority, so an agent cannot be pointed at an impostor.
 
 ```sh
 # on the control plane's machine
-bin/agones-lite server --node-listen 0.0.0.0:9445 --tls-san cp.example.com
-bin/agones-lite token show join
+agones-lite server --node-listen 0.0.0.0:9445 --tls-san cp.example.com
+agones-lite token show join
 
 # on every further machine
-bin/agones-lite agent --server cp.example.com:9445 --token-file join-token \
+agones-lite agent --server cp.example.com:9445 --token-file join-token \
     --address 203.0.113.11
 ```
 
@@ -301,8 +316,7 @@ vulnerabilities.
 ## Project status
 
 agones-lite is **pre-1.0**. Everything planned for the first version is in
-place and tested, but nothing has run in production yet, and there is no
-tagged release: build it from source for now.
+place and tested, but nothing has run in production yet.
 
 - **Production target:** Linux on amd64 and arm64 (tried on Ubuntu 24.04
   with Docker 29).
