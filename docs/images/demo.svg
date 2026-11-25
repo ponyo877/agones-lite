@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 341" role="img" aria-label="The quick start in a terminal: a Fleet is applied, two game servers become Ready, one is allocated">
+  <title>agones-lite: the quick start</title>
+  <!--
+    The quick start, as a terminal that fills in line by line and starts
+    over. The lines are what the commands printed on a laptop, with the path
+    of the sample Fleet cut short. Each line has a moment to appear at; a
+    place that shows no animation shows them all.
+  -->
+  <style>
+    text { font: 14px ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .p { fill: #A78BFA } .c { fill: #F9FAFB; font-weight: 600 } .n { fill: #6B7280 }
+    .o { fill: #D1D5DB } .ready { fill: #34D399 } .alloc { fill: #FBBF24 }
+    @keyframes at0 { 0%, 2.78% { opacity: 0 } 2.79%, 100% { opacity: 1 } }
+    .at0 { animation: at0 18s infinite }
+    @keyframes at1 { 0%, 11.11% { opacity: 0 } 11.12%, 100% { opacity: 1 } }
+    .at1 { animation: at1 18s infinite }
+    @keyframes at2 { 0%, 15.56% { opacity: 0 } 15.57%, 100% { opacity: 1 } }
+    .at2 { animation: at2 18s infinite }
+    @keyframes at3 { 0%, 25.00% { opacity: 0 } 25.01%, 100% { opacity: 1 } }
+    .at3 { animation: at3 18s infinite }
+    @keyframes at4 { 0%, 29.44% { opacity: 0 } 29.45%, 100% { opacity: 1 } }
+    .at4 { animation: at4 18s infinite }
+    @keyframes at5 { 0%, 44.44% { opacity: 0 } 44.45%, 100% { opacity: 1 } }
+    .at5 { animation: at5 18s infinite }
+    @keyframes at6 { 0%, 48.89% { opacity: 0 } 48.90%, 100% { opacity: 1 } }
+    .at6 { animation: at6 18s infinite }
+    @keyframes at7 { 0%, 58.33% { opacity: 0 } 58.34%, 100% { opacity: 1 } }
+    .at7 { animation: at7 18s infinite }
+    @keyframes at8 { 0%, 62.78% { opacity: 0 } 62.79%, 100% { opacity: 1 } }
+    .at8 { animation: at8 18s infinite }
+  </style>
+  <rect width="760" height="341" rx="12" fill="#0F172A"/>
+  <circle cx="24" cy="22" r="6" fill="#F87171"/><circle cx="44" cy="22" r="6" fill="#FBBF24"/><circle cx="64" cy="22" r="6" fill="#34D399"/>
+  <text class="at0" x="24" y="62" xml:space="preserve"><tspan class="p">$ </tspan><tspan class="c">agones-lite server &amp;</tspan></text>
+  <text class="at1" x="24" y="83" xml:space="preserve"><tspan class="p">$ </tspan><tspan class="c">agones-lite apply -f fleet.yaml</tspan><tspan class="n">   # the sample Fleet from the Agones repository</tspan></text>
+  <text class="at2" x="24" y="104" xml:space="preserve"><tspan class="o">fleet/simple-game-server applied</tspan></text>
+  <text class="at3" x="24" y="125" xml:space="preserve"><tspan class="p">$ </tspan><tspan class="c">agones-lite get gameservers</tspan></text>
+  <text class="at4" x="24" y="146" xml:space="preserve"><tspan class="o">NAME                             STATE       ADDRESS     PORT   NODE      AGE</tspan></text>
+  <text class="at4" x="24" y="167" xml:space="preserve"><tspan class="o">simple-game-server-6qqp2-4jmqj   <tspan class="ready">Ready</tspan>       127.0.0.1   7000   my-host   15s</tspan></text>
+  <text class="at4" x="24" y="188" xml:space="preserve"><tspan class="o">simple-game-server-6qqp2-pd524   <tspan class="ready">Ready</tspan>       127.0.0.1   7001   my-host   15s</tspan></text>
+  <text class="at5" x="24" y="209" xml:space="preserve"><tspan class="p">$ </tspan><tspan class="c">agones-lite allocate --fleet simple-game-server</tspan><tspan class="n">   # as a matchmaker would</tspan></text>
+  <text class="at6" x="24" y="230" xml:space="preserve"><tspan class="o">simple-game-server-6qqp2-4jmqj 127.0.0.1 7000</tspan></text>
+  <text class="at7" x="24" y="251" xml:space="preserve"><tspan class="p">$ </tspan><tspan class="c">agones-lite get gameservers</tspan></text>
+  <text class="at8" x="24" y="272" xml:space="preserve"><tspan class="o">NAME                             STATE       ADDRESS     PORT   NODE      AGE</tspan></text>
+  <text class="at8" x="24" y="293" xml:space="preserve"><tspan class="o">simple-game-server-6qqp2-4jmqj   <tspan class="alloc">Allocated</tspan>   127.0.0.1   7000   my-host   15s</tspan></text>
+  <text class="at8" x="24" y="314" xml:space="preserve"><tspan class="o">simple-game-server-6qqp2-pd524   <tspan class="ready">Ready</tspan>       127.0.0.1   7001   my-host   15s</tspan></text>
+</svg>

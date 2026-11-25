@@ -29,6 +29,10 @@
   <a href="#documentation">Documentation</a>
 </p>
 
+<p align="center">
+  <img src="docs/images/demo.svg" alt="The quick start in a terminal: a Fleet is applied, two game servers become Ready, and one of them is allocated" width="760">
+</p>
+
 ---
 
 agones-lite is one binary that runs the core of
