@@ -97,7 +97,7 @@ func TestAnAgentOnAnotherMachineSeesItsGameServers(t *testing.T) {
 	_, current := remote.Assigned("node-1")
 	assert.False(t, current, "nothing is known before the first answer")
 
-	require.NoError(t, remote.Register(node("node-1")))
+	require.NoError(t, remote.Register(context.Background(), node("node-1")))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go remote.Run(ctx, "node-1")
@@ -132,15 +132,15 @@ func TestReportsFromAnAgentChangeTheGameServer(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = remote.Close() })
 
-	require.NoError(t, remote.Report(gameservers.Report{Namespace: "default", Name: "gs", Event: gameservers.ContainersCreated}))
+	require.NoError(t, remote.Report(context.Background(), gameservers.Report{Namespace: "default", Name: "gs", Event: gameservers.ContainersCreated}))
 	gs, _ := servers.Get("default", "gs")
 	assert.Equal(t, agonesv1.GameServerStateStarting, gs.Status.State)
 
-	require.NoError(t, remote.SetMetadata("default", "gs", map[string]string{"mode": "ranked"}, nil))
+	require.NoError(t, remote.SetMetadata(context.Background(), "default", "gs", map[string]string{"mode": "ranked"}, nil))
 	gs, _ = servers.Get("default", "gs")
 	assert.Equal(t, "ranked", gs.Labels["agones.dev/sdk-mode"])
 
-	err = remote.Report(gameservers.Report{Namespace: "default", Name: "gs", Event: gameservers.Readied})
+	err = remote.Report(context.Background(), gameservers.Report{Namespace: "default", Name: "gs", Event: gameservers.Readied})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err), "granting Ready is the control plane's decision")
 }
 
@@ -152,7 +152,7 @@ func TestWhyACreationFailedTravelsWithTheReport(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = remote.Close() })
 
-	require.NoError(t, remote.Report(gameservers.Report{
+	require.NoError(t, remote.Report(context.Background(), gameservers.Report{
 		Namespace: "default", Name: "gs", Event: gameservers.CreateFailed, Detail: "pull example/game:1: pull access denied",
 	}))
 
@@ -196,7 +196,7 @@ func TestAReserveThatRanOutTakesBackOnlyAReservedGameServer(t *testing.T) {
 	t.Cleanup(func() { _ = remote.Close() })
 
 	for _, name := range []string{"reserved", "allocated"} {
-		require.NoError(t, remote.Report(gameservers.Report{Namespace: "default", Name: name, Event: gameservers.ReserveExpired}))
+		require.NoError(t, remote.Report(context.Background(), gameservers.Report{Namespace: "default", Name: name, Event: gameservers.ReserveExpired}))
 	}
 
 	gs, _ := servers.Get("default", "reserved")
@@ -211,7 +211,7 @@ func TestTheNodeIsDisconnectedOnceItsAgentIsGone(t *testing.T) {
 	remote, err := Dial(cp.address, cp.secrets.Token(auth.Node))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = remote.Close() })
-	require.NoError(t, remote.Register(node("node-1")))
+	require.NoError(t, remote.Register(context.Background(), node("node-1")))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go remote.Run(ctx, "node-1")
@@ -238,19 +238,19 @@ func TestARemoteNodeIsOnlyReadyWhileItWatches(t *testing.T) {
 
 	// An agent that registers and dies before it watches leaves no call
 	// whose end would tell us so.
-	require.NoError(t, remote.Register(node("node-1")))
+	require.NoError(t, remote.Register(context.Background(), node("node-1")))
 	assert.Equal(t, litev1.NodeDisconnected, phase())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go remote.Run(ctx, "node-1")
 	soon(t, func() bool { return phase() == litev1.NodeReady }, "watching is what connects the node")
-	require.NoError(t, remote.Register(node("node-1")))
+	require.NoError(t, remote.Register(context.Background(), node("node-1")))
 	assert.Equal(t, litev1.NodeReady, phase(), "a heartbeat changes nothing about that")
 
 	cancel()
 	soon(t, func() bool { return phase() == litev1.NodeDisconnected }, "the control plane notices the agent is gone")
 	// The agent's last heartbeat was still on its way.
-	require.NoError(t, remote.Register(node("node-1")))
+	require.NoError(t, remote.Register(context.Background(), node("node-1")))
 	assert.Equal(t, litev1.NodeDisconnected, phase(), "or the node would be Ready for ever")
 }
 
@@ -262,14 +262,14 @@ func TestRegisteringWithoutWatchingDoesNotPutOffTheDayANodeIsGivenUp(t *testing.
 	remote, err := Dial(cp.address, cp.secrets.Token(auth.Node))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = remote.Close() })
-	require.NoError(t, remote.Register(node("node-1")))
+	require.NoError(t, remote.Register(context.Background(), node("node-1")))
 	longAgo := metav1.NewTime(time.Now().Add(-time.Hour).Truncate(time.Second))
 	require.NoError(t, store.NodesOf(cp.store).Change("", "node-1", func(n *litev1.Node) bool {
 		n.Status.LastHeartbeatTime = longAgo
 		return true
 	}))
 
-	require.NoError(t, remote.Register(node("node-1")))
+	require.NoError(t, remote.Register(context.Background(), node("node-1")))
 
 	n, _ := store.NodesOf(cp.store).Get("", "node-1")
 	assert.Equal(t, litev1.NodeDisconnected, n.Status.Phase)
@@ -287,7 +287,7 @@ func TestARemoteNodeThatWatchesBeforeItRegistersIsReady(t *testing.T) {
 	soon(t, func() bool { _, current := remote.Assigned("node-1"); return current }, "the agent connects")
 
 	// A new agent does both at once, and this may well be the order.
-	require.NoError(t, remote.Register(node("node-1")))
+	require.NoError(t, remote.Register(context.Background(), node("node-1")))
 
 	n, _ := store.NodesOf(cp.store).Get("", "node-1")
 	assert.Equal(t, litev1.NodeReady, n.Status.Phase)
@@ -301,7 +301,7 @@ func TestAnAgentInTheSameProcessIsReadyByRegistering(t *testing.T) {
 	_, err := nodes.Create(n)
 	require.NoError(t, err)
 
-	require.NoError(t, cp.local.Register(node("node-1")))
+	require.NoError(t, cp.local.Register(context.Background(), node("node-1")))
 
 	n, _ = nodes.Get("", "node-1")
 	assert.Equal(t, litev1.NodeReady, n.Status.Phase, "it has no Watch call to be judged by")
@@ -366,14 +366,14 @@ func TestAWrongJoinTokenIsRefused(t *testing.T) {
 	wrongSecret, err := Dial(cp.address, fingerprint+".not-the-secret")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = wrongSecret.Close() })
-	assert.Equal(t, codes.Unauthenticated, status.Code(wrongSecret.Register(node("node-1"))))
+	assert.Equal(t, codes.Unauthenticated, status.Code(wrongSecret.Register(context.Background(), node("node-1"))))
 
 	other, err := auth.Load(t.TempDir(), nil)
 	require.NoError(t, err)
 	wrongServer, err := Dial(cp.address, other.Token(auth.Node))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = wrongServer.Close() })
-	assert.Error(t, wrongServer.Register(node("node-1")), "the agent must not talk to a control plane with another CA")
+	assert.Error(t, wrongServer.Register(context.Background(), node("node-1")), "the agent must not talk to a control plane with another CA")
 
 	_, err = Dial(cp.address, "no-dot-in-it")
 	assert.Error(t, err)
@@ -483,7 +483,7 @@ func TestCountsChangedThroughTheSDKReachTheGameServer(t *testing.T) {
 	t.Cleanup(func() { _ = remote.Close() })
 
 	change := func(id string) (*agonesv1.GameServer, error) {
-		return remote.UpdateCounts("default", "gs", id,
+		return remote.UpdateCounts(context.Background(), "default", "gs", id,
 			[]*sidecarv1.CounterUpdate{{Name: "rooms", CountDiff: 2}},
 			[]*sidecarv1.ListUpdate{{Name: "players", Add: []string{"bob"}, Remove: []string{"ada"}}})
 	}
@@ -508,7 +508,7 @@ func TestCountsChangedThroughTheSDKReachTheGameServer(t *testing.T) {
 	assert.Equal(t, int64(5), next.Status.Counters["rooms"].Count)
 
 	// A GameServer that is gone has nothing to answer with.
-	gone, err := remote.UpdateCounts("default", "nobody", "third", []*sidecarv1.CounterUpdate{{Name: "rooms", CountDiff: 1}}, nil)
+	gone, err := remote.UpdateCounts(context.Background(), "default", "nobody", "third", []*sidecarv1.CounterUpdate{{Name: "rooms", CountDiff: 1}}, nil)
 	require.NoError(t, err)
 	assert.Nil(t, gone)
 }

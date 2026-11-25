@@ -9,6 +9,7 @@
 package nodes
 
 import (
+	"context"
 	"errors"
 	"sync"
 
@@ -44,13 +45,13 @@ func NewLocal(s *store.Store, controller *gameservers.Controller) *Local {
 // Register records the node, or refreshes it when it is already known. The
 // phase is the caller's to decide: an agent in this process is Ready by
 // calling, one on another machine is judged by Server.
-func (l *Local) Register(node *litev1.Node) error {
+func (l *Local) Register(ctx context.Context, node *litev1.Node) error {
 	node = node.DeepCopy()
 	node.Status.LastHeartbeatTime = metav1.NewTime(l.nodes.Now())
 	existing, ok := l.nodes.Get("", node.Name)
 	if !ok {
 		_, err := l.nodes.Create(node)
-		return l.saved(err)
+		return l.saved(ctx, err)
 	}
 	// Keep what the operator set, such as a cordon; take the rest from the agent.
 	lastHeard, wasGone := existing.Status.LastHeartbeatTime, existing.Status.Phase == litev1.NodeDisconnected
@@ -64,9 +65,9 @@ func (l *Local) Register(node *litev1.Node) error {
 	}
 	_, err := l.nodes.Update(existing)
 	if errors.Is(err, store.ErrConflict) {
-		return l.Register(node)
+		return l.Register(ctx, node)
 	}
-	return l.saved(err)
+	return l.saved(ctx, err)
 }
 
 // Assigned returns the GameServers placed on the node. Read straight from
@@ -74,7 +75,9 @@ func (l *Local) Register(node *litev1.Node) error {
 // it, so it is given once the file has it.
 func (l *Local) Assigned(node string) ([]*agonesv1.GameServer, bool) {
 	placed := store.OnNode(l.servers, node)
-	return placed, l.servers.Sync() == nil
+	// Nobody is told of a change here; the agent only must not see one
+	// before the file has it. So this wait is not a caller's to end.
+	return placed, l.servers.Sync(context.Background()) == nil
 }
 
 // Changes signals after any GameServer changed. Signals that pile up while
@@ -98,25 +101,27 @@ func (l *Local) Changes() (<-chan struct{}, func()) {
 }
 
 // Report passes an Event to the GameServer controller.
-func (l *Local) Report(r gameservers.Report) error {
-	return l.saved(l.controller.Report(r))
+func (l *Local) Report(ctx context.Context, r gameservers.Report) error {
+	return l.saved(ctx, l.controller.Report(r))
 }
 
 // saved is how every call that changes something ends. The caller is an
 // agent, or a game server behind it, and will take the change for made: so
-// the answer waits until the file has it (store.Run).
-func (l *Local) saved(err error) error {
+// the answer waits until the file has it (store.Run), or until the caller
+// has stopped waiting. The change is made and will be saved either way; a
+// caller that did not hear of it tells it again.
+func (l *Local) saved(ctx context.Context, err error) error {
 	if err != nil {
 		return err
 	}
-	return l.servers.Sync()
+	return l.servers.Sync(ctx)
 }
 
 // UpdateCounts passes changes to Counters and Lists to the GameServer
 // controller. This is where they leave the wire format behind.
-func (l *Local) UpdateCounts(namespace, name, change string, counters []*sidecarv1.CounterUpdate, lists []*sidecarv1.ListUpdate) (*agonesv1.GameServer, error) {
+func (l *Local) UpdateCounts(ctx context.Context, namespace, name, change string, counters []*sidecarv1.CounterUpdate, lists []*sidecarv1.ListUpdate) (*agonesv1.GameServer, error) {
 	gs, err := l.controller.UpdateCounts(namespace, name, change, counterUpdates(counters), listUpdates(lists))
-	return gs, l.saved(err)
+	return gs, l.saved(ctx, err)
 }
 
 func counterUpdates(wire []*sidecarv1.CounterUpdate) []gameservers.CounterUpdate {
@@ -140,6 +145,6 @@ func listUpdates(wire []*sidecarv1.ListUpdate) []gameservers.ListUpdate {
 }
 
 // SetMetadata passes SDK labels and annotations to the GameServer controller.
-func (l *Local) SetMetadata(namespace, name string, labels, annotations map[string]string) error {
-	return l.saved(l.controller.SetMetadata(namespace, name, labels, annotations))
+func (l *Local) SetMetadata(ctx context.Context, namespace, name string, labels, annotations map[string]string) error {
+	return l.saved(ctx, l.controller.SetMetadata(namespace, name, labels, annotations))
 }

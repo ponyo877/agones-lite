@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	autoscalingv1 "agones.dev/agones/pkg/apis/autoscaling/v1"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -108,4 +110,67 @@ func TestNilMetricsRecordNothing(t *testing.T) {
 	var m *Metrics
 	m.GameServerEntered(server("a", "", agonesv1.GameServerStateReady, ""), agonesv1.GameServerStateReady)
 	m.Allocated("simple", "Allocated", "Packed", time.Millisecond)
+	m.Saved(1, time.Millisecond)
+}
+
+// Upstream's buckets begin at 10 ms, so of an allocation that took three
+// they say no more than that. The native histogram beside them says it to
+// within a tenth.
+func TestAnAllocationIsMeasuredToWithinATenthOfItself(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "state.db"), store.Kinds())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	m := New(s)
+	const took = 3 * time.Millisecond
+
+	m.Allocated("simple", "Allocated", "Packed", took)
+
+	histogram := allocations(t, m)
+	require.Len(t, histogram.GetPositiveSpan(), 1, "one observation, one bucket")
+	// A bucket's upper bound is 2^(index / 2^schema); the one before it is
+	// its lower bound.
+	index := float64(histogram.GetPositiveSpan()[0].GetOffset())
+	perDoubling := math.Pow(2, float64(histogram.GetSchema()))
+	above, below := math.Pow(2, index/perDoubling), math.Pow(2, (index-1)/perDoubling)
+	assert.LessOrEqual(t, above/below, finer)
+	assert.Greater(t, took.Seconds(), below)
+	assert.LessOrEqual(t, took.Seconds(), above)
+	assert.Equal(t, uint64(1), histogram.GetBucket()[1].GetCumulativeCount(), "upstream's buckets have it too, as under 10 ms")
+}
+
+// allocations returns the histogram of the one series there is.
+func allocations(t *testing.T, m *Metrics) *dto.Histogram {
+	t.Helper()
+	families, err := m.registry.Gather()
+	require.NoError(t, err)
+	for _, family := range families {
+		if family.GetName() == "agones_gameserver_allocations_duration_seconds" {
+			return family.GetMetric()[0].GetHistogram()
+		}
+	}
+	require.Fail(t, "no allocation was measured")
+	return nil
+}
+
+func TestTheStoresLagIsReported(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "state.db"), store.Kinds())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+
+	assert.Contains(t, scrape(t, New(s)), "agones_lite_store_lag_seconds 0\n", "the file has everything")
+}
+
+func TestASaveIsMeasuredByHowLongItTookAndHowMuchItTook(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "state.db"), store.Kinds())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	m := New(s)
+	s.Saved = m.Saved
+
+	_, err = store.NodesOf(s).Create(&litev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-1"}})
+	require.NoError(t, err)
+
+	out := scrape(t, m)
+	assert.Contains(t, out, "agones_lite_store_save_duration_seconds_count 1\n")
+	assert.Contains(t, out, "agones_lite_store_save_changes_sum 1\n", "the one change, in a save of its own")
 }

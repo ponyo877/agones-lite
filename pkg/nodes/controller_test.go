@@ -2,7 +2,9 @@ package nodes
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,6 +108,30 @@ func (f controllerFixture) add(servers ...*agonesv1.GameServer) {
 	}
 }
 
+// others adds n more nodes, with agents that are connected: a node that is
+// gone is then not most of the nodes there are (see MostAreGone).
+func (f controllerFixture) others(n int) {
+	f.t.Helper()
+	for i := range n {
+		_, err := f.nodes.Create(node(fmt.Sprint("other-", i)))
+		require.NoError(f.t, err)
+	}
+}
+
+// othersAreBack is what follows a start within seconds: the agents that are
+// there dial again.
+func (f controllerFixture) othersAreBack() {
+	f.t.Helper()
+	for _, n := range f.nodes.List("") {
+		if strings.HasPrefix(n.Name, "other-") {
+			require.NoError(f.t, f.nodes.Change("", n.Name, func(n *litev1.Node) bool {
+				n.Status.Phase = litev1.NodeReady
+				return true
+			}))
+		}
+	}
+}
+
 func (f controllerFixture) sync() {
 	f.t.Helper()
 	require.NoError(f.t, f.Controller.sync(context.Background(), store.Key{Kind: store.Nodes, Name: "node-1"}))
@@ -120,6 +146,7 @@ func (f controllerFixture) state(name string) agonesv1.GameServerState {
 
 func TestALongDisconnectMakesIdleServersUnhealthy(t *testing.T) {
 	f := newControllerFixture(t)
+	f.others(1)
 	_, err := f.nodes.Create(disconnectedFor(10 * time.Minute))
 	require.NoError(t, err)
 	f.add(inState("ready", agonesv1.GameServerStateReady), inState("allocated", agonesv1.GameServerStateAllocated))
@@ -135,12 +162,14 @@ func TestALongDisconnectMakesIdleServersUnhealthy(t *testing.T) {
 // be there and are only still dialling.
 func TestNothingIsGivenUpRightAfterTheControlPlaneStarted(t *testing.T) {
 	f := newControllerFixture(t)
+	f.others(1)
 	_, err := f.nodes.Create(disconnectedFor(time.Hour))
 	require.NoError(t, err)
 	f.add(inState("ready", agonesv1.GameServerStateReady), inState("allocated", agonesv1.GameServerStateAllocated))
 	_, err = f.servers.Create(placed("orphan", "deleted-node"))
 	require.NoError(t, err)
 	require.NoError(t, f.StartOver())
+	f.othersAreBack()
 
 	f.sync()
 	assert.Equal(t, agonesv1.GameServerStateReady, f.state("ready"), "its agent has had no time to dial again")
@@ -163,10 +192,12 @@ func TestNothingIsGivenUpRightAfterTheControlPlaneStarted(t *testing.T) {
 func TestTheWaitAfterAStartIsNeverLongerThanTheGrace(t *testing.T) {
 	f := newControllerFixture(t)
 	f.graces = Graces{Unallocated: time.Second, Allocated: time.Minute}
+	f.others(1)
 	_, err := f.nodes.Create(disconnectedFor(time.Hour))
 	require.NoError(t, err)
 	f.add(inState("ready", agonesv1.GameServerStateReady))
 	require.NoError(t, f.StartOver())
+	f.othersAreBack()
 
 	f.now = func() time.Time { return noon.Add(time.Second) }
 	f.sync()
@@ -176,6 +207,7 @@ func TestTheWaitAfterAStartIsNeverLongerThanTheGrace(t *testing.T) {
 
 func TestStartingOverKeepsCountingForANodeThatWasAlreadyGone(t *testing.T) {
 	f := newControllerFixture(t)
+	f.others(2)
 	_, err := f.nodes.Create(disconnectedFor(4 * time.Minute))
 	require.NoError(t, err)
 	_, err = f.nodes.Create(node("node-2"))
@@ -186,6 +218,7 @@ func TestStartingOverKeepsCountingForANodeThatWasAlreadyGone(t *testing.T) {
 	for minute := 1; minute <= 3; minute++ {
 		f.now = func() time.Time { return noon.Add(time.Duration(minute) * time.Minute) }
 		require.NoError(t, f.StartOver())
+		f.othersAreBack()
 	}
 	f.now = func() time.Time { return noon.Add(3*time.Minute + warmUp) }
 	f.sync()
@@ -194,6 +227,59 @@ func TestStartingOverKeepsCountingForANodeThatWasAlreadyGone(t *testing.T) {
 	n, _ := f.nodes.Get("", "node-2")
 	assert.Equal(t, litev1.NodeDisconnected, n.Status.Phase)
 	assert.Equal(t, noon.Add(time.Minute), n.Status.LastHeartbeatTime.UTC(), "a node that was Ready is waited for from the first start on")
+}
+
+// Most nodes gone at once is what a broken network at the control plane
+// looks like, and then the machines are fine. Their idle GameServers are
+// left alone until enough nodes are back to say which it was.
+func TestWhileMostNodesAreGoneNothingIsGivenUp(t *testing.T) {
+	f := newControllerFixture(t)
+	f.others(1)
+	_, err := f.nodes.Create(disconnectedFor(10 * time.Minute))
+	require.NoError(t, err)
+	gone := disconnectedFor(10 * time.Minute)
+	gone.Name = "node-2"
+	_, err = f.nodes.Create(gone)
+	require.NoError(t, err)
+	f.add(inState("ready", agonesv1.GameServerStateReady))
+
+	f.sync()
+	assert.Equal(t, agonesv1.GameServerStateReady, f.state("ready"), "two of three: it is likelier us than both of them")
+
+	require.NoError(t, f.nodes.Change("", "node-2", func(n *litev1.Node) bool {
+		n.Status.Phase = litev1.NodeReady
+		return true
+	}))
+	f.sync()
+	assert.Equal(t, agonesv1.GameServerStateUnhealthy, f.state("ready"), "one of three, and gone for ten minutes: that is the node")
+}
+
+func TestMostAreGone(t *testing.T) {
+	tests := map[string]struct {
+		gone, there int
+		want        bool
+	}{
+		"no nodes at all":         {0, 0, false},
+		"all there":               {0, 3, false},
+		"one of two":              {1, 1, false},
+		"half of ten":             {5, 5, false},
+		"six of ten":              {6, 4, true},
+		"two of three":            {2, 1, true},
+		"the only node there is":  {1, 0, true},
+		"all of them, at a start": {4, 0, true},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			var nodes []*litev1.Node
+			for range test.gone {
+				nodes = append(nodes, disconnectedFor(time.Minute))
+			}
+			for range test.there {
+				nodes = append(nodes, node("there"))
+			}
+			assert.Equal(t, test.want, MostAreGone(nodes))
+		})
+	}
 }
 
 func TestDeletingANodeGivesUpEverythingOnIt(t *testing.T) {

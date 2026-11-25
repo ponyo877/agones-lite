@@ -77,3 +77,10 @@ func CountOnNodes(servers store.Typed[*agonesv1.GameServer]) map[string]NodeCoun
 func OnNodeIn(servers store.Typed[*agonesv1.GameServer], node string, state agonesv1.GameServerState) []*agonesv1.GameServer {
 	return store.Group(servers, bySpot, spot{node, state})
 }
+
+// OneOnNodeIn returns one of the GameServers OnNodeIn returns, by its place
+// among them: for choosing one by chance without a look at the others. See
+// store.Member.
+func OneOnNodeIn(servers store.Typed[*agonesv1.GameServer], node string, state agonesv1.GameServerState, place int) (*agonesv1.GameServer, bool) {
+	return store.Member(servers, bySpot, spot{node, state}, place)
+}

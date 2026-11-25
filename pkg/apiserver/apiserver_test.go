@@ -1,6 +1,7 @@
 package apiserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,15 +10,20 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 
 	"github.com/ponyo877/agones-lite/pkg/agent"
 	"github.com/ponyo877/agones-lite/pkg/agones"
+	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
 	"github.com/ponyo877/agones-lite/pkg/store"
 	"github.com/ponyo877/agones-lite/test/testenv"
 )
@@ -269,4 +275,41 @@ func TestALogThatIsNotThereToReadIsAConflictAndNotAServerError(t *testing.T) {
 
 	assert.Equal(t, http.StatusConflict, statusOf(notConnected))
 	assert.Equal(t, http.StatusInternalServerError, statusOf(errors.New("docker: the daemon went away")))
+}
+
+// A control plane that cannot save is up, and of no use. The check says so,
+// and says it at once: it is the one route that does not wait for the file.
+func TestHealthzSaysWhenNothingCanBeSaved(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s, err := store.Open(filepath.Join(t.TempDir(), "state.db"), store.Kinds())
+		require.NoError(t, err)
+		defer func() { _ = s.Close() }()
+		stalled := make(chan struct{})
+		s.Disk = func() error { <-stalled; return nil }
+		ctx, stop := context.WithCancel(context.Background())
+		var saving sync.WaitGroup
+		saving.Go(func() { s.Run(ctx) })
+		defer saving.Wait()
+		defer stop()
+		synctest.Wait() // Run has taken over the saving
+		api := New(s, nil, nil, nil).Handler()
+		require.Equal(t, http.StatusOK, call(t, api, http.MethodGet, "/healthz", "").Code)
+
+		_, err = store.NodesOf(s).Create(&litev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "a"}})
+		require.NoError(t, err)
+		time.Sleep(unwell)
+		assert.Equal(t, http.StatusOK, call(t, api, http.MethodGet, "/healthz", "").Code, "a disk may take its time")
+		time.Sleep(time.Second)
+
+		asked := time.Now()
+		answer := call(t, api, http.MethodGet, "/healthz", "")
+
+		assert.Equal(t, http.StatusServiceUnavailable, answer.Code)
+		assert.Contains(t, answer.Body.String(), "nothing has been saved for 11s")
+		assert.Zero(t, time.Since(asked))
+
+		close(stalled)
+		require.NoError(t, s.Sync(context.Background()))
+		assert.Equal(t, http.StatusOK, call(t, api, http.MethodGet, "/healthz", "").Code)
+	})
 }

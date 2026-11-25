@@ -204,20 +204,20 @@ func (r *Remote) Changes() (<-chan struct{}, func()) {
 }
 
 // Register announces the node.
-func (r *Remote) Register(node *litev1.Node) error {
+func (r *Remote) Register(ctx context.Context, node *litev1.Node) error {
 	data, err := json.Marshal(node)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
 	_, err = r.client.Register(ctx, &nodev1.RegisterRequest{Node: data})
 	return err
 }
 
 // Report passes on something that happened to a GameServer.
-func (r *Remote) Report(report gameservers.Report) error {
-	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+func (r *Remote) Report(ctx context.Context, report gameservers.Report) error {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
 	_, err := r.client.Report(ctx, &nodev1.ReportRequest{
 		Namespace:      report.Namespace,
@@ -231,8 +231,8 @@ func (r *Remote) Report(report gameservers.Report) error {
 }
 
 // UpdateCounts changes Counters and Lists as a game server asked through the SDK.
-func (r *Remote) UpdateCounts(namespace, name, change string, counters []*sidecarv1.CounterUpdate, lists []*sidecarv1.ListUpdate) (*agonesv1.GameServer, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+func (r *Remote) UpdateCounts(ctx context.Context, namespace, name, change string, counters []*sidecarv1.CounterUpdate, lists []*sidecarv1.ListUpdate) (*agonesv1.GameServer, error) {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
 	resp, err := r.client.UpdateCounts(ctx, &nodev1.UpdateCountsRequest{
 		Namespace: namespace, Name: name, ChangeId: change, Counters: counters, Lists: lists,
@@ -245,8 +245,8 @@ func (r *Remote) UpdateCounts(namespace, name, change string, counters []*sideca
 }
 
 // SetMetadata adds labels and annotations set through the SDK.
-func (r *Remote) SetMetadata(namespace, name string, labels, annotations map[string]string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+func (r *Remote) SetMetadata(ctx context.Context, namespace, name string, labels, annotations map[string]string) error {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
 	_, err := r.client.SetMetadata(ctx, &nodev1.SetMetadataRequest{
 		Namespace: namespace, Name: name, Labels: labels, Annotations: annotations,

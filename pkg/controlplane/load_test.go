@@ -3,6 +3,8 @@ package controlplane
 import (
 	"context"
 	"fmt"
+	"math"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -21,6 +23,7 @@ import (
 	"github.com/ponyo877/agones-lite/pkg/agones"
 	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
 	"github.com/ponyo877/agones-lite/pkg/events"
+	"github.com/ponyo877/agones-lite/pkg/gameservers"
 	"github.com/ponyo877/agones-lite/pkg/metrics"
 	"github.com/ponyo877/agones-lite/pkg/nodes"
 	"github.com/ponyo877/agones-lite/pkg/store"
@@ -31,14 +34,27 @@ const (
 	loadNodes       = 10
 	loadGameServers = 1000
 	loadAllocations = 50 // per second
+	// loadSession is how long a match lasts in TestLoad. Half the game
+	// servers are in a match at any time, and fifty a second end and are
+	// replaced while fifty more are asked for.
+	loadSession = 10 * time.Second
 )
 
 // TestLoad checks the design targets with simulated nodes: the control
 // plane, its controllers and SQLite are real, the containers are not.
 //
-// It takes about half a minute, so it only runs when asked:
+// It takes a little over a minute, so it only runs when asked:
 //
 //	AGONES_LITE_LOAD=1 go test ./pkg/controlplane/ -run TestLoad -v
+//
+// How it measures follows what is known about measuring a tail. Requests
+// come whether or not the ones before them are answered, at moments drawn
+// beforehand as from independent callers, and a request's time counts from
+// the moment it was due: a generator that waits for answers, or that counts
+// from when it got round to sending, hides the very waiting it is after
+// (Schroeder, Wierman and Harchol-Balter, "Open Versus Closed: A
+// Cautionary Tale", NSDI 2006). And the 99th percentile of a sample is not
+// that of what was sampled: see atMost.
 func TestLoad(t *testing.T) {
 	if os.Getenv("AGONES_LITE_LOAD") == "" {
 		t.Skip("set AGONES_LITE_LOAD=1 to run the load test")
@@ -51,16 +67,32 @@ func TestLoad(t *testing.T) {
 	w.waitFor(agonesv1.GameServerStateReady, loadGameServers)
 	t.Logf("%d game servers on %d nodes were Ready after %s", loadGameServers, loadNodes, time.Since(started).Round(time.Millisecond))
 
-	const seconds = 10
+	const seconds = 60 // 3,000 requests: fewer say little about one in a hundred
 	took := w.allocateAtRate(loadAllocations, seconds)
 	slices.Sort(took)
 	median, p99, slowest := took[len(took)/2], took[len(took)*99/100], took[len(took)-1]
-	t.Logf("%d allocations at %d per second: median %s, 99th percentile %s, slowest %s",
-		len(took), loadAllocations, median.Round(time.Microsecond), p99.Round(time.Microsecond), slowest.Round(time.Microsecond))
+	t.Logf("%d allocations at %d per second: median %s, 99th percentile %s (at most %s, with 95%% confidence), slowest %s",
+		len(took), loadAllocations, median.Round(time.Microsecond), p99.Round(time.Microsecond),
+		atMost(took, 0.99).Round(time.Microsecond), slowest.Round(time.Microsecond))
 
-	require.Len(t, took, loadAllocations*seconds, "every allocation succeeded")
-	require.Less(t, p99, 100*time.Millisecond, "an allocation should not take a noticeable part of a second")
-	require.Equal(t, loadAllocations*seconds, w.count(agonesv1.GameServerStateAllocated))
+	require.Len(t, took, loadAllocations*seconds, "every allocation got a game server, and one of its own")
+	require.Less(t, atMost(took, 0.99), 100*time.Millisecond, "an allocation should not take a noticeable part of a second")
+}
+
+// atMost returns a time that the q-quantile of all allocations, and not
+// just of the ones sampled, lies under with 95% confidence. sorted is the
+// sample, smallest first.
+//
+// How many of n independent samples fall under the true quantile is
+// binomial, so the quantile lies between two samples whose ranks are a
+// little to either side of n*q: the interval Lancet uses to decide how
+// long to measure (Kogias, Mallon and Bugnion, USENIX ATC 2019). This is
+// its upper end. With 500 samples the upper end for the 99th percentile is
+// the slowest sample of all, and with 3,000 it is the 19th slowest.
+func atMost(sorted []time.Duration, q float64) time.Duration {
+	n := float64(len(sorted))
+	rank := int(math.Ceil(n*q+1.96*math.Sqrt(n*q*(1-q)))) + 1
+	return sorted[min(rank, len(sorted))-1]
 }
 
 // BenchmarkScaleUp measures a new Fleet from the moment it is applied to
@@ -90,6 +122,12 @@ func BenchmarkScaleUp(b *testing.B) {
 // asks again. The Fleet is topped up in between, outside the measurement,
 // so that the requests always choose among about as many Ready game
 // servers as the name says.
+//
+// The latencies are those of a closed loop: a slow answer keeps its
+// matchmaker from asking, and is counted once. They say how long a request
+// takes when the control plane is kept as busy as it can be, and not what
+// requests arriving at that rate on their own would see, which is more.
+// TestLoad measures that.
 //
 //	go test ./pkg/controlplane/ -run '^$' -bench Allocate -benchtime 2000x
 func BenchmarkAllocate(b *testing.B) {
@@ -192,30 +230,63 @@ func (w world) waitFor(state agonesv1.GameServerState, n int) {
 		"%d game servers become %s", n, state)
 }
 
-// allocateAtRate asks for perSecond game servers every second, evenly
-// spaced, and returns how long each successful request took.
+// allocateAtRate asks for perSecond game servers a second on average, at
+// the moments arrivals has drawn, and returns how long each request took
+// that was answered with a game server nobody else had been given, from the
+// moment it was due. A game server that is allocated plays its match and
+// shuts down, as the game does through the SDK.
 func (w world) allocateAtRate(perSecond, seconds int) []time.Duration {
-	results := make(chan time.Duration, perSecond*seconds)
-	tick := time.NewTicker(time.Second / time.Duration(perSecond))
-	defer tick.Stop()
-	for range perSecond * seconds {
-		<-tick.C
+	plan := arrivals(perSecond, seconds)
+	results := make(chan time.Duration, len(plan))
+	playing, stop := context.WithCancel(context.Background())
+	defer stop()
+	var given sync.Map
+	began := time.Now()
+	for _, after := range plan {
+		due := began.Add(after)
+		time.Sleep(time.Until(due))
 		go func() {
-			started := time.Now()
-			if _, err := w.allocate(); err != nil {
+			answer, err := w.allocate()
+			if _, twice := given.LoadOrStore(answer.GetGameServerName(), true); err != nil || twice {
 				results <- -1
 				return
 			}
-			results <- time.Since(started)
+			results <- time.Since(due)
+			w.play(playing, answer.GetGameServerName())
 		}()
 	}
 	var took []time.Duration
-	for range perSecond * seconds {
+	for range plan {
 		if d := <-results; d >= 0 {
 			took = append(took, d)
 		}
 	}
 	return took
+}
+
+// play is the match on a game server: it lasts loadSession, and then the
+// game server says it is done.
+func (w world) play(ctx context.Context, name string) {
+	select {
+	case <-ctx.Done():
+	case <-time.After(loadSession):
+		_ = w.cp.Agents.Report(ctx, gameservers.Report{Namespace: "default", Name: name, Event: gameservers.SDKShutdown})
+	}
+}
+
+// arrivals draws the moments to ask at: perSecond*seconds of them, with
+// pauses as between the requests of many callers who know nothing of each
+// other (a Poisson process), and the same ones on every run. Evenly spaced
+// requests would be the kindest there are to whatever queues inside.
+func arrivals(perSecond, seconds int) []time.Duration {
+	random := rand.New(rand.NewPCG(1, 2))
+	plan := make([]time.Duration, perSecond*seconds)
+	at := 0.0
+	for i := range plan {
+		at += random.ExpFloat64() / float64(perSecond)
+		plan[i] = time.Duration(at * float64(time.Second))
+	}
+	return plan
 }
 
 // allocateWith has that many clients make n allocations between them, one

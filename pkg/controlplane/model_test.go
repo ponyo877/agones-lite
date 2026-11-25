@@ -331,7 +331,7 @@ func (w *modelWorld) join(t *rapid.T) {
 }
 
 func (w *modelWorld) connect(p *puppet) {
-	require.NoError(w.t, w.cp.Agents.Register(p.node))
+	require.NoError(w.t, w.cp.Agents.Register(context.Background(), p.node))
 	p.connected = true
 }
 
@@ -420,7 +420,7 @@ func (w *modelWorld) say(p *puppet, gs *agonesv1.GameServer, event gameservers.E
 	case gameservers.ContainersRemoved, gameservers.ContainersMissing:
 		delete(p.containers, gs.UID)
 	}
-	err := w.cp.Agents.Report(gameservers.Report{Namespace: gs.Namespace, Name: gs.Name, Event: event})
+	err := w.cp.Agents.Report(context.Background(), gameservers.Report{Namespace: gs.Namespace, Name: gs.Name, Event: event})
 	require.NoError(w.t, err, "reporting %s for %s", event, gs.Name)
 }
 

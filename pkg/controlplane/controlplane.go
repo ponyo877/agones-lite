@@ -46,6 +46,7 @@ func New(s *store.Store, recorder *events.Recorder, measure *metrics.Metrics, gr
 	servers.Entered = measure.GameServerEntered
 	allocation := gameserverallocations.NewService(s, recorder)
 	allocation.Observe = measure.Allocated
+	s.Saved = measure.Saved
 	nodeController := nodes.NewController(s, servers, recorder, graces)
 	if err := nodeController.StartOver(); err != nil {
 		return nil, err

@@ -343,3 +343,64 @@ func neverAsked(t *rapid.T) func(int) int {
 		return 0
 	}
 }
+
+// placed is the crowd as the store hands it out one by one: the GameServers
+// of a node in a state, each at a place among them.
+func placed(servers []*agonesv1.GameServer) func(string, agonesv1.GameServerState, int) (*agonesv1.GameServer, bool) {
+	return func(node string, state agonesv1.GameServerState, place int) (*agonesv1.GameServer, bool) {
+		there := filter(servers, func(gs *agonesv1.GameServer) bool {
+			return gs.Status.NodeName == node && gs.Status.State == state
+		})
+		if place >= len(there) {
+			return nil, false
+		}
+		return there[place], true
+	}
+}
+
+// What FindSpread draws, Find could have chosen: a match of the first
+// selector, on a node that players can be sent to.
+func TestFindSpreadFindsWhatFindCouldHaveFound(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		gsa := aRequest(t)
+		servers := aCrowd(t)
+		counts := gameservers.CountByNode(servers)
+		pick := func(n int) int { return rapid.IntRange(0, n-1).Draw(t, "pick") }
+
+		gs, found := FindSpread(gsa, counts, placed(servers), pick)
+
+		if !found {
+			return // it may give up: Find is asked then
+		}
+		require.True(t, random(gsa), "it is only for requests that leave the choice to chance")
+		require.True(t, candidate(gsa, gs))
+		require.True(t, gsa.Spec.Selectors[0].Matches(gs), "it matches the first selector")
+		require.Contains(t, counts, gs.Status.NodeName)
+	})
+}
+
+// Every GameServer in the state a request asks for has one place among them
+// all, and a draw is a place: so each is as likely to be drawn as every
+// other, and what is left after the ones that do not match are drawn again
+// is an even choice among the matches, which is Find's.
+func TestEveryGameServerHasOnePlaceAmongThoseInItsState(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		servers := aCrowd(t)
+		counts := gameservers.CountByNode(servers)
+		state := rapid.SampledFrom([]agonesv1.GameServerState{ready, allocated}).Draw(t, "state")
+		nodes := slices.Sorted(maps.Keys(counts))
+		want := filter(servers, func(gs *agonesv1.GameServer) bool {
+			return gs.Status.NodeName != "" && gs.Status.State == state
+		})
+
+		var drawn []*agonesv1.GameServer
+		for place := range want {
+			node, onNode := nodeOf(place, nodes, counts, state)
+			gs, there := placed(servers)(node, state, onNode)
+			require.True(t, there, "place %d of %d has nobody", place, len(want))
+			drawn = append(drawn, gs)
+		}
+
+		require.ElementsMatch(t, want, drawn)
+	})
+}

@@ -71,13 +71,22 @@ type Store struct {
 	// a hundred answers waiting for the file would all wake at once after
 	// every save and stand in the way of the next write.
 	waiting sync.Mutex
-	settled *sync.Cond // told whenever saved moves or behind changes
+	moved   chan struct{} // closed, and made anew, whenever saved moves or behind changes
 
 	// Clock tells the time, and Suffix makes the random end of a generated
 	// name. They are the machine's, unless a test puts its own in their
 	// place before the store is used, to have the same run twice.
 	Clock  func() time.Time
 	Suffix func() string
+	// Disk is asked before every save, and an error from it is the save
+	// failing. Nothing is asked, unless a test puts a disk here that stalls
+	// or fails, to see what the store and those who wait for it do then.
+	Disk func() error
+	// Saved, when set before the store is used, is told of every save: how
+	// many changes went to the file in it, and how long the file took. An
+	// answer that waits for the file waits about this long, so this is
+	// where to look when answers are slow.
+	Saved func(changes int, took time.Duration)
 }
 
 // Open loads the SQLite file at path, creating it when missing.
@@ -94,10 +103,10 @@ func Open(path string, kinds map[Kind]func() Object) (*Store, error) {
 		factories: kinds,
 		watchers:  map[*watcher]struct{}{},
 		wake:      make(chan struct{}, 1),
+		moved:     make(chan struct{}),
 		Clock:     time.Now,
 		Suffix:    func() string { return rand.String(randomLength) },
 	}
-	s.settled = sync.NewCond(&s.waiting)
 	if err := s.load(); err != nil {
 		_ = f.db.Close()
 		return nil, err
@@ -241,7 +250,7 @@ func (s *Store) Delete(key Key) error {
 	if !ok {
 		return fmt.Errorf("%s: %w", key, ErrNotFound)
 	}
-	return s.record(change{event: Event{Type: Deleted, Key: key, Object: obj}, revision: s.revision + 1, was: obj})
+	return s.record(change{event: Event{Type: Deleted, Key: key, Object: obj}, revision: s.revision + 1, was: obj, made: s.Now()})
 }
 
 // commit makes obj what is stored under key, as the next revision, and
@@ -259,7 +268,7 @@ func (s *Store) commit(t EventType, key Key, obj Object) (Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := change{event: Event{Type: t, Key: key, Object: stored}, revision: next, was: s.objects[key.Kind][key], data: data}
+	c := change{event: Event{Type: t, Key: key, Object: stored}, revision: next, was: s.objects[key.Kind][key], data: data, made: s.Now()}
 	if err := s.record(c); err != nil {
 		return nil, err
 	}

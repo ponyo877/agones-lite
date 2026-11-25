@@ -79,7 +79,9 @@ job:
 ## Features
 
 - **`GameServer`, `Fleet` and `GameServerSet`**, with rolling updates
-- **Allocation** over gRPC and REST, on the same API as the Agones allocator
+- **Allocation** over gRPC and REST, on the same API as the Agones allocator.
+  A matchmaker that names its request with an annotation can ask again
+  after a timeout and is given the same game server, not a second one
 - **`FleetAutoscaler`** with the Buffer, Counter, List, Webhook, Schedule and
   Chain policies
 - **The SDK**: every stable and beta call, Counters and Lists included, over
@@ -91,7 +93,8 @@ job:
 - **Security**: TLS on every API, a token for each role, and a join token
   that pins the control plane's certificate authority
 - **Observability**: Prometheus metrics, an event history, and game server
-  logs through the CLI
+  logs through the CLI. `/healthz` says when nothing can be saved, and
+  `agones-lite buffer` works out the `bufferSize` for a rate of allocations
 - **Private registries**, with the credentials that `docker login` stored
 
 ## How it works
@@ -247,6 +250,10 @@ servers and 60 MB with 10,000. An allocation is answered only after it is
 on disk: what a matchmaker was told outlasts a crash. The design document
 says where the time goes.
 
+When the disk stalls, requests are refused at once instead of piling up, so
+that matchmakers which time out and ask again do not use up the game
+servers they are asking for.
+
 ```sh
 # 1,000 game servers on 10 simulated machines, 50 allocations a second
 AGONES_LITE_LOAD=1 go test ./pkg/controlplane/ -run TestLoad -v
@@ -279,6 +286,11 @@ cd formal && lake build
 It has also run on real machines: five Linux hosts in two regions, arm64 and
 amd64, with a hundred real game servers, and with agents and the control
 plane killed and cut off on purpose.
+
+Where a paper says how something is done well, the code says which: what
+to do when the disk fails, when to refuse a request, how to measure a tail,
+when not to trust a failure detector. The design document also lists what
+was looked at and left out, and why.
 
 Nothing reaches `main` without passing
 [CI](.github/workflows/ci.yml): the linters, the tests under the race

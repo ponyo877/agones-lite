@@ -7,6 +7,14 @@
 // counted as they happen: how often game servers enter each state, and how
 // long allocations take.
 //
+// Three metrics are agones-lite's own, and named so. They are about the
+// store's file, which every answer waits for: for how long it has been
+// behind (agones_lite_store_lag_seconds), how long a save takes
+// (agones_lite_store_save_duration_seconds) and how many changes one save
+// takes along (agones_lite_store_save_changes). The first says whether the
+// control plane can keep its promises, and the other two why answers take
+// as long as they do.
+//
 // Upstream counterpart: pkg/metrics and pkg/gameserverallocations/metrics.go.
 // Left out are the metrics about the Kubernetes client and about player
 // tracking, which have nothing to report here.
@@ -29,7 +37,16 @@ type Metrics struct {
 	registry    *prometheus.Registry
 	transitions *prometheus.CounterVec
 	allocations *prometheus.HistogramVec
+	saves       prometheus.Histogram
+	saved       prometheus.Histogram
 }
+
+// finer is how much wider each bucket of the native histogram is than the
+// one before it. A quantile read from such buckets is off by a twentieth of
+// itself at most, wherever the values fall and without anyone having
+// guessed their range beforehand: the guarantee of DDSketch (Masson, Rim
+// and Lee, VLDB 2019), which these buckets share.
+const finer = 1.1
 
 // New returns Metrics that read their gauges from s.
 func New(s *store.Store) *Metrics {
@@ -40,12 +57,38 @@ func New(s *store.Store) *Metrics {
 			Help: "The total of gameservers per fleet and status",
 		}, []string{"type", "fleet_name", "namespace"}),
 		allocations: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "agones_gameserver_allocations_duration_seconds",
-			Help:    "The distribution of gameserver allocation requests latencies.",
-			Buckets: []float64{0, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 3},
+			Name: "agones_gameserver_allocations_duration_seconds",
+			Help: "The distribution of gameserver allocation requests latencies.",
+			// Upstream's buckets, for upstream's dashboards. They begin at
+			// 10 ms, and an allocation here takes one to five: all of them
+			// fall into the first, and a quantile read from these says
+			// "under 10 ms" whatever happened. So the same observations go
+			// into a native histogram as well, which a Prometheus that asks
+			// for it gets beside the classic one.
+			Buckets:                         []float64{0, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 3},
+			NativeHistogramBucketFactor:     finer,
+			NativeHistogramMaxBucketNumber:  160,
+			NativeHistogramMinResetDuration: time.Hour,
 		}, []string{"fleet_name", "cluster_name", "is_multicluster", "status", "scheduling_strategy"}),
 	}
-	m.registry.MustRegister(m.transitions, m.allocations, newCollector(s))
+	m.saves = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:                            "agones_lite_store_save_duration_seconds",
+		Help:                            "How long one save to the file takes: one transaction, one sync of the disk",
+		Buckets:                         []float64{0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5},
+		NativeHistogramBucketFactor:     finer,
+		NativeHistogramMaxBucketNumber:  160,
+		NativeHistogramMinResetDuration: time.Hour,
+	})
+	m.saved = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "agones_lite_store_save_changes",
+		Help:    "How many changes one save takes to the file",
+		Buckets: []float64{1, 2, 5, 10, 25, 50, 100, 250, 500, 1000},
+	})
+	lag := prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "agones_lite_store_lag_seconds",
+		Help: "For how long the file has been behind memory: the age of the oldest change that is not saved yet",
+	}, func() float64 { return s.Lag().Seconds() })
+	m.registry.MustRegister(m.transitions, m.allocations, m.saves, m.saved, lag, newCollector(s))
 	return m
 }
 
@@ -69,6 +112,15 @@ func (m *Metrics) Allocated(fleet, status, strategy string, took time.Duration) 
 		return
 	}
 	m.allocations.WithLabelValues(fleet, "", "false", status, strategy).Observe(took.Seconds())
+}
+
+// Saved records one save of the store: see store.Store.Saved.
+func (m *Metrics) Saved(changes int, took time.Duration) {
+	if m == nil {
+		return
+	}
+	m.saves.Observe(took.Seconds())
+	m.saved.Observe(float64(changes))
 }
 
 // fleetOf returns the Fleet a GameServer belongs to, or upstream's "none".
