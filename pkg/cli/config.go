@@ -16,7 +16,7 @@ import (
 // the command line did not set. The file is named by the --config flag and
 // uses the flag names as its keys:
 //
-//	data-dir: /var/lib/agones-lite
+//	data-dir: /var/lib/scrim
 //	node-listen: ":9445"
 //	tls-san: [cp.example.com, 192.0.2.1]
 //

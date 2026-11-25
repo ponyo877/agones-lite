@@ -9,17 +9,17 @@ import (
 	"context"
 	"sync"
 
-	"github.com/ponyo877/agones-lite/pkg/apiserver"
-	"github.com/ponyo877/agones-lite/pkg/control"
-	"github.com/ponyo877/agones-lite/pkg/events"
-	"github.com/ponyo877/agones-lite/pkg/fleetautoscalers"
-	"github.com/ponyo877/agones-lite/pkg/fleets"
-	"github.com/ponyo877/agones-lite/pkg/gameserverallocations"
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
-	"github.com/ponyo877/agones-lite/pkg/gameserversets"
-	"github.com/ponyo877/agones-lite/pkg/metrics"
-	"github.com/ponyo877/agones-lite/pkg/nodes"
-	"github.com/ponyo877/agones-lite/pkg/store"
+	"github.com/ponyo877/scrim/pkg/apiserver"
+	"github.com/ponyo877/scrim/pkg/control"
+	"github.com/ponyo877/scrim/pkg/events"
+	"github.com/ponyo877/scrim/pkg/fleetautoscalers"
+	"github.com/ponyo877/scrim/pkg/fleets"
+	"github.com/ponyo877/scrim/pkg/gameserverallocations"
+	"github.com/ponyo877/scrim/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/gameserversets"
+	"github.com/ponyo877/scrim/pkg/metrics"
+	"github.com/ponyo877/scrim/pkg/nodes"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
 // ControlPlane is every part of the control plane, wired to one store.

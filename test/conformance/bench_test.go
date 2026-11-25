@@ -18,15 +18,15 @@ import (
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ponyo877/agones-lite/pkg/agent"
-	"github.com/ponyo877/agones-lite/pkg/agones"
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/controlplane"
-	"github.com/ponyo877/agones-lite/pkg/docker"
-	"github.com/ponyo877/agones-lite/pkg/nodes"
-	"github.com/ponyo877/agones-lite/pkg/podspec"
-	"github.com/ponyo877/agones-lite/pkg/sdkserver"
-	"github.com/ponyo877/agones-lite/pkg/store"
+	"github.com/ponyo877/scrim/pkg/agent"
+	"github.com/ponyo877/scrim/pkg/agones"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/controlplane"
+	"github.com/ponyo877/scrim/pkg/docker"
+	"github.com/ponyo877/scrim/pkg/nodes"
+	"github.com/ponyo877/scrim/pkg/podspec"
+	"github.com/ponyo877/scrim/pkg/sdkserver"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
 // manifest is a GameServer with a Counter and a List, a health check that
@@ -101,7 +101,7 @@ func startBench(t *testing.T, listen, dial string) bench {
 	node := agent.New(agent.Config{
 		NodeName:      "node-1",
 		Address:       "203.0.113.10",
-		PortRange:     litev1.PortRange{Min: 7000, Max: 7100},
+		PortRange:     scrimv1.PortRange{Min: 7000, Max: 7100},
 		SidecarImage:  "sidecar:test",
 		SidecarListen: listen,
 		SidecarDial:   dial,

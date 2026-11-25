@@ -7,7 +7,7 @@ import (
 	"agones.dev/agones/pkg/sdk"
 	"google.golang.org/protobuf/proto"
 
-	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
+	sidecarv1 "github.com/ponyo877/scrim/proto/sidecar/v1"
 )
 
 // WithPending returns base as it will be once the control plane has made

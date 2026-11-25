@@ -15,11 +15,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
-	"github.com/ponyo877/agones-lite/pkg/store"
-	nodev1 "github.com/ponyo877/agones-lite/proto/node/v1"
-	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/store"
+	nodev1 "github.com/ponyo877/scrim/proto/node/v1"
+	sidecarv1 "github.com/ponyo877/scrim/proto/sidecar/v1"
 )
 
 // reportable lists the Events an agent may report. The others are the
@@ -43,7 +43,7 @@ type Server struct {
 	nodev1.UnimplementedNodesServer
 	local   *Local
 	servers store.Typed[*agonesv1.GameServer]
-	nodes   store.Typed[*litev1.Node]
+	nodes   store.Typed[*scrimv1.Node]
 	now     func() time.Time
 
 	mu      sync.Mutex
@@ -70,7 +70,7 @@ func NewServer(s *store.Store, local *Local) *Server {
 // gone. Were a Register to make the node Ready with no call open, nothing
 // would ever make it Disconnected again.
 func (s *Server) Register(ctx context.Context, req *nodev1.RegisterRequest) (*nodev1.RegisterResponse, error) {
-	node := &litev1.Node{}
+	node := &scrimv1.Node{}
 	if err := json.Unmarshal(req.GetNode(), node); err != nil || node.Name == "" {
 		return nil, status.Error(codes.InvalidArgument, "the request must carry a Node with a name")
 	}
@@ -159,7 +159,7 @@ func (s *Server) connected(node string, delta int) {
 	defer s.mu.Unlock() // held to the end, like Register
 	s.streams[node] += delta
 	phase := s.phase(node)
-	_ = s.nodes.Change("", node, func(n *litev1.Node) bool {
+	_ = s.nodes.Change("", node, func(n *scrimv1.Node) bool {
 		if n.Status.Phase == phase {
 			return false
 		}
@@ -171,11 +171,11 @@ func (s *Server) connected(node string, delta int) {
 }
 
 // phase is what a node's open Watch calls say about it. Called with the lock held.
-func (s *Server) phase(node string) litev1.NodePhase {
+func (s *Server) phase(node string) scrimv1.NodePhase {
 	if s.streams[node] > 0 {
-		return litev1.NodeReady
+		return scrimv1.NodeReady
 	}
-	return litev1.NodeDisconnected
+	return scrimv1.NodeDisconnected
 }
 
 // Report implements the Report call of the protocol.

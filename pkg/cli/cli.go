@@ -1,4 +1,4 @@
-// Package cli is the agones-lite command line: one binary that is the
+// Package cli is the scrim command line: one binary that is the
 // control plane ("server"), the agent for further nodes ("agent"), and the
 // tool to talk to them ("apply", "get", "describe", "delete", "scale",
 // "allocate", "node", "token"). "buffer" talks to nobody: it works out a
@@ -16,7 +16,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ponyo877/agones-lite/pkg/version"
+	"github.com/ponyo877/scrim/pkg/version"
 )
 
 // command runs one subcommand with its arguments, writing results to out.
@@ -39,7 +39,7 @@ var commands = map[string]command{
 }
 
 func runVersion(_ context.Context, _ []string, out io.Writer) error {
-	_, err := fmt.Fprintln(out, "agones-lite", version.Version)
+	_, err := fmt.Fprintln(out, "scrim", version.Version)
 	return err
 }
 
@@ -61,7 +61,7 @@ func usage() error {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	return fmt.Errorf("usage: agones-lite <%s> [arguments]", strings.Join(names, "|"))
+	return fmt.Errorf("usage: scrim <%s> [arguments]", strings.Join(names, "|"))
 }
 
 // parse reads flags that may come before or after the positional arguments,

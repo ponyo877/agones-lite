@@ -1,14 +1,14 @@
 # Control plane, with an agent for game servers on the same machine.
-# Install the binary as /usr/local/bin/agones-lite, then:
-#   systemctl enable --now agones-lite
+# Install the binary as /usr/local/bin/scrim, then:
+#   systemctl enable --now scrim
 [Unit]
-Description=agones-lite control plane
+Description=scrim control plane
 After=docker.service network-online.target
 Wants=network-online.target
 Requires=docker.service
 
 [Service]
-ExecStart=/usr/local/bin/agones-lite server --config /etc/agones-lite/server.yaml
+ExecStart=/usr/local/bin/scrim server --config /etc/scrim/server.yaml
 Restart=always
 RestartSec=2
 # Stopping or restarting this service must not stop the game servers: they

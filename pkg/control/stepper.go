@@ -7,7 +7,7 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/ponyo877/agones-lite/pkg/store"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
 // Stepper drives Loops by hand: one Sync at a time, in an order its caller

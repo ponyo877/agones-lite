@@ -12,11 +12,11 @@
 // upgraded one after the other, and must keep talking in between.
 syntax = "proto3";
 
-package agoneslite.node.v1;
+package scrim.node.v1;
 
 import "proto/sidecar/v1/sidecar.proto";
 
-option go_package = "github.com/ponyo877/agones-lite/proto/node/v1;nodev1";
+option go_package = "github.com/ponyo877/scrim/proto/node/v1;nodev1";
 
 service Nodes {
   // Register announces a node and what it can hold. The agent repeats the
@@ -43,7 +43,7 @@ service Nodes {
 }
 
 message RegisterRequest {
-  // JSON of a Node (apiVersion agones-lite/v1).
+  // JSON of a Node (apiVersion scrim/v1).
   bytes node = 1;
 }
 
@@ -130,8 +130,8 @@ message UpdateCountsRequest {
   string namespace = 1;
   string name = 2;
   // The changes exactly as the sidecar sent them, in the order they were made.
-  repeated agoneslite.sidecar.v1.CounterUpdate counters = 3;
-  repeated agoneslite.sidecar.v1.ListUpdate lists = 4;
+  repeated scrim.sidecar.v1.CounterUpdate counters = 3;
+  repeated scrim.sidecar.v1.ListUpdate lists = 4;
   // The name the sidecar gave the change. A change whose name is the one
   // made last is not made again.
   string change_id = 5;

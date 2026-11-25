@@ -1,4 +1,4 @@
-// Package conformance checks the promise agones-lite makes to game servers:
+// Package conformance checks the promise scrim makes to game servers:
 // one that was written for Agones runs unchanged.
 //
 // The tests talk to the sidecar the way a game server does, through the

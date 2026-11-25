@@ -1,4 +1,4 @@
-# A FleetAutoscaler with a policy of every kind agones-lite applies, one
+# A FleetAutoscaler with a policy of every kind scrim applies, one
 # inside the other as far as they go.
 apiVersion: autoscaling.agones.dev/v1
 kind: FleetAutoscaler

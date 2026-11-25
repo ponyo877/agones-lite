@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/store"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
 func scrape(t *testing.T, m *Metrics) string {
@@ -52,7 +52,7 @@ func TestGaugesAreReadFromTheStore(t *testing.T) {
 		require.NoError(t, err)
 	}
 	for _, name := range []string{"node-1", "node-2"} {
-		_, err := store.NodesOf(s).Create(&litev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name}})
+		_, err := store.NodesOf(s).Create(&scrimv1.Node{ObjectMeta: metav1.ObjectMeta{Name: name}})
 		require.NoError(t, err)
 	}
 	fleet := &agonesv1.Fleet{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "simple"}}
@@ -157,7 +157,7 @@ func TestTheStoresLagIsReported(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
 
-	assert.Contains(t, scrape(t, New(s)), "agones_lite_store_lag_seconds 0\n", "the file has everything")
+	assert.Contains(t, scrape(t, New(s)), "scrim_store_lag_seconds 0\n", "the file has everything")
 }
 
 func TestASaveIsMeasuredByHowLongItTookAndHowMuchItTook(t *testing.T) {
@@ -167,10 +167,10 @@ func TestASaveIsMeasuredByHowLongItTookAndHowMuchItTook(t *testing.T) {
 	m := New(s)
 	s.Saved = m.Saved
 
-	_, err = store.NodesOf(s).Create(&litev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-1"}})
+	_, err = store.NodesOf(s).Create(&scrimv1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-1"}})
 	require.NoError(t, err)
 
 	out := scrape(t, m)
-	assert.Contains(t, out, "agones_lite_store_save_duration_seconds_count 1\n")
-	assert.Contains(t, out, "agones_lite_store_save_changes_sum 1\n", "the one change, in a save of its own")
+	assert.Contains(t, out, "scrim_store_save_duration_seconds_count 1\n")
+	assert.Contains(t, out, "scrim_store_save_changes_sum 1\n", "the one change, in a save of its own")
 }

@@ -16,12 +16,12 @@ import (
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	corev1 "k8s.io/api/core/v1"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/docker"
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
-	"github.com/ponyo877/agones-lite/pkg/podspec"
-	"github.com/ponyo877/agones-lite/pkg/version"
-	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/docker"
+	"github.com/ponyo877/scrim/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/podspec"
+	"github.com/ponyo877/scrim/pkg/version"
+	sidecarv1 "github.com/ponyo877/scrim/proto/sidecar/v1"
 )
 
 const (
@@ -41,7 +41,7 @@ type ControlPlane interface {
 	// Register announces this node and what it can hold. Like every call
 	// here that tells the control plane something, it returns once that is
 	// saved there, or when ctx is done.
-	Register(ctx context.Context, node *litev1.Node) error
+	Register(ctx context.Context, node *scrimv1.Node) error
 	// Assigned returns the GameServers placed on the node. current is false
 	// while the list is not known to be complete and up to date, for example
 	// before the first answer from a remote control plane has arrived.
@@ -76,9 +76,9 @@ type Config struct {
 	NodeName string
 	// Address is where players reach game servers on this node.
 	Address        string
-	PortRange      litev1.PortRange
+	PortRange      scrimv1.PortRange
 	MaxGameServers int32
-	Capacity       litev1.Resources
+	Capacity       scrimv1.Resources
 
 	SidecarImage string
 	// SidecarListen is where the agent waits for sidecars to connect:
@@ -146,11 +146,11 @@ func (a *Agent) announce(ctx context.Context) {
 	}
 }
 
-func (a *Agent) node() *litev1.Node {
-	node := &litev1.Node{}
-	node.APIVersion, node.Kind, node.Name = litev1.APIVersion, litev1.NodeKind, a.cfg.NodeName
-	node.Status = litev1.NodeStatus{
-		Phase:          litev1.NodeReady,
+func (a *Agent) node() *scrimv1.Node {
+	node := &scrimv1.Node{}
+	node.APIVersion, node.Kind, node.Name = scrimv1.APIVersion, scrimv1.NodeKind, a.cfg.NodeName
+	node.Status = scrimv1.NodeStatus{
+		Phase:          scrimv1.NodeReady,
 		Address:        a.cfg.Address,
 		Capacity:       a.cfg.Capacity,
 		MaxGameServers: a.cfg.MaxGameServers,

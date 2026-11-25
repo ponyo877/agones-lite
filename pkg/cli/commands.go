@@ -13,7 +13,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
-	"github.com/ponyo877/agones-lite/pkg/auth"
+	"github.com/ponyo877/scrim/pkg/auth"
 )
 
 // kind is what the command line knows about one kind of resource.
@@ -153,7 +153,7 @@ func runDelete(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	}
 	if len(positional) != 2 {
-		return errors.New("usage: agones-lite delete KIND NAME")
+		return errors.New("usage: scrim delete KIND NAME")
 	}
 	k, err := findKind(positional[0])
 	if err != nil {
@@ -180,7 +180,7 @@ func runScale(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	}
 	if len(positional) != 2 || positional[0] != "fleet" || *replicas < 0 {
-		return errors.New("usage: agones-lite scale fleet NAME --replicas N")
+		return errors.New("usage: scrim scale fleet NAME --replicas N")
 	}
 	body, err := json.Marshal(map[string]int{"replicas": *replicas})
 	if err != nil {
@@ -203,7 +203,7 @@ func runScale(ctx context.Context, args []string, out io.Writer) error {
 func runAllocate(ctx context.Context, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("allocate", flag.ContinueOnError)
 	conn := clientFlags(fs)
-	allocator := fs.String("allocator", env("AGONES_LITE_ALLOCATOR", "https://127.0.0.1:9444"), "address of the allocation API (or $AGONES_LITE_ALLOCATOR)")
+	allocator := fs.String("allocator", env("SCRIM_ALLOCATOR", "https://127.0.0.1:9444"), "address of the allocation API (or $SCRIM_ALLOCATOR)")
 	fleet := fs.String("fleet", "", "allocate from this Fleet")
 	file := fs.String("f", "", "an allocation request as JSON or YAML, instead of --fleet")
 	if _, err := parse(fs, args); err != nil {
@@ -246,7 +246,7 @@ func allocationRequest(namespace, fleet, file string) ([]byte, error) {
 		return yaml.YAMLToJSON(raw)
 	}
 	if fleet == "" {
-		return nil, errors.New("usage: agones-lite allocate --fleet NAME, or -f FILE")
+		return nil, errors.New("usage: scrim allocate --fleet NAME, or -f FILE")
 	}
 	return json.Marshal(map[string]any{
 		"namespace": namespace,

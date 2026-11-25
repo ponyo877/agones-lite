@@ -1,6 +1,6 @@
-# Example /etc/agones-lite/server.yaml. The keys are the flags of
-# `agones-lite server`; see `agones-lite server --help`.
-data-dir: /var/lib/agones-lite
+# Example /etc/scrim/server.yaml. The keys are the flags of
+# `scrim server`; see `scrim server --help`.
+data-dir: /var/lib/scrim
 
 # Where operators, matchmakers and agents on other machines connect.
 listen: 0.0.0.0:9443

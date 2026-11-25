@@ -7,7 +7,7 @@ import (
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/gameservers"
 )
 
 // One pass does a limited amount of work, so that a large change is made in

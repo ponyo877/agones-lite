@@ -17,9 +17,9 @@ import (
 	autoscalingv1 "agones.dev/agones/pkg/apis/autoscaling/v1"
 	"sigs.k8s.io/yaml"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/apiserver"
-	"github.com/ponyo877/agones-lite/pkg/events"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/apiserver"
+	"github.com/ponyo877/scrim/pkg/events"
 )
 
 // runGet lists resources, or shows one in full when a name is given.
@@ -32,7 +32,7 @@ func runGet(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	}
 	if len(positional) == 0 {
-		return errors.New("usage: agones-lite get KIND [NAME] [-w]")
+		return errors.New("usage: scrim get KIND [NAME] [-w]")
 	}
 	c, err := conn.admin()
 	if err != nil {
@@ -60,7 +60,7 @@ func runDescribe(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	}
 	if len(positional) != 2 {
-		return errors.New("usage: agones-lite describe KIND NAME")
+		return errors.New("usage: scrim describe KIND NAME")
 	}
 	k, err := findKind(positional[0])
 	if err != nil {
@@ -213,7 +213,7 @@ func listFleetAutoscalers(ctx context.Context, c client, namespace string, watch
 }
 
 func listNodes(ctx context.Context, c client, out io.Writer) error {
-	row := func(n litev1.Node) string {
+	row := func(n scrimv1.Node) string {
 		return fmt.Sprintf("%s\t%s\t%s\t%d-%d\t%s",
 			n.Name, nodeStatus(n), n.Status.Address, n.Status.PortRange.Min, n.Status.PortRange.Max, age(n.CreationTimestamp.Time))
 	}
@@ -222,7 +222,7 @@ func listNodes(ctx context.Context, c client, out io.Writer) error {
 
 // nodeStatus shows whether a node is connected and whether it takes new
 // game servers, as "kubectl get nodes" does.
-func nodeStatus(n litev1.Node) string {
+func nodeStatus(n scrimv1.Node) string {
 	status := string(n.Status.Phase)
 	switch {
 	case n.Spec.Drain:
@@ -259,7 +259,7 @@ func runLogs(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	}
 	if len(positional) != 1 {
-		return errors.New("usage: agones-lite logs GAMESERVER [-c CONTAINER] [-f] [--tail N]")
+		return errors.New("usage: scrim logs GAMESERVER [-c CONTAINER] [-f] [--tail N]")
 	}
 	c, err := conn.admin()
 	if err != nil {

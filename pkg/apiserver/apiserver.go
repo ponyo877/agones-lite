@@ -33,11 +33,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/yaml"
 
-	"github.com/ponyo877/agones-lite/pkg/agent"
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/events"
-	"github.com/ponyo877/agones-lite/pkg/podspec"
-	"github.com/ponyo877/agones-lite/pkg/store"
+	"github.com/ponyo877/scrim/pkg/agent"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/events"
+	"github.com/ponyo877/scrim/pkg/podspec"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
 // maxBody is the largest request body accepted.
@@ -49,7 +49,7 @@ type Server struct {
 	sets    resource[*agonesv1.GameServerSet]
 	fleets  resource[*agonesv1.Fleet]
 	scalers resource[*autoscalingv1.FleetAutoscaler]
-	nodes   store.Typed[*litev1.Node]
+	nodes   store.Typed[*scrimv1.Node]
 	events  *events.Recorder
 	nodeOps NodeOperator
 	logs    LogSource
@@ -149,7 +149,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) listNodes(w http.ResponseWriter, _ *http.Request) {
-	respond(w, http.StatusOK, items[*litev1.Node]{Items: s.nodes.List("")})
+	respond(w, http.StatusOK, items[*scrimv1.Node]{Items: s.nodes.List("")})
 }
 
 func (s *Server) getNode(w http.ResponseWriter, r *http.Request) {

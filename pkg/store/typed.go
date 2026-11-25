@@ -9,10 +9,10 @@ import (
 	autoscalingv1 "agones.dev/agones/pkg/apis/autoscaling/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
 )
 
-// The kinds agones-lite stores.
+// The kinds scrim stores.
 const (
 	GameServers      Kind = "gameservers"
 	GameServerSets   Kind = "gameserversets"
@@ -28,7 +28,7 @@ func Kinds() map[Kind]func() Object {
 		GameServerSets:   func() Object { return &agonesv1.GameServerSet{} },
 		Fleets:           func() Object { return &agonesv1.Fleet{} },
 		FleetAutoscalers: func() Object { return &autoscalingv1.FleetAutoscaler{} },
-		Nodes:            func() Object { return &litev1.Node{} },
+		Nodes:            func() Object { return &scrimv1.Node{} },
 	}
 }
 
@@ -60,8 +60,8 @@ func FleetAutoscalersOf(s *Store) Typed[*autoscalingv1.FleetAutoscaler] {
 }
 
 // NodesOf returns the Node view of s.
-func NodesOf(s *Store) Typed[*litev1.Node] {
-	return Typed[*litev1.Node]{store: s, kind: Nodes}
+func NodesOf(s *Store) Typed[*scrimv1.Node] {
+	return Typed[*scrimv1.Node]{store: s, kind: Nodes}
 }
 
 // Get returns a private copy of the named object.

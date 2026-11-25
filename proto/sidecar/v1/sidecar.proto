@@ -8,9 +8,9 @@
 // old sidecar across an upgrade of the agent, so both must keep talking.
 syntax = "proto3";
 
-package agoneslite.sidecar.v1;
+package scrim.sidecar.v1;
 
-option go_package = "github.com/ponyo877/agones-lite/proto/sidecar/v1;sidecarv1";
+option go_package = "github.com/ponyo877/scrim/proto/sidecar/v1;sidecarv1";
 
 service Agent {
   // Watch sends the GameServer as the SDK shows it: the current one at once,

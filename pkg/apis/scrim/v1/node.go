@@ -1,4 +1,4 @@
-// Package v1 holds the resources that exist only in agones-lite.
+// Package v1 holds the resources that exist only in scrim.
 //
 // Agones leans on the Kubernetes Node object. Without Kubernetes we keep our
 // own, much smaller, record of each machine that runs game servers.
@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	// APIVersion is the apiVersion of every agones-lite resource.
-	APIVersion = "agones-lite/v1"
+	// APIVersion is the apiVersion of every scrim resource.
+	APIVersion = "scrim/v1"
 	// NodeKind is the kind of a Node.
 	NodeKind = "Node"
 )

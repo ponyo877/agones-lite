@@ -15,8 +15,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"pgregory.net/rapid"
 
-	"github.com/ponyo877/agones-lite/pkg/agones"
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/agones"
+	"github.com/ponyo877/scrim/pkg/gameservers"
 )
 
 // These tests state what must hold for any request and any GameServers and

@@ -12,8 +12,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
-	"github.com/ponyo877/agones-lite/pkg/agones"
-	"github.com/ponyo877/agones-lite/pkg/podspec"
+	"github.com/ponyo877/scrim/pkg/agones"
+	"github.com/ponyo877/scrim/pkg/podspec"
 )
 
 // Each admit function does for one kind what Kubernetes does between a
@@ -66,7 +66,7 @@ func notForDevelopment(annotations map[string]string, at *field.Path) field.Erro
 	if _, development := annotations[agonesv1.DevAddressAnnotation]; !development {
 		return nil
 	}
-	return field.ErrorList{field.Forbidden(at.Key(agonesv1.DevAddressAnnotation), "development GameServers are not supported by agones-lite")}
+	return field.ErrorList{field.Forbidden(at.Key(agonesv1.DevAddressAnnotation), "development GameServers are not supported by scrim")}
 }
 
 // withoutRepeats keeps the first of every value, in order.

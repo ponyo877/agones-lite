@@ -19,14 +19,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"pgregory.net/rapid"
 
-	"github.com/ponyo877/agones-lite/pkg/agent"
-	"github.com/ponyo877/agones-lite/pkg/agones"
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/events"
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
-	"github.com/ponyo877/agones-lite/pkg/nodes"
-	"github.com/ponyo877/agones-lite/pkg/podspec"
-	"github.com/ponyo877/agones-lite/pkg/store"
+	"github.com/ponyo877/scrim/pkg/agent"
+	"github.com/ponyo877/scrim/pkg/agones"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/events"
+	"github.com/ponyo877/scrim/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/nodes"
+	"github.com/ponyo877/scrim/pkg/podspec"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
 // This test sends the management API requests nobody would write on
@@ -91,7 +91,7 @@ func TestNoRequestMakesTheAPIAnswerWithAServerError(t *testing.T) {
 // system has a place for that, as Linux does. Every one of the hundred
 // servers the test starts would otherwise wait for a disk a few times.
 func scratch(t *testing.T) string {
-	dir, err := os.MkdirTemp("/dev/shm", "agones-lite-api-")
+	dir, err := os.MkdirTemp("/dev/shm", "scrim-api-")
 	if err != nil {
 		return t.TempDir()
 	}
@@ -118,7 +118,7 @@ func healthyAPI(t interface {
 	servers := gameservers.NewController(s, recorder)
 	local := nodes.NewLocal(s, servers)
 	local.Attach("node-1", agentLogs{})
-	_, err = store.NodesOf(s).Create(&litev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-1"}, Status: litev1.NodeStatus{Phase: litev1.NodeReady}})
+	_, err = store.NodesOf(s).Create(&scrimv1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-1"}, Status: scrimv1.NodeStatus{Phase: scrimv1.NodeReady}})
 	require.NoError(t, err)
 	running := &agonesv1.GameServer{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "running"}}
 	running.Spec.Container = "game"

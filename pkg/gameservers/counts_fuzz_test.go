@@ -9,8 +9,8 @@ import (
 	"google.golang.org/protobuf/proto"
 	"pgregory.net/rapid"
 
-	"github.com/ponyo877/agones-lite/pkg/sdkserver"
-	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
+	"github.com/ponyo877/scrim/pkg/sdkserver"
+	sidecarv1 "github.com/ponyo877/scrim/proto/sidecar/v1"
 )
 
 // The sidecar answers a game server from its own prediction of what the

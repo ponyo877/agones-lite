@@ -11,15 +11,15 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
 )
 
-func node(name string, change ...func(*litev1.Node)) *litev1.Node {
-	n := &litev1.Node{
+func node(name string, change ...func(*scrimv1.Node)) *scrimv1.Node {
+	n := &scrimv1.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Status: litev1.NodeStatus{
-			Phase:     litev1.NodeReady,
-			PortRange: litev1.PortRange{Min: 7000, Max: 7009},
+		Status: scrimv1.NodeStatus{
+			Phase:     scrimv1.NodeReady,
+			PortRange: scrimv1.PortRange{Min: 7000, Max: 7009},
 		},
 	}
 	for _, fn := range change {
@@ -43,7 +43,7 @@ func server(name, nodeName, cpu string) *agonesv1.GameServer {
 }
 
 func TestPlaceChoosesByStrategy(t *testing.T) {
-	nodes := []*litev1.Node{node("n1"), node("n2")}
+	nodes := []*scrimv1.Node{node("n1"), node("n2")}
 	servers := []*agonesv1.GameServer{server("a", "n2", "")}
 
 	packed := server("new", "", "")
@@ -64,7 +64,7 @@ func TestPlaceAssignsPortsAndLeavesTheInputAlone(t *testing.T) {
 	residents := []*agonesv1.GameServer{server("a", "n1", "")}
 	residents[0].Spec.Ports[0].HostPort = 7000
 
-	placed, ok := Place(gs, []*litev1.Node{node("n1")}, residents)
+	placed, ok := Place(gs, []*scrimv1.Node{node("n1")}, residents)
 
 	require.True(t, ok)
 	assert.Equal(t, int32(7001), placed.Spec.Ports[0].HostPort)
@@ -74,34 +74,34 @@ func TestPlaceAssignsPortsAndLeavesTheInputAlone(t *testing.T) {
 
 func TestPlaceSkipsNodesThatCannotTakeIt(t *testing.T) {
 	tests := map[string]struct {
-		node      *litev1.Node
+		node      *scrimv1.Node
 		residents []*agonesv1.GameServer
 	}{
 		"disconnected": {
-			node: node("n1", func(n *litev1.Node) { n.Status.Phase = litev1.NodeDisconnected }),
+			node: node("n1", func(n *scrimv1.Node) { n.Status.Phase = scrimv1.NodeDisconnected }),
 		},
 		"cordoned": {
-			node: node("n1", func(n *litev1.Node) { n.Spec.Unschedulable = true }),
+			node: node("n1", func(n *scrimv1.Node) { n.Spec.Unschedulable = true }),
 		},
 		// Found by TestPlaceOnlyUsesANodeThatCanTakeTheGameServer.
 		"draining, though not cordoned": {
-			node: node("n1", func(n *litev1.Node) { n.Spec.Drain = true }),
+			node: node("n1", func(n *scrimv1.Node) { n.Spec.Drain = true }),
 		},
 		"at the game server limit": {
-			node:      node("n1", func(n *litev1.Node) { n.Status.MaxGameServers = 1 }),
+			node:      node("n1", func(n *scrimv1.Node) { n.Status.MaxGameServers = 1 }),
 			residents: []*agonesv1.GameServer{server("a", "n1", "")},
 		},
 		"out of cpu": {
-			node:      node("n1", func(n *litev1.Node) { n.Status.Capacity.CPU = resource.MustParse("1") }),
+			node:      node("n1", func(n *scrimv1.Node) { n.Status.Capacity.CPU = resource.MustParse("1") }),
 			residents: []*agonesv1.GameServer{server("a", "n1", "800m")},
 		},
 		"out of ports": {
-			node: node("n1", func(n *litev1.Node) { n.Status.PortRange = litev1.PortRange{Min: 7000, Max: 6999} }),
+			node: node("n1", func(n *scrimv1.Node) { n.Status.PortRange = scrimv1.PortRange{Min: 7000, Max: 6999} }),
 		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			_, ok := Place(server("new", "", "500m"), []*litev1.Node{tc.node}, tc.residents)
+			_, ok := Place(server("new", "", "500m"), []*scrimv1.Node{tc.node}, tc.residents)
 			assert.False(t, ok)
 		})
 	}
@@ -116,11 +116,11 @@ func TestPlaceSkipsANodeWhereTheStaticPortIsTaken(t *testing.T) {
 	}
 	resident := static("a", "n1")
 
-	placed, ok := Place(static("new", ""), []*litev1.Node{node("n1"), node("n2")}, []*agonesv1.GameServer{resident})
+	placed, ok := Place(static("new", ""), []*scrimv1.Node{node("n1"), node("n2")}, []*agonesv1.GameServer{resident})
 	require.True(t, ok)
 	assert.Equal(t, "n2", placed.Status.NodeName, "n1 is fuller, which Packed prefers, but its port 7777 is taken")
 
-	_, ok = Place(static("new", ""), []*litev1.Node{node("n1")}, []*agonesv1.GameServer{resident})
+	_, ok = Place(static("new", ""), []*scrimv1.Node{node("n1")}, []*agonesv1.GameServer{resident})
 	assert.False(t, ok, "it waits for a node where the port is free")
 }
 
@@ -131,7 +131,7 @@ func TestPlaceKeepsDynamicPortsOffStaticOnes(t *testing.T) {
 	both := server("new", "", "")
 	both.Spec.Ports = append(both.Spec.Ports, agonesv1.GameServerPort{Name: "admin", PortPolicy: agonesv1.Static, HostPort: 7001, ContainerPort: 8080})
 
-	placed, ok := Place(both, []*litev1.Node{node("n1")}, []*agonesv1.GameServer{resident})
+	placed, ok := Place(both, []*scrimv1.Node{node("n1")}, []*agonesv1.GameServer{resident})
 
 	require.True(t, ok)
 	assert.Equal(t, int32(7002), placed.Spec.Ports[0].HostPort, "7000 is a neighbour's and 7001 its own")
@@ -139,6 +139,6 @@ func TestPlaceKeepsDynamicPortsOffStaticOnes(t *testing.T) {
 }
 
 func TestPlaceTreatsZeroCapacityAsUnlimited(t *testing.T) {
-	_, ok := Place(server("new", "", "64"), []*litev1.Node{node("n1")}, nil)
+	_, ok := Place(server("new", "", "64"), []*scrimv1.Node{node("n1")}, nil)
 	assert.True(t, ok)
 }

@@ -16,8 +16,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"pgregory.net/rapid"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/store"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
 // What KeyAnnotation promises, held against a model of it: matchmakers ask,
@@ -88,7 +88,7 @@ func aServiceWith(t *testing.T, ready int) (*Service, store.Typed[*agonesv1.Game
 	s, err := store.Open(filepath.Join(t.TempDir(), "state.db"), store.Kinds())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
-	_, err = store.NodesOf(s).Create(&litev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node"}, Status: litev1.NodeStatus{Phase: litev1.NodeReady}})
+	_, err = store.NodesOf(s).Create(&scrimv1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node"}, Status: scrimv1.NodeStatus{Phase: scrimv1.NodeReady}})
 	require.NoError(t, err)
 	servers := store.GameServersOf(s)
 	for i := range ready {

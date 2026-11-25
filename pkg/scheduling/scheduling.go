@@ -18,8 +18,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/portallocator"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/portallocator"
 )
 
 // Place picks a node for gs and gives it host ports there. It returns a
@@ -27,7 +27,7 @@ import (
 //
 // servers is every GameServer in the system; the ones already on a node are
 // what make that node full.
-func Place(gs *agonesv1.GameServer, nodes []*litev1.Node, servers []*agonesv1.GameServer) (*agonesv1.GameServer, bool) {
+func Place(gs *agonesv1.GameServer, nodes []*scrimv1.Node, servers []*agonesv1.GameServer) (*agonesv1.GameServer, bool) {
 	return RoomOn(nodes, servers).Place(gs)
 }
 
@@ -42,7 +42,7 @@ type Room struct {
 
 // lot is one node and what is on it.
 type lot struct {
-	node        *litev1.Node
+	node        *scrimv1.Node
 	residents   int
 	cpu, memory resource.Quantity // what the residents ask for, together
 	ports       map[int32]bool    // the host ports they have
@@ -50,11 +50,11 @@ type lot struct {
 	// the node's range and loses its low end as ports are given: they are
 	// given lowest first, so what lies below the last one given is taken.
 	// Without it, every placement would walk past all the ports before it.
-	free litev1.PortRange
+	free scrimv1.PortRange
 }
 
 // RoomOn counts what servers leave free on nodes.
-func RoomOn(nodes []*litev1.Node, servers []*agonesv1.GameServer) *Room {
+func RoomOn(nodes []*scrimv1.Node, servers []*agonesv1.GameServer) *Room {
 	room := &Room{}
 	byName := map[string]*lot{}
 	for _, node := range nodes {

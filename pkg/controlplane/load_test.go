@@ -19,17 +19,17 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/ponyo877/agones-lite/pkg/agent"
-	"github.com/ponyo877/agones-lite/pkg/agones"
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/events"
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
-	"github.com/ponyo877/agones-lite/pkg/metrics"
-	"github.com/ponyo877/agones-lite/pkg/nodes"
-	"github.com/ponyo877/agones-lite/pkg/store"
+	"github.com/ponyo877/scrim/pkg/agent"
+	"github.com/ponyo877/scrim/pkg/agones"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/events"
+	"github.com/ponyo877/scrim/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/metrics"
+	"github.com/ponyo877/scrim/pkg/nodes"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
-// The scale agones-lite is designed for; see docs/planning.md.
+// The scale scrim is designed for; see docs/planning.md.
 const (
 	loadNodes       = 10
 	loadGameServers = 1000
@@ -45,7 +45,7 @@ const (
 //
 // It takes a little over a minute, so it only runs when asked:
 //
-//	AGONES_LITE_LOAD=1 go test ./pkg/controlplane/ -run TestLoad -v
+//	SCRIM_LOAD=1 go test ./pkg/controlplane/ -run TestLoad -v
 //
 // How it measures follows what is known about measuring a tail. Requests
 // come whether or not the ones before them are answered, at moments drawn
@@ -56,8 +56,8 @@ const (
 // Cautionary Tale", NSDI 2006). And the 99th percentile of a sample is not
 // that of what was sampled: see atMost.
 func TestLoad(t *testing.T) {
-	if os.Getenv("AGONES_LITE_LOAD") == "" {
-		t.Skip("set AGONES_LITE_LOAD=1 to run the load test")
+	if os.Getenv("SCRIM_LOAD") == "" {
+		t.Skip("set SCRIM_LOAD=1 to run the load test")
 	}
 	w, stop := newLoadWorld(t, loadNodes)
 	defer stop()
@@ -167,7 +167,7 @@ func nodesFor(gameServers int) int {
 	return max(loadNodes, gameServers/500)
 }
 
-// newLoadWorld is the control plane as "agones-lite server" runs it, with
+// newLoadWorld is the control plane as "scrim server" runs it, with
 // the event history and the metrics on, and simulated nodes in place of
 // agents. stop ends it.
 func newLoadWorld(t testing.TB, nodeCount int) (w world, stop func()) {
@@ -187,12 +187,12 @@ func newLoadWorld(t testing.TB, nodeCount int) (w world, stop func()) {
 	running.Go(func() { recorder.Run(ctx) })
 	running.Go(func() { cp.Run(ctx) })
 	for i := range nodeCount {
-		node := &litev1.Node{
+		node := &scrimv1.Node{
 			ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("node-%03d", i)},
-			Status: litev1.NodeStatus{
-				Phase:     litev1.NodeReady,
+			Status: scrimv1.NodeStatus{
+				Phase:     scrimv1.NodeReady,
 				Address:   fmt.Sprintf("203.0.113.%d", i%250+1),
-				PortRange: litev1.PortRange{Min: 7000, Max: 8000},
+				PortRange: scrimv1.PortRange{Min: 7000, Max: 8000},
 			},
 		}
 		running.Go(func() { _ = agent.NewSimulator(node, cp.Agents).Run(ctx) })

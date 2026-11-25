@@ -28,8 +28,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Agent_Watch_FullMethodName = "/agoneslite.sidecar.v1.Agent/Watch"
-	Agent_Tell_FullMethodName  = "/agoneslite.sidecar.v1.Agent/Tell"
+	Agent_Watch_FullMethodName = "/scrim.sidecar.v1.Agent/Watch"
+	Agent_Tell_FullMethodName  = "/scrim.sidecar.v1.Agent/Tell"
 )
 
 // AgentClient is the client API for Agent service.
@@ -161,7 +161,7 @@ func _Agent_Tell_Handler(srv interface{}, ctx context.Context, dec func(interfac
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var Agent_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "agoneslite.sidecar.v1.Agent",
+	ServiceName: "scrim.sidecar.v1.Agent",
 	HandlerType: (*AgentServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{

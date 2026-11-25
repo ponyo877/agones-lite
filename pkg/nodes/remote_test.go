@@ -13,7 +13,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/ponyo877/agones-lite/pkg/auth"
+	"github.com/ponyo877/scrim/pkg/auth"
 )
 
 // logBook collects what is logged while a test runs.
@@ -44,7 +44,7 @@ func logged(t *testing.T) *logBook {
 }
 
 const (
-	remedy      = "agones-lite token show join"
+	remedy      = "scrim token show join"
 	reconnected = "lost the control plane, reconnecting"
 )
 

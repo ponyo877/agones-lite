@@ -1,6 +1,6 @@
-# agones-lite 設計書
+# scrim 設計書
 
-この文書は、agones-lite の作り方を定める。
+この文書は、scrim の作り方を定める。
 何を作り、何を作らないかは [企画書](planning.md) に書いた。
 
 互換の基準は Agones v1.62.0 である。
@@ -9,10 +9,10 @@
 
 ## 全体の構成
 
-agones-lite は 4 つの部品でできている。
+scrim は 4 つの部品でできている。
 
-- **コントロールプレーン**：状態を保存し、あるべき状態を決める。管理 API、Allocation API、ノード用 API を提供する。`agones-lite server` で起動する。
-- **エージェント**：各ノードで動き、そのノードが担当するゲームサーバのコンテナを Docker に作らせ、結果を報告する。`agones-lite agent` で起動する。
+- **コントロールプレーン**：状態を保存し、あるべき状態を決める。管理 API、Allocation API、ノード用 API を提供する。`scrim server` で起動する。
+- **エージェント**：各ノードで動き、そのノードが担当するゲームサーバのコンテナを Docker に作らせ、結果を報告する。`scrim agent` で起動する。
 - **sidecar**：ゲームサーバ 1 台につき 1 つ動く小さなコンテナで、ゲームサーバが SDK で話す相手になる。
 - **CLI**：管理 API を呼ぶコマンド群で、本体と同じバイナリに入っている。
 
@@ -54,8 +54,8 @@ flowchart LR
 ```
 
 コントロールプレーンは 1 台だけ置く。
-`agones-lite server` は既定でエージェントを同じプロセスの中で動かすので、VM が 1 台ならこれだけで足りる。
-ノードを増やすときは、追加の VM で `agones-lite agent` を起動する。
+`scrim server` は既定でエージェントを同じプロセスの中で動かすので、VM が 1 台ならこれだけで足りる。
+ノードを増やすときは、追加の VM で `scrim agent` を起動する。
 
 通信の向きは、すべてノードの内側から外側へ向かう。
 sidecar はエージェントに接続し、エージェントはコントロールプレーンに接続する。
@@ -64,9 +64,9 @@ sidecar はエージェントに接続し、エージェントはコントロー
 ## Kubernetes の仕事を何で置き換えるか
 
 本家は多くの仕事を Kubernetes に任せている。
-agones-lite はそれを次のように置き換える。
+scrim はそれを次のように置き換える。
 
-| 仕事 | 本家での担い手 | agones-lite での担い手 |
+| 仕事 | 本家での担い手 | scrim での担い手 |
 |---|---|---|
 | リソースの保存と楽観ロック | API サーバと etcd | SQLite とメモリ上の写し（`pkg/store`） |
 | 変更の通知 | informer | store の購読 |
@@ -79,7 +79,7 @@ agones-lite はそれを次のように置き換える。
 | 親子関係と連鎖削除 | ownerReference とガベージコレクタ | ownerReference を保持し、子の制御が親の消失を見て自分を消す |
 | 削除の後始末 | finalizer | 削除要求の印を付け、コンテナの撤去を確認してから記録を消す |
 | 出来事の記録 | Event | イベント履歴（`pkg/events`） |
-| ノードの台帳 | Node | agones-lite 独自の Node リソース |
+| ノードの台帳 | Node | scrim 独自の Node リソース |
 
 ## リソースモデル
 
@@ -110,7 +110,7 @@ Allocation API のリクエストとして受け取り、結果を応答とし�
 エージェントが接続したときにコントロールプレーンが作り、ノードの容量と状態を表す。
 
 ```yaml
-apiVersion: agones-lite/v1
+apiVersion: scrim/v1
 kind: Node
 metadata:
   name: node-1
@@ -135,17 +135,17 @@ status:
 本家では admission webhook が同じメソッドを呼んでいるので、判定の結果は本家と一致する。
 
 `Validate()` には、クラウド製品ごとの追加検証を差し込むための `APIHooks` を渡す必要がある。
-agones-lite は、何も検証しない実装を渡す。
+scrim は、何も検証しない実装を渡す。
 
 本家の型のメソッドは feature gate を参照する。
 本家の feature gate は、初期化しないとすべて無効として扱われる（`pkg/util/runtime/features.go` の `FeatureEnabled`）。
-agones-lite は起動時に `ParseFeatures("")` を呼び、v1.62.0 の既定値で固定する。
+scrim は起動時に `ParseFeatures("")` を呼び、v1.62.0 の既定値で固定する。
 利用者が gate を切り替える手段は用意しない。
 
 `Validate()` だけでは足りない。
 本家の検証は、Kubernetes の API サーバが CRD のスキーマで先に検査を済ませていることを前提にしている。
 負の `replicas`、範囲外のポート番号、DNS の名前として使えない名前は、スキーマが止めるので、`Validate()` は調べない。
-agones-lite にはその API サーバがないので、スキーマの制約のうち、実行に影響する項目を自分で検査する（`pkg/apiserver/schema.go`）。
+scrim にはその API サーバがないので、スキーマの制約のうち、実行に影響する項目を自分で検査する（`pkg/apiserver/schema.go`）。
 スキーマが与える既定値も同じ場所で付ける。
 容量を省いた Counter と List は 1000 になり、`priorities` の `order` を省くと Ascending になる。
 
@@ -307,7 +307,7 @@ store は、ファイルがどれだけ遅れているかを答える（`Lag`）
 
 - Allocation は、遅れが 1 秒を超えていたら要求を断る（「Allocation」の章）。
 - `/healthz` は、遅れが 10 秒を超えていたら 503 を返す（「API」の章）。
-- メトリクスは、遅れをそのまま出す（`agones_lite_store_lag_seconds`）。
+- メトリクスは、遅れをそのまま出す（`scrim_store_lag_seconds`）。
 
 失敗した保存をやり直すことについては、分かっていることと、分かっていないことがある。
 Linux のファイルシステムは、ディスクへの同期（fsync）に失敗すると、書けなかったページを書き込み済みとして扱う。
@@ -420,7 +420,7 @@ SQLite は WAL モードで開き、リソースの書き込みはコミット�
 ## 制御ロジックの書き方
 
 Fleet の台数を保つ、ゲームサーバを起動する、といった「あるべき状態に合わせ込む」処理を **制御** と呼ぶ。
-agones-lite の制御は、どれも同じ 2 層の形で書く。
+scrim の制御は、どれも同じ 2 層の形で書く。
 
 - **判断**：現在の状態を引数で受け取り、行うべき操作の一覧を返す純粋関数。store も Docker も時計も触らない。現在時刻が要るなら引数で受け取る。
 - **実行**：store から状態を読んで判断の関数に渡し、返ってきた操作を順に実行する薄い層。
@@ -442,7 +442,7 @@ func Plan(set *agonesv1.GameServerSet, servers []*agonesv1.GameServer) Actions {
 
 本家は、イベントハンドラと作業キューを中心にした非同期の構造の中に、判断と実行を混ぜて書いている。
 分けて書くと、判断の部分を上から下へ読めるようになり、表形式のテストだけで検証できる。
-本家にも同じ考え方の関数があり（`pkg/gameserversets/controller.go` の `computeReconciliationAction`）、agones-lite はそれを全体の規則にする。
+本家にも同じ考え方の関数があり（`pkg/gameserversets/controller.go` の `computeReconciliationAction`）、scrim はそれを全体の規則にする。
 
 実行の層を起動するきっかけは 2 つある。
 1 つは store の変更通知で、関係するリソースのキーを `pkg/queue` に積む。
@@ -578,10 +578,10 @@ GameServerSet に属するものは、GameServerSet の制御が消して作り�
 状態と遷移は本家と同じだが、遷移のきっかけには次の違いがある。
 
 **配置とポート割り当てを同時に行う**：本家は、まずポートを割り当ててから Pod を作り、どのノードに置くかは kube-scheduler に任せる。
-agones-lite は、ノードを選ぶのと同時に、そのノードで実際に空いているポートを割り当てる。
+scrim は、ノードを選ぶのと同時に、そのノードで実際に空いているポートを割り当てる。
 
 **ヘルス判定を始める合図**：本家の sidecar は、kubelet からの最初の生存確認（`/gshealthz`）を受けたときにヘルス判定を始める。
-agones-lite には kubelet がないので、sidecar が起動してから `spec.health.initialDelaySeconds` が過ぎたときに始める。
+scrim には kubelet がないので、sidecar が起動してから `spec.health.initialDelaySeconds` が過ぎたときに始める。
 
 **コンテナを再起動しない**：ゲームコンテナが終了したら、終了コードに応じて Shutdown か Unhealthy にする。
 v1.62.0 の既定の設定（feature gate の SidecarContainers が有効）での本家の挙動に合わせている。
@@ -632,7 +632,7 @@ GameServer の制御は、ノードのない GameServer を 1 回の処理でま
 状態を二重に持たないので、解放を忘れることも、数え間違えることもない。
 
 本家の portallocator は、ノードごとの「枠」を持つが、実際にどのノードに置くかは kube-scheduler に任せている。
-agones-lite ではノードを自分で決めるので、割り当ての仕組みは書き直す。
+scrim ではノードを自分で決めるので、割り当ての仕組みは書き直す。
 
 ## エージェントと Docker
 
@@ -701,11 +701,11 @@ Kubernetes の Pod と同じ構造である。
 
 | ラベル | 値 |
 |---|---|
-| `agones-lite.namespace` | GameServer の namespace |
-| `agones-lite.gameserver` | GameServer の名前 |
-| `agones-lite.uid` | GameServer の uid |
-| `agones-lite.role` | `sidecar`、`game`（主となるコンテナ）、`other` |
-| `agones-lite.node` | そのコンテナを管理するエージェントのノード名 |
+| `scrim.namespace` | GameServer の namespace |
+| `scrim.gameserver` | GameServer の名前 |
+| `scrim.uid` | GameServer の uid |
+| `scrim.role` | `sidecar`、`game`（主となるコンテナ）、`other` |
+| `scrim.node` | そのコンテナを管理するエージェントのノード名 |
 
 ### エージェントの再起動
 
@@ -730,7 +730,7 @@ Docker との通信は、Docker Engine API を Unix ソケット越しに HTTP �
 Docker Engine API にはバージョンがあり、デーモンは対応する範囲の外の要求を断る。
 たとえば Docker 29 は、1.44 より前のバージョンを受け付けない。
 クライアントは、最初の呼び出しの前にデーモンへ対応範囲を尋ね、自分が対応する範囲（1.41 から 1.52）と重なる中で最も新しいバージョンを使う。
-重なりがなければ、Docker と agones-lite のどちらを更新すべきかをエラーで伝える。
+重なりがなければ、Docker と scrim のどちらを更新すべきかをエラーで伝える。
 
 非公開のレジストリからイメージを取得するときは、ノードにある Docker の設定ファイルの認証情報を使う。
 既定の場所は `~/.docker/config.json` で、`--docker-config` で変えられる。
@@ -744,7 +744,7 @@ sidecar は、同じノードのエージェントに gRPC で接続する。
 
 | 環境 | 経路 | エージェントが待ち受ける場所 |
 |---|---|---|
-| Linux | Unix ソケット。ソケットのあるディレクトリを sidecar コンテナにマウントする | `/run/agones-lite/<ノード名>/agent.sock` |
+| Linux | Unix ソケット。ソケットのあるディレクトリを sidecar コンテナにマウントする | `/run/scrim/<ノード名>/agent.sock` |
 | macOS（Docker Desktop、Colima） | TCP。sidecar は `host.docker.internal` に接続し、仮想マシンがホストのループバックに転送する | `127.0.0.1:9447` |
 
 Linux で TCP を使わないのは、ホストのファイアウォールに左右されないためである。
@@ -754,7 +754,7 @@ Oracle Cloud の Ubuntu イメージがそうであり、ufw の既定の設定�
 Unix ソケットはファイアウォールを通らない。
 ソケットのあるディレクトリは所有者だけが開けるので、同じホストの他の利用者は接続できない。
 
-root 以外で動かすときは、`$XDG_RUNTIME_DIR/agones-lite/<ノード名>/agent.sock` を使う。
+root 以外で動かすときは、`$XDG_RUNTIME_DIR/scrim/<ノード名>/agent.sock` を使う。
 その環境変数もないときは、ブリッジのゲートウェイの TCP に戻る。
 この場合は、コンテナからゲートウェイの 9447 番への接続を、ホストのファイアウォールで許可する必要がある。
 待ち受ける場所は `--sidecar-listen` で明示できる。
@@ -778,7 +778,7 @@ sidecar は、Kubernetes の型ライブラリを含まない別のバイナリ�
 
 v1.62.0 の SDK は 3 つのサービスからなる。
 
-| サービス | RPC | agones-lite での扱い |
+| サービス | RPC | scrim での扱い |
 |---|---|---|
 | stable（`agones.dev.sdk.SDK`） | Ready、Allocate、Shutdown、Health、GetGameServer、WatchGameServer、SetLabel、SetAnnotation、Reserve | すべて実装する |
 | beta（`agones.dev.sdk.beta.SDK`） | GetCounter、UpdateCounter、GetList、UpdateList、AddListValue、RemoveListValue | すべて実装する |
@@ -803,12 +803,12 @@ Counter と List の RPC が失敗したときに返すエラーコードは、v
 
 WebSocket への対応には、本家が使っているのと同じ変換ライブラリを使う。
 本家は `go.mod` の `replace` でこのライブラリを修正版に差し替えている。
-`replace` は依存先には引き継がれないので、agones-lite の `go.mod` にも同じ指定を書く。
+`replace` は依存先には引き継がれないので、scrim の `go.mod` にも同じ指定を書く。
 
 ### エージェントとの通信
 
 sidecar は、同じノードのエージェントと gRPC で通信する。
-この通信の定義は agones-lite 独自のもので、`proto/sidecar/v1` に置く。
+この通信の定義は scrim 独自のもので、`proto/sidecar/v1` に置く。
 
 通信は sidecar から始める。
 接続すると、エージェントは対象の GameServer の現在の状態を送り、以後は変更のたびに送る。
@@ -853,10 +853,10 @@ sidecar の判断（`pkg/sdkserver/pending.go`）とコントロールプレー�
 
 変更には、sidecar が 1 件ごとに固有の名前を付ける。
 応答が途中で失われると、sidecar は同じ変更をもう一度送る。
-コントロールプレーンは、最後に反映した変更の名前を GameServer のアノテーション（`agones-lite/last-counts-change`）に覚えておき、同じ名前の変更は反映しない。
+コントロールプレーンは、最後に反映した変更の名前を GameServer のアノテーション（`scrim/last-counts-change`）に覚えておき、同じ名前の変更は反映しない。
 
 本家は、500 ミリ秒の間に来た変更をまとめてから API サーバに送る。
-agones-lite はまとめない。
+scrim はまとめない。
 エージェントは同じノードにあり、1 件ずつ送っても負荷にならないためである。
 変更の間隔が 500 ミリ秒より長ければ、結果は本家と同じになる。
 間隔がそれより短いときは、結果が違うことがある。
@@ -896,7 +896,7 @@ sidecar のコンテナが止まると、ゲームコンテナは通信できな
 Allocated でも同じである。
 
 本家では、SDK サーバのコンテナだけが再起動し、Pod は残る。
-agones-lite には Pod の土台にあたる別のコンテナがないので、この違いが出る。
+scrim には Pod の土台にあたる別のコンテナがないので、この違いが出る。
 
 ## Fleet と GameServerSet
 
@@ -1050,7 +1050,7 @@ GameServer を選ぶ処理は、1 件ずつ直列に行う。
 できるのは、もう一度要求することだけである。
 要求に名前がなければ、そのたびに別の 1 台が取られる。
 
-マッチメイカは、対戦ごとに自分で決めた値を、要求の `metadata.annotations` に `agones-lite/allocation-key` として入れる。
+マッチメイカは、対戦ごとに自分で決めた値を、要求の `metadata.annotations` に `scrim/allocation-key` として入れる。
 同じキーの要求には、先に渡した GameServer のセッションが続いているかぎり、その GameServer を答える。
 新しく取るものはない。
 カウンタとリストの操作も、繰り返さない。
@@ -1144,7 +1144,7 @@ Buffer ポリシーは、待機させる台数（`bufferSize`）を書いた人�
 ポリシーの意味は本家のまま変えないが、台数を決める計算は CLI で手伝う。
 
 ```text
-$ agones-lite buffer --rate 2 --startup 5s
+$ scrim buffer --rate 2 --startup 5s
 bufferSize: 90
 ```
 
@@ -1402,7 +1402,7 @@ Allocation API のクライアント証明書による認証は、本家の allo
 トークンは、所有者だけが読めるファイルとして置く。
 設計の初期には、SQLite にハッシュだけを保存する案だった。
 運用者がトークンを読み出す先がどのみち同じディレクトリのファイルになるので、ファイルだけにした。
-`agones-lite token rotate` でトークンを取り替えると、稼働中のコントロールプレーンは 5 秒以内に新しいトークンに切り替わる。
+`scrim token rotate` でトークンを取り替えると、稼働中のコントロールプレーンは 5 秒以内に新しいトークンに切り替わる。
 古いトークンで始まった長い応答（変更の購読、ログの追跡、エージェントのストリーム）も、次の確認で打ち切る。
 確認は 5 秒ごとに行う。
 
@@ -1414,28 +1414,28 @@ CLI は、本体と同じバイナリのサブコマンドである。
 引数の解析には標準ライブラリの `flag` を使う。
 
 ```text
-agones-lite server                        コントロールプレーンを起動する
-agones-lite agent                         別のマシンでエージェントを起動する
+scrim server                        コントロールプレーンを起動する
+scrim agent                         別のマシンでエージェントを起動する
 
-agones-lite apply -f FILE                 YAML を適用する
-agones-lite get KIND [NAME]               一覧、または 1 件を YAML で表示する
-agones-lite get KIND -w                   一覧のあと、変更を表示し続ける
-agones-lite describe KIND NAME            1 件の内容とイベント履歴を表示する
-agones-lite delete KIND NAME              削除する
-agones-lite scale fleet NAME --replicas N Fleet の台数を変える
-agones-lite logs GAMESERVER               コンテナのログを表示する (-c, -f, --tail)
-agones-lite allocate --fleet NAME         Allocation を 1 回試す (-f で要求を指定)
-agones-lite buffer --rate N --startup D   Buffer ポリシーの bufferSize を求める
+scrim apply -f FILE                 YAML を適用する
+scrim get KIND [NAME]               一覧、または 1 件を YAML で表示する
+scrim get KIND -w                   一覧のあと、変更を表示し続ける
+scrim describe KIND NAME            1 件の内容とイベント履歴を表示する
+scrim delete KIND NAME              削除する
+scrim scale fleet NAME --replicas N Fleet の台数を変える
+scrim logs GAMESERVER               コンテナのログを表示する (-c, -f, --tail)
+scrim allocate --fleet NAME         Allocation を 1 回試す (-f で要求を指定)
+scrim buffer --rate N --startup D   Buffer ポリシーの bufferSize を求める
 
-agones-lite node cordon|uncordon|drain|delete NAME
-agones-lite token show|rotate admin|allocator|join
-agones-lite version
+scrim node cordon|uncordon|drain|delete NAME
+scrim token show|rotate admin|allocator|join
+scrim version
 ```
 
 `KIND` には `gameserver`（`gs`）、`gameserverset`（`gss`）、`fleet`（`flt`）、`fleetautoscaler`（`fas`）、`node` を指定できる。
 フラグは、位置引数の前にも後ろにも書ける。
 
-接続先、トークン、CA 証明書は、フラグか環境変数（`AGONES_LITE_SERVER`、`AGONES_LITE_TOKEN`、`AGONES_LITE_CA_FILE`）で与える。
+接続先、トークン、CA 証明書は、フラグか環境変数（`SCRIM_SERVER`、`SCRIM_TOKEN`、`SCRIM_CA_FILE`）で与える。
 どちらもなければ、同じマシンにあるコントロールプレーンのデータディレクトリから読む。
 コントロールプレーンと同じマシンで使うかぎり、何も指定しなくてよい。
 
@@ -1455,16 +1455,16 @@ agones-lite version
 | `agones_fleet_autoscalers_*` | FleetAutoscaler の現在の台数、望ましい台数、スケールできるか、制限されたか |
 | `agones_gameserver_allocations_duration_seconds` | Allocation の所要時間 |
 | `agones_nodes_count` | ゲームサーバのあるノードと、空のノードの数 |
-| `agones_lite_store_lag_seconds` | ファイルがメモリより遅れている時間 |
-| `agones_lite_store_save_duration_seconds` | ファイルへの保存 1 回の所要時間（1 つのトランザクションと、1 回のディスクへの同期） |
-| `agones_lite_store_save_changes` | 保存 1 回がまとめて書いた変更の数 |
+| `scrim_store_lag_seconds` | ファイルがメモリより遅れている時間 |
+| `scrim_store_save_duration_seconds` | ファイルへの保存 1 回の所要時間（1 つのトランザクションと、1 回のディスクへの同期） |
+| `scrim_store_save_changes` | 保存 1 回がまとめて書いた変更の数 |
 
-`agones_lite_` で始まる 3 つは、本家にない agones-lite だけのメトリクスである。
+`scrim_` で始まる 3 つは、本家にない scrim だけのメトリクスである。
 どれも store のファイルについてのもので、外への応答はすべてこのファイルを待つ。
 応答が遅いときは、まず保存の所要時間を見る。
 
 Allocation の所要時間のバケットは、本家と同じである。
-最初の境界が 10 ミリ秒なので、1 ミリ秒から 5 ミリ秒で終わる agones-lite の割り当ては、すべて最初のバケットに入る。
+最初の境界が 10 ミリ秒なので、1 ミリ秒から 5 ミリ秒で終わる scrim の割り当ては、すべて最初のバケットに入る。
 このバケットから分位点を読んでも、「10 ミリ秒未満」としか分からない。
 そこで、同じ観測値を native histogram にも入れる。
 境界が 1.1 倍ずつ広がるバケットを、値が来た所にだけ作るので、どこに値が落ちても、分位点の誤差は値の 5% 以内に収まる。
@@ -1478,7 +1478,7 @@ native histogram は、対応した Prometheus がそれを求めたときにだ
 Prometheus が取りに来るたびに、store から数える。
 回数と所要時間だけは後から数え直せないので、起きたときに記録する。
 
-本家にあって agones-lite にないのは、ノードあたりの台数の分布、各状態にとどまった時間、Kubernetes のクライアントに関するものである。
+本家にあって scrim にないのは、ノードあたりの台数の分布、各状態にとどまった時間、Kubernetes のクライアントに関するものである。
 
 ### イベント履歴
 
@@ -1501,7 +1501,7 @@ CLI の `describe` が、対象のリソースのイベントを新しい順に�
 同じプロセスにいるエージェントには、関数の呼び出しで直接頼む。
 別のマシンのエージェントには、Watch のストリームで依頼を伝える。
 
-agones-lite 自身のログは、標準ライブラリの `slog` で標準エラー出力に書く。
+scrim 自身のログは、標準ライブラリの `slog` で標準エラー出力に書く。
 
 ## 設定
 
@@ -1512,7 +1512,7 @@ agones-lite 自身のログは、標準ライブラリの `slog` で標準エラ
 コントロールプレーンの例を示す（`deploy/server.yaml`）。
 
 ```yaml
-data-dir: /var/lib/agones-lite
+data-dir: /var/lib/scrim
 
 # 運用者、マッチメイカ、別のマシンのエージェントが接続する先
 listen: 0.0.0.0:9443
@@ -1532,7 +1532,7 @@ max-port: 8000
 
 ```yaml
 server: cp.example.com:9445
-token-file: /etc/agones-lite/join-token
+token-file: /etc/scrim/join-token
 
 node-name: node-2
 address: 203.0.113.11
@@ -1541,11 +1541,11 @@ max-port: 8000
 ```
 
 主なフラグは次のとおりである。
-全体は `agones-lite server --help` と `agones-lite agent --help` で見られる。
+全体は `scrim server --help` と `scrim agent --help` で見られる。
 
 | フラグ | 既定 | 内容 |
 |---|---|---|
-| `--data-dir` | `agones-lite-data` | 状態、証明書、トークンの置き場所 |
+| `--data-dir` | `scrim-data` | 状態、証明書、トークンの置き場所 |
 | `--node-listen` | なし | 別のマシンのエージェントを受け付けるアドレス |
 | `--no-agent` | 偽 | このマシンではゲームサーバを動かさない |
 | `--node-lost-grace` | 5 分 | 切断されたノードの、割り当て前のゲームサーバを待つ時間 |
@@ -1561,7 +1561,7 @@ max-port: 8000
 
 ```text
 cmd/
-  agones-lite/          本体。サブコマンドを振り分ける
+  scrim/          本体。サブコマンドを振り分ける
   sidecar/              sidecar
 pkg/
   store/                状態の保存と変更の通知
@@ -1586,7 +1586,7 @@ pkg/
   controlplane/         上の部品をつなぎ合わせる
   cli/                  CLI のサブコマンド
   agones/               本家の型を Kubernetes なしで使うための準備
-  apis/lite/v1/         agones-lite 独自のリソース（Node）
+  apis/scrim/v1/         scrim 独自のリソース（Node）
   version/              バージョン
 proto/
   node/v1/              エージェントとコントロールプレーンの通信
@@ -1601,7 +1601,7 @@ deploy/                 systemd のユニットと設定ファイルの例
 
 本家との対応は次のとおりである。
 
-| agones-lite | 本家（`third_party/agones` からのパス） |
+| scrim | 本家（`third_party/agones` からのパス） |
 |---|---|
 | `pkg/gameservers` | `pkg/gameservers/controller.go`、`health.go`、`missing.go`、`migration.go`、`succeeded.go`、`pernodecounter.go` |
 | `pkg/portallocator` | `pkg/portallocator/portallocator.go` |
@@ -1644,7 +1644,7 @@ deploy/                 systemd のユニットと設定ファイルの例
 部品のつながりを知りたいときは、ここから読むのが早い。
 
 本家と読み比べるときは、前の節の対応表から本家のファイルを開く。
-本家では 1 つの関数に入っている処理が、agones-lite では判断と実行に分かれていることが多い。
+本家では 1 つの関数に入っている処理が、scrim では判断と実行に分かれていることが多い。
 
 ## コーディングの規約と検査
 
@@ -1779,10 +1779,10 @@ Docker だけを代役にし、その代役は「sidecar コンテナの起動�
 時間がかかるので、指定したときだけ走る。
 
 ```sh
-AGONES_LITE_LOAD=1 go test ./pkg/controlplane/ -run TestLoad -v
+SCRIM_LOAD=1 go test ./pkg/controlplane/ -run TestLoad -v
 ```
 
-疑似ノードのほかは `agones-lite server` と同じ構成で、イベント履歴とメトリクスも動かす。
+疑似ノードのほかは `scrim server` と同じ構成で、イベント履歴とメトリクスも動かす。
 
 裾の遅延の測り方は、文献に従う。
 
@@ -1882,10 +1882,10 @@ systemd のユニットは、サービスを止めてもコンテナを止めな
 
 導入の手順は次のようになる。
 
-1. コントロールプレーンにする VM に本体を置き、`agones-lite server` を起動する。
-2. 同じ VM で `agones-lite apply -f fleet.yaml` を実行して Fleet を作る。
-3. ノードを増やすなら、`--node-listen` を指定してコントロールプレーンを起動し、`agones-lite token show join` で参加トークンを表示する。
-4. 追加の VM に本体を置き、参加トークンを指定して `agones-lite agent` を起動する。
+1. コントロールプレーンにする VM に本体を置き、`scrim server` を起動する。
+2. 同じ VM で `scrim apply -f fleet.yaml` を実行して Fleet を作る。
+3. ノードを増やすなら、`--node-listen` を指定してコントロールプレーンを起動し、`scrim token show join` で参加トークンを表示する。
+4. 追加の VM に本体を置き、参加トークンを指定して `scrim agent` を起動する。
 
 バックアップは、SQLite のファイルを複製して取る。
 稼働中に安全に複製する手順を、運用の文書に書く。
@@ -1935,7 +1935,7 @@ sidecar とエージェントの間は Unix ソケットなので、開けるも
 - `spec.sdkServer.logLevel` は受け付けるが、sidecar のログの量は変わらない。
 - 資格情報ヘルパ（`credsStore`）を使うレジストリからは、イメージを取得できない。
 - `priorities` を指定した Distributed の割り当てと、条件に合う GameServer が少ない Distributed の割り当ては、同じ namespace の全 GameServer を見る。1 万台では 1 件あたり数ミリ秒かかる。
-- 要求のキー（`agones-lite/allocation-key`）は、マッチメイカが自分で付ける。付けない要求の再試行は、従来どおり別の 1 台を取る。
+- 要求のキー（`scrim/allocation-key`）は、マッチメイカが自分で付ける。付けない要求の再試行は、従来どおり別の 1 台を取る。
 - リリース用のワークフローは、同じコマンドを手元で実行して成果物を確かめた。ワークフローそのものは、タグを push していないので実行していない。
 
 ## 実装時に確かめたこと
@@ -1998,7 +1998,7 @@ M7 で、ベンチマークと負荷試験を Linux のサーバで走らせ、�
 計測に使ったのは、arm64 の 1 コア（6 GB）のサーバである。
 ディスクへの同期（`fdatasync`）には、1 回あたり約 1.5 ミリ秒かかる。
 負荷試験は、それまでイベント履歴とメトリクスを動かさずに測っていた。
-`agones-lite server` と同じ構成にすると、1,000 台が Ready になるまでに 33 秒かかっていた。
+`scrim server` と同じ構成にすると、1,000 台が Ready になるまでに 33 秒かかっていた。
 
 | 測ったもの | 直す前 | 直した後 |
 |---|---|---|

@@ -1,11 +1,11 @@
 name: Something is missing
-description: A part of Agones that agones-lite should have, or something that would make it easier to run.
+description: A part of Agones that scrim should have, or something that would make it easier to run.
 labels: [enhancement]
 body:
   - type: markdown
     attributes:
       value: |
-        The scope is small on purpose. [docs/planning.md](https://github.com/ponyo877/agones-lite/blob/main/docs/planning.md) lists what was left out and why: have a look first.
+        The scope is small on purpose. [docs/planning.md](https://github.com/ponyo877/scrim/blob/main/docs/planning.md) lists what was left out and why: have a look first.
   - type: textarea
     id: what
     attributes:

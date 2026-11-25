@@ -114,7 +114,7 @@ func TestTheStoreBehavesLikeAMap(t *testing.T) {
 // of times, and waiting for a disk each time would say nothing about what
 // it checks, which is not whether the disk keeps what it was given.
 func scratch(t *testing.T) string {
-	dir, err := os.MkdirTemp("/dev/shm", "agones-lite-store-")
+	dir, err := os.MkdirTemp("/dev/shm", "scrim-store-")
 	if err != nil {
 		return t.TempDir()
 	}

@@ -20,7 +20,7 @@ import (
 // and enforces its limits. Upstream's ApplyDefaults and Validate count on
 // that. They never give a Counter its capacity, nor ask whether a number is
 // negative or an enum is one of its values. Nothing else does that here, so
-// this file repeats the schema for the fields agones-lite reads.
+// this file repeats the schema for the fields scrim reads.
 //
 // The schema is install/helm/agones/templates/crds in the Agones repository.
 
@@ -310,7 +310,7 @@ func webhookSchema(w *autoscalingv1.URLConfiguration, at *field.Path) field.Erro
 	case w == nil:
 		return nil
 	case w.Service != nil:
-		return field.ErrorList{field.Forbidden(at.Child("service"), "there are no Services in agones-lite: give the webhook's url")}
+		return field.ErrorList{field.Forbidden(at.Child("service"), "there are no Services in scrim: give the webhook's url")}
 	case w.URL != nil && !isWebAddress(*w.URL):
 		return field.ErrorList{field.Invalid(at.Child("url"), *w.URL, "must be an http or https URL")}
 	}

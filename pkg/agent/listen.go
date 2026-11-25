@@ -9,7 +9,7 @@ import (
 
 // socketMount is where the directory of the agent's socket appears inside a
 // sidecar container.
-const socketMount = "/run/agones-lite"
+const socketMount = "/run/scrim"
 
 // socketScheme marks a SidecarListen address that is a unix socket.
 const socketScheme = "unix://"

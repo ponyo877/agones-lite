@@ -11,7 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"pgregory.net/rapid"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
 )
 
 // These tests state what must hold for any input and let rapid look for an
@@ -42,11 +42,11 @@ func aGameServer(t *rapid.T) *agonesv1.GameServer {
 
 // aRange draws a range from the narrow band, or now and then one that ends
 // where int32 does.
-func aRange(t *rapid.T) litev1.PortRange {
+func aRange(t *rapid.T) scrimv1.PortRange {
 	if rapid.IntRange(0, 9).Draw(t, "atTheEnd") == 0 {
-		return litev1.PortRange{Min: math.MaxInt32 - rapid.Int32Range(0, 3).Draw(t, "below"), Max: math.MaxInt32}
+		return scrimv1.PortRange{Min: math.MaxInt32 - rapid.Int32Range(0, 3).Draw(t, "below"), Max: math.MaxInt32}
 	}
-	return litev1.PortRange{Min: aPort().Draw(t, "min"), Max: aPort().Draw(t, "max")}
+	return scrimv1.PortRange{Min: aPort().Draw(t, "min"), Max: aPort().Draw(t, "max")}
 }
 
 func someUsedPorts(t *rapid.T) map[int32]bool {
@@ -97,7 +97,7 @@ func TestAllocateOnlyRefusesForAReasonAndThenChangesNothing(t *testing.T) {
 }
 
 // tooFewFree counts the free ports of the range the slow, obvious way.
-func tooFewFree(gs *agonesv1.GameServer, r litev1.PortRange, used map[int32]bool) bool {
+func tooFewFree(gs *agonesv1.GameServer, r scrimv1.PortRange, used map[int32]bool) bool {
 	static := map[int32]bool{}
 	for _, p := range gs.Spec.Ports {
 		if p.PortPolicy == agonesv1.Static {

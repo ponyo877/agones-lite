@@ -6,8 +6,8 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/ponyo877/agones-lite/pkg/docker"
-	"github.com/ponyo877/agones-lite/pkg/podspec"
+	"github.com/ponyo877/scrim/pkg/docker"
+	"github.com/ponyo877/scrim/pkg/podspec"
 )
 
 // warnOfUnmanaged says, once when the agent starts, that the Docker daemon
@@ -29,7 +29,7 @@ func (a *Agent) warnOfUnmanaged(ctx context.Context) {
 	slog.Warn("this Docker daemon has game server containers of other nodes, which this agent leaves alone; "+
 		"unless another agent runs here, they are left over from an earlier --node-name and hold their host ports",
 		"containers", total, "nodes", others,
-		"remedy", "for each node: agones-lite node delete <node>, then docker rm -f $(docker ps -aq --filter label="+podspec.LabelNode+"=<node>)")
+		"remedy", "for each node: scrim node delete <node>, then docker rm -f $(docker ps -aq --filter label="+podspec.LabelNode+"=<node>)")
 }
 
 // unmanaged names the other nodes that containers belong to, and counts

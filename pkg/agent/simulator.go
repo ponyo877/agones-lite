@@ -7,8 +7,8 @@ import (
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/gameservers"
 )
 
 // Simulator stands in for an agent, Docker and a well-behaved game server
@@ -18,12 +18,12 @@ import (
 // It exists for tests and for load tests, where a thousand game servers are
 // needed and their containers are not.
 type Simulator struct {
-	Node *litev1.Node
+	Node *scrimv1.Node
 	cp   ControlPlane
 }
 
 // NewSimulator returns a Simulator that pretends to be node.
-func NewSimulator(node *litev1.Node, cp ControlPlane) *Simulator {
+func NewSimulator(node *scrimv1.Node, cp ControlPlane) *Simulator {
 	return &Simulator{Node: node, cp: cp}
 }
 

@@ -8,10 +8,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
 )
 
-var ports7000to7002 = litev1.PortRange{Min: 7000, Max: 7002}
+var ports7000to7002 = scrimv1.PortRange{Min: 7000, Max: 7002}
 
 func server(ports ...agonesv1.GameServerPort) *agonesv1.GameServer {
 	return &agonesv1.GameServer{Spec: agonesv1.GameServerSpec{Ports: ports}}
@@ -120,7 +120,7 @@ func TestUsedCountsATCPUDPPortOnce(t *testing.T) {
 // reached the end of int32: the loop over the range counted on past it, to
 // the smallest int32, and handed that out as the third port.
 func TestARangeThatEndsWhereInt32DoesHasNoPortsBeyondIt(t *testing.T) {
-	lastTwo := litev1.PortRange{Min: math.MaxInt32 - 1, Max: math.MaxInt32}
+	lastTwo := scrimv1.PortRange{Min: math.MaxInt32 - 1, Max: math.MaxInt32}
 	dynamic := port(agonesv1.Dynamic, corev1.ProtocolUDP)
 
 	two := server(dynamic, dynamic)

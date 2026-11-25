@@ -22,11 +22,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/docker"
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
-	"github.com/ponyo877/agones-lite/pkg/podspec"
-	sidecarv1 "github.com/ponyo877/agones-lite/proto/sidecar/v1"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/docker"
+	"github.com/ponyo877/scrim/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/podspec"
+	sidecarv1 "github.com/ponyo877/scrim/proto/sidecar/v1"
 )
 
 // fakeDocker records what the agent asks of Docker, in order.
@@ -112,7 +112,7 @@ type fakeControlPlane struct {
 	deaf    gameservers.Event // a report it does not take, as when the network fails
 }
 
-func (f *fakeControlPlane) Register(context.Context, *litev1.Node) error   { return nil }
+func (f *fakeControlPlane) Register(context.Context, *scrimv1.Node) error  { return nil }
 func (f *fakeControlPlane) Assigned(string) ([]*agonesv1.GameServer, bool) { return f.placed, true }
 func (f *fakeControlPlane) Changes() (<-chan struct{}, func())             { return nil, func() {} }
 func (f *fakeControlPlane) SetMetadata(context.Context, string, string, map[string]string, map[string]string) error {
@@ -154,10 +154,10 @@ func TestCreateBringsTheContainersUpInOrder(t *testing.T) {
 
 	assert.Equal(t, []string{
 		"pull example/game:1", // the sidecar image is already there
-		"create agones-lite_default_gs_agones-gameserver-sidecar",
-		"create agones-lite_default_gs_game",
-		"start agones-lite_default_gs_agones-gameserver-sidecar", // the network's owner goes first
-		"start agones-lite_default_gs_game",
+		"create scrim_default_gs_agones-gameserver-sidecar",
+		"create scrim_default_gs_game",
+		"start scrim_default_gs_agones-gameserver-sidecar", // the network's owner goes first
+		"start scrim_default_gs_game",
 	}, d.calls)
 	assert.Equal(t, []gameservers.Event{gameservers.ContainersCreated, gameservers.ContainersRunning}, cp.events)
 	assert.NotEmpty(t, a.sidecars.tickets[key].token, "the sidecar must be let in before it starts")
@@ -237,7 +237,7 @@ func TestRemoveStopsTheGameBeforeItsSidecar(t *testing.T) {
 		"stop gs-game 5s", // the game can still reach the SDK while it shuts down
 		"remove gs-sidecar",
 		"remove gs-game",
-		"remove volumes agones-lite_default_gs_",
+		"remove volumes scrim_default_gs_",
 	}, d.calls)
 	assert.Equal(t, []gameservers.Event{gameservers.ContainersRemoved}, cp.events)
 }
@@ -310,16 +310,16 @@ func TestAPassThatListedBeforeACreateWasDoneDoesNotCreateAgain(t *testing.T) {
 	settle(t, a)
 
 	assert.Equal(t, []string{
-		"create agones-lite_default_gs_agones-gameserver-sidecar",
-		"create agones-lite_default_gs_game",
-		"start agones-lite_default_gs_agones-gameserver-sidecar",
-		"start agones-lite_default_gs_game",
+		"create scrim_default_gs_agones-gameserver-sidecar",
+		"create scrim_default_gs_game",
+		"start scrim_default_gs_agones-gameserver-sidecar",
+		"start scrim_default_gs_game",
 	}, d.calls, "the list said there was nothing, but it was too old to say")
 	assert.Equal(t, []gameservers.Event{gameservers.ContainersCreated, gameservers.ContainersRunning}, cp.events)
 }
 
 func TestACreateThatFindsItsContainersThereAlreadyFailsNothing(t *testing.T) {
-	sidecar := "agones-lite_default_gs_agones-gameserver-sidecar"
+	sidecar := "scrim_default_gs_agones-gameserver-sidecar"
 	images := map[string]bool{"sidecar:dev": true, "example/game:1": true}
 	create := Action{Kind: Create, Key: key, GameServer: placed()}
 
@@ -499,9 +499,9 @@ func TestWhatIsKeptForAGameServerGoesWithIt(t *testing.T) {
 
 func TestLogsReadTheMainContainerUnlessAnotherIsNamed(t *testing.T) {
 	sidecar := container("gs", podspec.RoleSidecar, "running", 0)
-	sidecar.Name = "agones-lite_default_gs_agones-gameserver-sidecar"
+	sidecar.Name = "scrim_default_gs_agones-gameserver-sidecar"
 	game := container("gs", podspec.RoleGame, "running", 0)
-	game.Name = "agones-lite_default_gs_game"
+	game.Name = "scrim_default_gs_game"
 	a, _ := newAgent(&fakeDocker{containers: []docker.Container{sidecar, game, container("other", podspec.RoleGame, "running", 0)}})
 
 	read := func(req LogRequest) string {

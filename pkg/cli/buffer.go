@@ -8,7 +8,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/ponyo877/agones-lite/pkg/fleetautoscalers"
+	"github.com/ponyo877/scrim/pkg/fleetautoscalers"
 )
 
 // runBuffer answers what a Buffer policy leaves to whoever writes it: how
@@ -24,7 +24,7 @@ func runBuffer(_ context.Context, args []string, out io.Writer) error {
 		return err
 	}
 	if *rate <= 0 || *startup < 0 || *sync <= 0 || *miss <= 0 || *miss >= 1 {
-		return errors.New("usage: agones-lite buffer --rate PER_SECOND --startup DURATION [--sync DURATION] [--miss SHARE]")
+		return errors.New("usage: scrim buffer --rate PER_SECOND --startup DURATION [--sync DURATION] [--miss SHARE]")
 	}
 	size := fleetautoscalers.BufferFor(*rate, *startup, *sync, *miss)
 	_, err := fmt.Fprintf(out, `bufferSize: %d

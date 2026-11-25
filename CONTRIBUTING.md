@@ -1,6 +1,6 @@
-# Contributing to agones-lite
+# Contributing to scrim
 
-Thank you for looking into agones-lite. Issues and pull requests are
+Thank you for looking into scrim. Issues and pull requests are
 welcome, in English or in Japanese.
 
 ## Before you start
@@ -10,7 +10,7 @@ welcome, in English or in Japanese.
 - **Something larger** is better talked over in an issue first. The scope is
   small on purpose, and [docs/planning.md](docs/planning.md) lists what was
   left out and why.
-- **Compatibility is pinned to Agones v1.62.0.** Where agones-lite does what
+- **Compatibility is pinned to Agones v1.62.0.** Where scrim does what
   Agones does, it should do it the same way. A difference that is not
   written down in [docs/design.md](docs/design.md) is a bug worth reporting.
 - **A security issue** does not belong in a public issue. See
@@ -21,8 +21,8 @@ welcome, in English or in Japanese.
 You need Go (the version in `go.mod`), Docker and `make`.
 
 ```sh
-git clone --recurse-submodules https://github.com/ponyo877/agones-lite.git
-cd agones-lite
+git clone --recurse-submodules https://github.com/ponyo877/scrim.git
+cd scrim
 make build sidecar-image
 make test
 ```
@@ -85,4 +85,4 @@ The types in use are `feat`, `fix`, `test`, `docs`, `refactor`, `build` and
 ## License
 
 By contributing you agree that your contribution is licensed under the
-[Apache License 2.0](LICENSE), as the rest of agones-lite is.
+[Apache License 2.0](LICENSE), as the rest of scrim is.

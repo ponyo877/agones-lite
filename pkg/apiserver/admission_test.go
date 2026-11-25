@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/ponyo877/agones-lite/pkg/agones"
+	"github.com/ponyo877/scrim/pkg/agones"
 )
 
 const scalerManifest = `

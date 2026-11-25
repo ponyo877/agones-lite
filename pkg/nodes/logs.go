@@ -9,9 +9,9 @@ import (
 	"io"
 	"math"
 
-	"github.com/ponyo877/agones-lite/pkg/agent"
-	"github.com/ponyo877/agones-lite/pkg/store"
-	nodev1 "github.com/ponyo877/agones-lite/proto/node/v1"
+	"github.com/ponyo877/scrim/pkg/agent"
+	"github.com/ponyo877/scrim/pkg/store"
+	nodev1 "github.com/ponyo877/scrim/proto/node/v1"
 )
 
 // logChunk is how much of a log travels in one message.

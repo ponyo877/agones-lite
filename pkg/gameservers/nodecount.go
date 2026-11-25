@@ -3,7 +3,7 @@ package gameservers
 import (
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 
-	"github.com/ponyo877/agones-lite/pkg/store"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
 // NodeCount is how many Ready and Allocated GameServers a node holds.

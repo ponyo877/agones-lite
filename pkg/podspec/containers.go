@@ -8,21 +8,21 @@ import (
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	corev1 "k8s.io/api/core/v1"
 
-	"github.com/ponyo877/agones-lite/pkg/docker"
+	"github.com/ponyo877/scrim/pkg/docker"
 )
 
 // Labels on every container of a GameServer. The agent finds its containers
 // by them, so nothing about a GameServer lives only in the agent's memory.
 const (
-	LabelNamespace  = "agones-lite.namespace"
-	LabelGameServer = "agones-lite.gameserver"
-	LabelUID        = "agones-lite.uid"
+	LabelNamespace  = "scrim.namespace"
+	LabelGameServer = "scrim.gameserver"
+	LabelUID        = "scrim.uid"
 	// LabelNode names the node whose agent owns the container. An agent only
 	// touches its own, so two agents can share one Docker daemon.
-	LabelNode = "agones-lite.node"
-	LabelRole = "agones-lite.role"
+	LabelNode = "scrim.node"
+	LabelRole = "scrim.role"
 	// LabelToken is on the sidecar only: the secret it shows the agent.
-	LabelToken = "agones-lite.token" //nolint:gosec // the name of the label, not what is in it
+	LabelToken = "scrim.token"
 )
 
 // Roles a container can have within a GameServer.
@@ -37,9 +37,9 @@ const SidecarName = "agones-gameserver-sidecar"
 
 // Environment variables the sidecar reads.
 const (
-	EnvAgent      = "AGONES_LITE_AGENT"
-	EnvGameServer = "AGONES_LITE_GAMESERVER"
-	EnvToken      = "AGONES_LITE_TOKEN" //nolint:gosec // the name of the variable, not what is in it
+	EnvAgent      = "SCRIM_AGENT"
+	EnvGameServer = "SCRIM_GAMESERVER"
+	EnvToken      = "SCRIM_TOKEN"
 	// The SDK port variables are upstream's, also given to the game containers.
 	EnvGRPCPort = "AGONES_SDK_GRPC_PORT"
 	EnvHTTPPort = "AGONES_SDK_HTTP_PORT"
@@ -98,7 +98,7 @@ const separator = "_"
 
 // Prefix is VolumePrefix for when only the GameServer's name is known.
 func Prefix(namespace, name string) string {
-	return "agones-lite" + separator + namespace + separator + name + separator
+	return "scrim" + separator + namespace + separator + name + separator
 }
 
 // GracePeriod is how long the containers get to exit before being killed.

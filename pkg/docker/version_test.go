@@ -26,8 +26,8 @@ func TestNegotiate(t *testing.T) {
 		"a next major version that still knows ours":      {"2.3", "1.50", "1.52", ""},
 		"a daemon older than Docker 20.10":                {"1.40", "1.12", "", "upgrade Docker"},
 		"versions are numbers: 1.9 is before 1.41":        {"1.9", "1.9", "", "upgrade Docker"},
-		"a daemon that dropped everything we know":        {"1.60", "1.53", "", "upgrade agones-lite"},
-		"a next major version that dropped ours":          {"2.3", "2.0", "", "upgrade agones-lite"},
+		"a daemon that dropped everything we know":        {"1.60", "1.53", "", "upgrade scrim"},
+		"a next major version that dropped ours":          {"2.3", "2.0", "", "upgrade scrim"},
 		"a daemon whose oldest is newer than its newest":  {"1.45", "1.50", "", "no version at all"},
 		"no versions at all":                              {"", "", "", `""`},
 		"a newest version that is not one":                {"latest", "1.44", "", `"latest"`},
@@ -91,7 +91,7 @@ func TestADaemonWithNoVersionInCommonIsRefusedWithAdvice(t *testing.T) {
 
 	err := c.Ping(context.Background())
 
-	assert.ErrorContains(t, err, "upgrade agones-lite")
+	assert.ErrorContains(t, err, "upgrade scrim")
 	assert.Equal(t, []string{"/version"}, asked, "nothing is sent in a version the daemon would refuse")
 }
 

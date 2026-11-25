@@ -23,13 +23,13 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"pgregory.net/rapid"
 
-	"github.com/ponyo877/agones-lite/formal/vectors"
-	"github.com/ponyo877/agones-lite/pkg/agones"
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/control"
-	"github.com/ponyo877/agones-lite/pkg/gameservers"
-	"github.com/ponyo877/agones-lite/pkg/nodes"
-	"github.com/ponyo877/agones-lite/pkg/store"
+	"github.com/ponyo877/scrim/formal/vectors"
+	"github.com/ponyo877/scrim/pkg/agones"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/control"
+	"github.com/ponyo877/scrim/pkg/gameservers"
+	"github.com/ponyo877/scrim/pkg/nodes"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
 // This is a model test of the whole control plane.
@@ -102,7 +102,7 @@ type modelWorld struct {
 
 // puppet is a node whose every report the test makes.
 type puppet struct {
-	node        *litev1.Node
+	node        *scrimv1.Node
 	connected   bool
 	silentSince time.Time
 	containers  map[types.UID]bool // the GameServers whose containers are here
@@ -318,12 +318,12 @@ func (w *modelWorld) join(t *rapid.T) {
 	if w.puppets[name] != nil {
 		t.Skip("it is here already")
 	}
-	p := &puppet{containers: map[types.UID]bool{}, node: &litev1.Node{
+	p := &puppet{containers: map[types.UID]bool{}, node: &scrimv1.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Status: litev1.NodeStatus{
-			Phase:     litev1.NodeReady,
+		Status: scrimv1.NodeStatus{
+			Phase:     scrimv1.NodeReady,
 			Address:   "203.0.113." + name[len(name)-1:],
-			PortRange: litev1.PortRange{Min: 7000, Max: 7999},
+			PortRange: scrimv1.PortRange{Min: 7000, Max: 7999},
 		},
 	}}
 	w.puppets[name] = p
@@ -348,8 +348,8 @@ func (w *modelWorld) fallSilent(t *rapid.T) {
 
 func (w *modelWorld) silence(p *puppet) {
 	p.connected, p.silentSince = false, w.now
-	_ = store.NodesOf(w.store).Change("", p.node.Name, func(n *litev1.Node) bool {
-		n.Status.Phase = litev1.NodeDisconnected
+	_ = store.NodesOf(w.store).Change("", p.node.Name, func(n *scrimv1.Node) bool {
+		n.Status.Phase = scrimv1.NodeDisconnected
 		n.Status.LastHeartbeatTime = metav1.NewTime(w.now)
 		return true
 	})

@@ -20,7 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
-	"github.com/ponyo877/agones-lite/pkg/docker"
+	"github.com/ponyo877/scrim/pkg/docker"
 )
 
 // handling says what to do with a Pod field that is set.
@@ -192,7 +192,7 @@ func unset(v reflect.Value) bool {
 }
 
 func (r *findings) reject(at *field.Path) {
-	r.errs = append(r.errs, field.Forbidden(at, "not supported by agones-lite"))
+	r.errs = append(r.errs, field.Forbidden(at, "not supported by scrim"))
 }
 
 func (r *findings) invalid(at *field.Path, value any, why string) {

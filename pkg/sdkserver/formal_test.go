@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
-	"github.com/ponyo877/agones-lite/formal/vectors"
+	"github.com/ponyo877/scrim/formal/vectors"
 )
 
 // acceptanceVector is one answer of `accepted` in formal/Formal/Counts.lean.

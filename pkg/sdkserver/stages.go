@@ -12,7 +12,7 @@ import (
 var errPlayerTracking = errors.New("PlayerTracking not enabled")
 
 // alpha is the alpha SDK service: player tracking. Upstream ships it turned
-// off and has since removed it; agones-lite behaves like the default.
+// off and has since removed it; scrim behaves like the default.
 type alpha struct {
 	sdkalpha.UnimplementedSDKServer
 }

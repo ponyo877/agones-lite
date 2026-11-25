@@ -12,12 +12,12 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/ponyo877/agones-lite/pkg/agent"
-	"github.com/ponyo877/agones-lite/pkg/agones"
-	litev1 "github.com/ponyo877/agones-lite/pkg/apis/lite/v1"
-	"github.com/ponyo877/agones-lite/pkg/docker"
-	"github.com/ponyo877/agones-lite/pkg/nodes"
-	"github.com/ponyo877/agones-lite/pkg/version"
+	"github.com/ponyo877/scrim/pkg/agent"
+	"github.com/ponyo877/scrim/pkg/agones"
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
+	"github.com/ponyo877/scrim/pkg/docker"
+	"github.com/ponyo877/scrim/pkg/nodes"
+	"github.com/ponyo877/scrim/pkg/version"
 )
 
 const sidecarPort = "9447"
@@ -65,8 +65,8 @@ func defaultDockerConfig() string {
 // are cut to the size the configuration has for them; check refuses the
 // ones that do not fit before anything is done with them.
 func (n *nodeOptions) finish() {
-	n.agent.PortRange = litev1.PortRange{Min: int32(n.minPort), Max: int32(n.maxPort)} //nolint:gosec // see above
-	n.agent.MaxGameServers = int32(n.maxServers)                                       //nolint:gosec // see above
+	n.agent.PortRange = scrimv1.PortRange{Min: int32(n.minPort), Max: int32(n.maxPort)} //nolint:gosec // see above
+	n.agent.MaxGameServers = int32(n.maxServers)                                        //nolint:gosec // see above
 }
 
 // connect checks the node's settings and that the Docker daemon answers,
@@ -130,10 +130,10 @@ func defaultSidecarListen(ctx context.Context, daemon *docker.Client, node strin
 // directory the login session provides. Empty when there is neither.
 func runtimeDir() string {
 	if os.Geteuid() == 0 {
-		return "/run/agones-lite"
+		return "/run/scrim"
 	}
 	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
-		return filepath.Join(dir, "agones-lite")
+		return filepath.Join(dir, "scrim")
 	}
 	return ""
 }
@@ -142,7 +142,7 @@ func runtimeDir() string {
 func runAgent(ctx context.Context, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
 	server := fs.String("server", "", "the control plane's --node-listen address, as host:port")
-	token := fs.String("token", os.Getenv("AGONES_LITE_JOIN_TOKEN"), "join token (or $AGONES_LITE_JOIN_TOKEN)")
+	token := fs.String("token", os.Getenv("SCRIM_JOIN_TOKEN"), "join token (or $SCRIM_JOIN_TOKEN)")
 	tokenFile := fs.String("token-file", "", "file that holds the join token")
 	var node nodeOptions
 	node.register(fs)
@@ -152,7 +152,7 @@ func runAgent(ctx context.Context, args []string, out io.Writer) error {
 	node.finish()
 	joinToken, err := readToken(*token, *tokenFile)
 	if err != nil || *server == "" {
-		return errors.Join(err, errors.New("usage: agones-lite agent --server HOST:PORT --token TOKEN"))
+		return errors.Join(err, errors.New("usage: scrim agent --server HOST:PORT --token TOKEN"))
 	}
 	if err := agones.Setup(); err != nil {
 		return err
@@ -167,7 +167,7 @@ func runAgent(ctx context.Context, args []string, out io.Writer) error {
 	}
 	defer func() { _ = remote.Close() }()
 
-	_, _ = fmt.Fprintf(out, "agones-lite: node %q joining %s, sidecars on %s\n", node.agent.NodeName, *server, node.agent.SidecarListen)
+	_, _ = fmt.Fprintf(out, "scrim: node %q joining %s, sidecars on %s\n", node.agent.NodeName, *server, node.agent.SidecarListen)
 	local := agent.New(node.agent, remote, daemon)
 	remote.Serve(local) // the control plane reads this node's logs through the link
 	return runAll(ctx,

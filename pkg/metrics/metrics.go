@@ -1,17 +1,17 @@
 // Package metrics exposes the state of the control plane to Prometheus,
 // under the metric names and labels Agones uses, so dashboards made for
-// Agones can be pointed at agones-lite.
+// Agones can be pointed at scrim.
 //
 // Most metrics are gauges that are simply read from the store each time
 // Prometheus asks (collector.go). Two things cannot be read back and are
 // counted as they happen: how often game servers enter each state, and how
 // long allocations take.
 //
-// Three metrics are agones-lite's own, and named so. They are about the
+// Three metrics are scrim's own, and named so. They are about the
 // store's file, which every answer waits for: for how long it has been
-// behind (agones_lite_store_lag_seconds), how long a save takes
-// (agones_lite_store_save_duration_seconds) and how many changes one save
-// takes along (agones_lite_store_save_changes). The first says whether the
+// behind (scrim_store_lag_seconds), how long a save takes
+// (scrim_store_save_duration_seconds) and how many changes one save
+// takes along (scrim_store_save_changes). The first says whether the
 // control plane can keep its promises, and the other two why answers take
 // as long as they do.
 //
@@ -28,10 +28,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/ponyo877/agones-lite/pkg/store"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
-// Metrics collects everything agones-lite reports. A nil *Metrics is valid
+// Metrics collects everything scrim reports. A nil *Metrics is valid
 // and records nothing, which is convenient in tests.
 type Metrics struct {
 	registry    *prometheus.Registry
@@ -72,7 +72,7 @@ func New(s *store.Store) *Metrics {
 		}, []string{"fleet_name", "cluster_name", "is_multicluster", "status", "scheduling_strategy"}),
 	}
 	m.saves = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:                            "agones_lite_store_save_duration_seconds",
+		Name:                            "scrim_store_save_duration_seconds",
 		Help:                            "How long one save to the file takes: one transaction, one sync of the disk",
 		Buckets:                         []float64{0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5},
 		NativeHistogramBucketFactor:     finer,
@@ -80,12 +80,12 @@ func New(s *store.Store) *Metrics {
 		NativeHistogramMinResetDuration: time.Hour,
 	})
 	m.saved = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    "agones_lite_store_save_changes",
+		Name:    "scrim_store_save_changes",
 		Help:    "How many changes one save takes to the file",
 		Buckets: []float64{1, 2, 5, 10, 25, 50, 100, 250, 500, 1000},
 	})
 	lag := prometheus.NewGaugeFunc(prometheus.GaugeOpts{
-		Name: "agones_lite_store_lag_seconds",
+		Name: "scrim_store_lag_seconds",
 		Help: "For how long the file has been behind memory: the age of the oldest change that is not saved yet",
 	}, func() float64 { return s.Lag().Seconds() })
 	m.registry.MustRegister(m.transitions, m.allocations, m.saves, m.saved, lag, newCollector(s))

@@ -14,14 +14,14 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/ponyo877/agones-lite/pkg/sdkserver"
+	"github.com/ponyo877/scrim/pkg/sdkserver"
 )
 
 // The environment variables, set by the agent (see pkg/podspec).
 const (
-	envAgent      = "AGONES_LITE_AGENT"
-	envGameServer = "AGONES_LITE_GAMESERVER"
-	envToken      = "AGONES_LITE_TOKEN" //nolint:gosec // the name of the variable that holds the token
+	envAgent      = "SCRIM_AGENT"
+	envGameServer = "SCRIM_GAMESERVER"
+	envToken      = "SCRIM_TOKEN"
 	envGRPCPort   = "AGONES_SDK_GRPC_PORT"
 	envHTTPPort   = "AGONES_SDK_HTTP_PORT"
 )

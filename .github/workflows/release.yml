@@ -46,7 +46,7 @@ jobs:
         run: make dist VERSION="$VERSION"
 
       - name: Attach them to the release
-        run: gh release create "$VERSION" dist/agones-lite-* --generate-notes
+        run: gh release create "$VERSION" dist/scrim-* --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
 

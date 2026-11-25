@@ -14,8 +14,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/ponyo877/agones-lite/pkg/queue"
-	"github.com/ponyo877/agones-lite/pkg/store"
+	"github.com/ponyo877/scrim/pkg/queue"
+	"github.com/ponyo877/scrim/pkg/store"
 )
 
 // Watch is one kind of resource a controller wants to hear about.
