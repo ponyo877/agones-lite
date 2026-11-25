@@ -2,6 +2,7 @@ package store
 
 import (
 	"cmp"
+	"errors"
 	"maps"
 	"os"
 	"slices"
@@ -262,6 +263,48 @@ func (m *storeModel) Save(t *rapid.T) {
 	}
 	require.NoError(t, m.store.saveBehind())
 	m.fileHasIt()
+}
+
+// errDisk is what a disk that refuses says.
+var errDisk = errors.New("input/output error")
+
+// SaveThatFails is a round of Run in which the disk refuses. Nothing is
+// saved by it and nobody who watches is told; the changes stay where they
+// were, for the next round or for a crash to take.
+//
+// With Crash and Save beside it, this checks the two things a store that
+// writes behind owes (Bornholt et al., "Using Lightweight Formal Methods to
+// Validate a Key-Value Storage Node in Amazon S3", SOSP 2021): what was
+// saved before a crash is there after it, and once the disk is well,
+// everything gets saved.
+func (m *storeModel) SaveThatFails(t *rapid.T) {
+	if !m.behind {
+		t.Skip("every write saves itself")
+	}
+	m.store.Disk = func() error { return errDisk }
+	err := m.store.saveBehind()
+	m.store.Disk = nil
+
+	if m.revision == m.inFileRevision {
+		require.NoError(t, err, "with nothing to save, the disk is not asked")
+		return
+	}
+	require.ErrorIs(t, err, errDisk)
+}
+
+// Without Run, the file comes first: a write the disk refuses did not
+// happen, as far as anyone can tell. Check sees to "anyone".
+func (m *storeModel) CreateThatTheDiskRefuses(t *rapid.T) {
+	if m.behind {
+		t.Skip("the write does not wait for the disk")
+	}
+	key, obj := m.aMissingKey(t), anObject(t)
+	obj.Namespace, obj.Name = key.Namespace, key.Name
+	m.store.Disk = func() error { return errDisk }
+	_, err := m.store.Create(key.Kind, obj)
+	m.store.Disk = nil
+
+	require.ErrorIs(t, err, errDisk)
 }
 
 // A crash takes with it what the file did not have yet, and those who
