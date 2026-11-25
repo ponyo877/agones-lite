@@ -2,7 +2,8 @@
 
 ## Supported versions
 
-agones-lite is pre-1.0 and has no tagged release yet. Fixes go to `main`.
+agones-lite is pre-1.0. Fixes go to `main` and into the next release; only
+the latest release is supported.
 
 ## Reporting a vulnerability
 
