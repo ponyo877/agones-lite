@@ -53,7 +53,7 @@ type world struct {
 	cp    *ControlPlane
 	api   http.Handler
 	store *store.Store
-	saves *longest // how long the slowest save took: only the load test looks
+	seen  *outside // what the disk and the machine did meanwhile: only the load test looks
 }
 
 func newWorld(t *testing.T) world {
