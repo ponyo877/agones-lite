@@ -110,6 +110,7 @@ func TestNilMetricsRecordNothing(t *testing.T) {
 	var m *Metrics
 	m.GameServerEntered(server("a", "", agonesv1.GameServerStateReady, ""), agonesv1.GameServerStateReady)
 	m.Allocated("simple", "Allocated", "Packed", time.Millisecond)
+	m.Saved(1, time.Millisecond)
 }
 
 // Upstream's buckets begin at 10 ms, so of an allocation that took three
@@ -157,4 +158,19 @@ func TestTheStoresLagIsReported(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 
 	assert.Contains(t, scrape(t, New(s)), "agones_lite_store_lag_seconds 0\n", "the file has everything")
+}
+
+func TestASaveIsMeasuredByHowLongItTookAndHowMuchItTook(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "state.db"), store.Kinds())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	m := New(s)
+	s.Saved = m.Saved
+
+	_, err = store.NodesOf(s).Create(&litev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-1"}})
+	require.NoError(t, err)
+
+	out := scrape(t, m)
+	assert.Contains(t, out, "agones_lite_store_save_duration_seconds_count 1\n")
+	assert.Contains(t, out, "agones_lite_store_save_changes_sum 1\n", "the one change, in a save of its own")
 }

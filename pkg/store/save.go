@@ -130,12 +130,17 @@ func (s *Store) tellWaiting() {
 
 // write puts changes into the file, if the disk is willing.
 func (s *Store) write(changes []change) error {
+	began := time.Now() // the machine's clock: it is the disk that is timed
 	if s.Disk != nil {
 		if err := s.Disk(); err != nil {
 			return err
 		}
 	}
-	return s.file.write(changes)
+	err := s.file.write(changes)
+	if err == nil && s.Saved != nil {
+		s.Saved(len(changes), time.Since(began))
+	}
+	return err
 }
 
 // record makes a change in memory and sends it on its way to the file.

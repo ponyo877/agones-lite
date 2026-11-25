@@ -82,6 +82,11 @@ type Store struct {
 	// failing. Nothing is asked, unless a test puts a disk here that stalls
 	// or fails, to see what the store and those who wait for it do then.
 	Disk func() error
+	// Saved, when set before the store is used, is told of every save: how
+	// many changes went to the file in it, and how long the file took. An
+	// answer that waits for the file waits about this long, so this is
+	// where to look when answers are slow.
+	Saved func(changes int, took time.Duration)
 }
 
 // Open loads the SQLite file at path, creating it when missing.
