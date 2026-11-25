@@ -2,15 +2,15 @@
   <a href="https://github.com/ponyo877/scrim">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.svg">
-      <img src="docs/images/logo.svg" alt="scrim" width="440">
+      <img src="docs/images/logo.svg" alt="scrim" width="260">
     </picture>
   </a>
 </p>
 
 <p align="center">
-  <strong>Agones without Kubernetes.</strong><br>
-  Host, scale and allocate dedicated game servers on plain Docker hosts,<br>
-  with the SDKs, manifests and Allocation API of Agones.
+  <strong>Game server hosting on plain Docker hosts, compatible with Agones.</strong><br>
+  One binary hosts, scales and allocates dedicated game servers, with the SDKs,<br>
+  manifests and Allocation API of Agones. There is no cluster to operate.
 </p>
 
 <p align="center">
@@ -35,11 +35,11 @@
 
 ---
 
-scrim is one binary that runs the core of
-[Agones](https://agones.dev/site/) on machines that have Docker and nothing
-else. There is no cluster to operate: one process is the control plane, an
-agent on each machine starts the containers, and a SQLite file keeps the
-state.
+scrim is one binary that hosts dedicated game servers on machines that have
+Docker and nothing else, and is compatible with
+[Agones](https://agones.dev/site/). There is no cluster to operate: one
+process is the control plane, an agent on each machine starts the
+containers, and a SQLite file keeps the state.
 
 What was built for Agones works here unchanged:
 
@@ -53,12 +53,15 @@ What was built for Agones works here unchanged:
   certificate it already has.
 
 So a game can start on a single VM, and move to Agones on Kubernetes when it
-outgrows that, without a change to the game server or the matchmaker.
+outgrows that, without a change to the game server or the matchmaker. A
+scrim is a practice match: the same game, on a smaller field.
 
 > [!NOTE]
 > **Unofficial.** scrim is an independent project. It is not affiliated
 > with or endorsed by the [Agones](https://github.com/agones-dev/agones)
-> project.
+> project. Questions and bug reports about scrim belong in
+> [this repository's issues](https://github.com/ponyo877/scrim/issues), not
+> in the channels of Agones.
 
 ## Why does this project exist?
 
@@ -79,6 +82,11 @@ job:
 | Choosing a node and its ports | kube-scheduler | a small scheduler of its own |
 | Defaults and validation | admission webhooks | the same Agones code, called directly |
 | Day-to-day operation | `kubectl`, Helm | the `scrim` CLI |
+
+**When to use Agones instead.** scrim has one control plane, and it is made
+for about ten machines. A game that needs more machines than that, a
+control plane that survives the loss of its machine, allocation across
+clusters, or anything else that Kubernetes brings, is a game for Agones.
 
 ## Features
 
@@ -364,5 +372,6 @@ make dist   # release binaries for every platform, into dist/
 types and generated SDK code as a Go module, and parts of its logic are
 ported from Agones; those places name the file they come from.
 
-Agones is a project of its own authors. scrim only builds on it, with
-thanks.
+Agones is a project of its own authors, and its name is a trademark of
+LF Projects, LLC. scrim only builds on it, with thanks, and uses the name
+only to say what it is compatible with.

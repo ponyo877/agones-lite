@@ -91,8 +91,13 @@ macOS（Docker Desktop や Colima）は開発用として動作を保証する�
 
 ## 本家 Agones との関係
 
-scrim は Agones の非公式な派生であり、Agones のプロジェクトとは関係がない。
+scrim は Agones と互換の、非公式の独立したプロジェクトであり、Agones のプロジェクトとは関係がない。
 README にその旨を明記する。
+
+プロジェクトの名前、ロゴ、ドメインには、Agones の名前を含めない。
+Agones の名前は、何と互換であるかを述べる文の中でだけ使う（「compatible with Agones」）。
+scrim は練習試合を指す語である。
+同じ競技を小さな場で行う、という位置づけから採った。
 
 ライセンスは Agones と同じ Apache-2.0 とする。
 Agones のコードを参照して書いた箇所には出典を記す。
@@ -201,6 +206,7 @@ README の冒頭に非公式であることを書く。
 | v1 の範囲 | GameServer、Fleet、Allocation、FleetAutoscaler、Counters と Lists |
 | 自動スケールのポリシー | Buffer、Counter、List、Webhook、Schedule、Chain（Wasm は作らない） |
 | ライセンスと公開 | Apache-2.0 で公開。README は英語で、非公式と明記する |
+| 名前 | scrim。互換の相手である Agones の名前は、説明の文の中でだけ使う |
 | 成果物の文書 | `docs/planning.md` と `docs/design.md`（日本語） |
 | 実装の順序 | 1 台で端から端まで動かしてから、複数ノードに広げる |
 
