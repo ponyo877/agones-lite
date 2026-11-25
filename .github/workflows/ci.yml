@@ -192,11 +192,13 @@ jobs:
         with:
           go-version-file: go.mod
       - name: 1,000 game servers, 50 allocations a second
-        run: go test ./pkg/controlplane/ -run '^TestLoad$' -count=1 -v | tee load.txt
+        run: go test ./pkg/controlplane/ -run '^TestLoad' -count=1 -v | tee load.txt
         env:
           SCRIM_LOAD: "1"
       - name: The load test did run
-        run: grep -- '--- PASS[:] TestLoad ' load.txt
+        run: |
+          grep -- '--- PASS[:] TestLoad ' load.txt
+          grep -- '--- PASS[:] TestLoadSetsAsideWhatADiskThatStoodStillHeldUp ' load.txt
       - name: Every benchmark, once
         run: go test ./... -run '^$' -bench . -benchtime 1x
 
