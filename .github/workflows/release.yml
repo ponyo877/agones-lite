@@ -1,13 +1,21 @@
 name: release
 
 # Pushing a tag such as v1.0.0 builds the binaries, attaches them to a GitHub
-# release, and pushes the sidecar image with the same tag.
+# release, and pushes the sidecar image with the same tag. What came out is
+# then tried the way the README says.
 #
 # Only what CI has checked is released: the tag must be on a commit of main
 # on which the workflow "ci" passed.
 on:
   push:
     tags: ["v*"]
+  # By hand, a release that is already out is tried again: only the last
+  # job runs.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The release to try, such as v1.0.0
+        required: true
 
 permissions:
   contents: write
@@ -20,10 +28,11 @@ defaults:
 
 env:
   # Not written into the commands below: a tag is text from outside.
-  VERSION: ${{ github.ref_name }}
+  VERSION: ${{ inputs.version || github.ref_name }}
 
 jobs:
   release:
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -62,3 +71,24 @@ jobs:
           docker buildx build --platform linux/amd64,linux/arm64 --push \
             --tag "ghcr.io/${GITHUB_REPOSITORY}-sidecar:${VERSION}" \
             --file build/sidecar/Dockerfile.release dist
+
+  # The release, as someone who has just found it gets it: the binary from
+  # the release page, and the sidecar image pulled without logging in, on a
+  # machine that has seen neither. The build above was checked by CI; that
+  # what was published is that build, and can be fetched, is checked here.
+  quick-start:
+    needs: release
+    if: ${{ !cancelled() && (needs.release.result == 'success' || needs.release.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The binary of the release
+        run: |
+          curl -fsSLo scrim "https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/scrim-linux-amd64"
+          chmod +x scrim
+          test "$(./scrim version)" = "scrim $VERSION"
+      - name: The quick start of the README
+        run: build/ci/quickstart.sh ./scrim

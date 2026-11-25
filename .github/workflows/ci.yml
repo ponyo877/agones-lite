@@ -71,6 +71,23 @@ jobs:
       - name: The sidecar image, for both architectures
         run: docker buildx build --platform linux/amd64,linux/arm64 --file build/sidecar/Dockerfile.release dist
 
+  # The quick start of the README, as a newcomer would run it: the binary
+  # and the sidecar image of this commit, real containers, and a packet
+  # from a player. The tests put a stand-in where Docker is or try Docker
+  # by itself; this is the one place where all of it runs together.
+  quick-start:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: The binary and the sidecar image of this commit
+        run: make build sidecar-image
+      - name: The quick start of the README
+        run: build/ci/quickstart.sh bin/scrim
+
   # Every test, on the three kinds of machine scrim runs on, with the
   # race detector and in an order drawn anew each time. On Linux nothing a
   # test needs is missing, Docker included, so a test that cannot run fails
@@ -254,7 +271,7 @@ jobs:
   # and fails when one failed, was cancelled or did not run.
   ci:
     if: always()
-    needs: [lint, build, test, coverage, properties, fuzz, load, generated, proofs, vulnerabilities, pinned]
+    needs: [lint, build, quick-start, test, coverage, properties, fuzz, load, generated, proofs, vulnerabilities, pinned]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
