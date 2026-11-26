@@ -15,6 +15,11 @@
 # Needs node and npm, jq, and a Java of version 21 or later (JAVA_HOME may
 # say which). Quint itself is the version formal/quint/package-lock.json
 # names; on its first run it fetches the model checker into ~/.quint.
+#
+# The scenarios and the tables are run by the evaluator that comes with
+# Quint (--backend typescript). The other one is a program Quint would
+# fetch on its first run, by a way that GitHub refuses to the shared
+# machines of CI more often than not.
 set -eu
 mode=${1:-check}
 cd "$(dirname "$0")/../../formal/quint"
@@ -67,7 +72,7 @@ check() {
 	# The scenarios: histories that are written out, run step by step.
 	for main in gameserver requestsNamed requestsUnnamed linkTogether linkApart agent node queue store cascade health view; do
 		file=$(grep -l "^module $main " ./*.qnt)
-		"$quint" test "$file" --main "$main" --max-samples=100 >"$out" 2>&1 || { cat "$out"; exit 1; }
+		"$quint" test "$file" --main "$main" --backend typescript --max-samples=100 >"$out" 2>&1 || { cat "$out"; exit 1; }
 		echo "$main: $(grep -c ' ok ' "$out") scenarios"
 	done
 
@@ -90,7 +95,7 @@ check() {
 # is written as its name, a set as a list, and the lines are sorted, so that
 # the same tables always give the same files.
 vectors() {
-	"$quint" run vectors.qnt --max-steps=0 --max-samples=1 --out-itf="$out" >/dev/null 2>&1
+	"$quint" run vectors.qnt --backend typescript --max-steps=0 --max-samples=1 --out-itf="$out" >/dev/null 2>&1
 	mkdir -p ../vectors/quint
 	for name in $(jq -r '.vars[]' "$out"); do
 		jq -cS --arg name "$name" '

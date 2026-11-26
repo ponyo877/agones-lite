@@ -251,6 +251,8 @@ lake exe vectors         # モデルを実行して vectors/ を作り直す
 Quint は、`quint/package-lock.json` に書いたバージョンを npm が取得する。
 Node.js と jq のほかに、バージョン 21 以降の Java が要る。
 モデル検査器は Quint が初回に `~/.quint` へ取得する。
+シナリオと表の実行には、Quint に同梱されている評価器を使う（`--backend typescript`）。
+既定の評価器は初回に GitHub の API を通して取得され、CI の共用の実行機ではその取得が回数の制限で拒否されることがあるためである。
 
 ```sh
 build/ci/models.sh            # すべてのモデルを検査する（make models でも同じ）
