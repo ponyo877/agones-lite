@@ -213,9 +213,13 @@ func matcher(selector *allocationv1.GameServerSelector) func(*agonesv1.GameServe
 // (pkg/gameserverallocations/allocation_cache.go), and the namespace check in
 // findGameServerForAllocation.
 func candidate(gsa *allocationv1.GameServerAllocation, gs *agonesv1.GameServer) bool {
-	_, allocatable := gameservers.Next(gs.Status.State, gameservers.Allocated)
-	return gs.Namespace == gsa.Namespace && gameservers.StageOf(gs) == gameservers.Live && allocatable
+	return gs.Namespace == gsa.Namespace && gameservers.StageOf(gs) == gameservers.Live && slices.Contains(allocatable, gs.Status.State)
 }
+
+// allocatable is the states in which the table of pkg/gameservers lets an
+// allocation take a GameServer. A request asks about every GameServer it
+// looks at, so the table is asked here, once.
+var allocatable = gameservers.In(gameservers.Allocated)
 
 // random reports whether chance decides. Distributed spreads allocations by
 // choosing at random, unless priorities say which GameServer goes first.

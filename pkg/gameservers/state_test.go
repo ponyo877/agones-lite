@@ -1,6 +1,7 @@
 package gameservers
 
 import (
+	"slices"
 	"testing"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
@@ -93,4 +94,21 @@ func TestNext(t *testing.T) {
 			assert.Equal(t, tc.ok, ok)
 		})
 	}
+}
+
+// In is Next for somebody who asks about many GameServers. The two say the
+// same of every event in every state, and of an event nobody knows.
+func TestInListsTheStatesNextSaysOKIn(t *testing.T) {
+	events := []Event{"NoSuchEvent"}
+	for event := range rules {
+		events = append(events, event)
+	}
+	for _, event := range events {
+		in := In(event)
+		for _, state := range everyState {
+			_, ok := Next(state, event)
+			assert.Equal(t, ok, slices.Contains(in, state), "%s in %s", event, state)
+		}
+	}
+	assert.Len(t, everyState, 11)
 }

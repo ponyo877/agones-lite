@@ -115,6 +115,10 @@ func TestNextAgreesWithTheQuintModel(t *testing.T) {
 		assert.True(t, events[event], "the model has no event %q", event)
 	}
 	assert.Len(t, states, 11)
+	// And everyState, which In goes through, has every state the model has.
+	for state := range states {
+		assert.Contains(t, everyState, agonesv1.GameServerState(state))
+	}
 	assert.Len(t, all, len(states)*len(events))
 }
 

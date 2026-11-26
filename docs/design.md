@@ -526,6 +526,7 @@ func Next(current agonesv1.GameServerState, e Event) (agonesv1.GameServerState, 
 
 状態を書き換える箇所は、すべてこの関数を通る。
 Allocation API も例外ではなく、割り当ての候補かどうかを、この表に尋ねて決める。
+1 回の割り当ては Fleet の GameServer を何千台も見るので、表に尋ねるのは起動時の 1 度にして、割り当てられる状態の一覧（`In`）を持っておく。
 
 ### 起動から Ready まで
 

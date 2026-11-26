@@ -88,6 +88,30 @@ func Next(current agonesv1.GameServerState, e Event) (next agonesv1.GameServerSt
 	return r.to, true
 }
 
+// In returns the states an Event applies in: those of which Next says ok.
+// It is for whoever asks about every GameServer of a Fleet, where looking
+// the row up each time takes longer than the answer does.
+func In(e Event) []agonesv1.GameServerState {
+	var in []agonesv1.GameServerState
+	for _, state := range everyState {
+		if _, ok := Next(state, e); ok {
+			in = append(in, state)
+		}
+	}
+	return in
+}
+
+// everyState lists the states a GameServer can be in, in the order one goes
+// through them.
+var everyState = states(
+	agonesv1.GameServerStatePortAllocation, agonesv1.GameServerStateCreating,
+	agonesv1.GameServerStateStarting, agonesv1.GameServerStateScheduled,
+	agonesv1.GameServerStateRequestReady, agonesv1.GameServerStateReady,
+	agonesv1.GameServerStateReserved, agonesv1.GameServerStateAllocated,
+	agonesv1.GameServerStateShutdown, agonesv1.GameServerStateUnhealthy,
+	agonesv1.GameServerStateError,
+)
+
 // Final reports whether a state is one a GameServer never leaves.
 func Final(s agonesv1.GameServerState) bool {
 	return s == agonesv1.GameServerStateShutdown ||
