@@ -28,6 +28,26 @@ type By[T Object, G comparable] struct {
 func Group[T Object, G comparable](t Typed[T], by By[T, G], group G) []T {
 	t.store.mu.Lock()
 	defer t.store.mu.Unlock()
+	return membersOf(t, by, group)
+}
+
+// GroupAndWatch is Group and Watch in one step, as ListAndWatch is List and
+// Watch: the events start exactly where the group ends. Whoever keeps a copy
+// of a group needs that. With the two taken apart, a change in between is in
+// the group and is told again behind it, and the copy goes back to what it
+// was before.
+//
+// The events are those of the whole kind: an object may join the group, or
+// leave it, with a change.
+func GroupAndWatch[T Object, G comparable](t Typed[T], by By[T, G], group G) (members []T, events <-chan Event, cancel func()) {
+	t.store.mu.Lock()
+	defer t.store.mu.Unlock()
+	events, cancel = t.store.subscribe(t.kind)
+	return membersOf(t, by, group), events, cancel
+}
+
+// membersOf is Group with the lock held.
+func membersOf[T Object, G comparable](t Typed[T], by By[T, G], group G) []T {
 	members := groupsOf(t, by).groups[group].all()
 	out := make([]T, 0, len(members))
 	for _, obj := range members {
@@ -186,6 +206,11 @@ var (
 // those that have none yet. See Group.
 func OnNode(servers Typed[*agonesv1.GameServer], node string) []*agonesv1.GameServer {
 	return Group(servers, byNode, node)
+}
+
+// OnNodeAndWatch is OnNode and Watch in one step: see GroupAndWatch.
+func OnNodeAndWatch(servers Typed[*agonesv1.GameServer], node string) (placed []*agonesv1.GameServer, events <-chan Event, cancel func()) {
+	return GroupAndWatch(servers, byNode, node)
 }
 
 // ControlledBy returns the GameServers that owner controls, as
