@@ -288,8 +288,8 @@ go test ./pkg/controlplane/ -run '^$' -bench Allocate -benchtime 3000x
 
 ## How it is tested
 
-Tests of examples say that what was thought of works. Three more kinds look
-for the input nobody thought of:
+Tests of examples say that what was thought of works. Four more kinds look
+for the input, or the order of events, that nobody thought of:
 
 - **Properties and models.** What must hold for any input is tried on random
   ones. Whole runs of the control plane, with machines lost and restarts in
@@ -299,11 +299,17 @@ for the input nobody thought of:
 - **Proofs.** The port allocator, Counters, the game server state machine and
   rolling updates have models in Lean 4 with proofs about them, and Go tests
   replay what the models answer against the real functions.
+- **Model checking.** What changes state, and in what order it may happen, is
+  written out in ten Quint models: the life of a game server, its SDK
+  requests on their way, an agent's containers, the store's file. TLC goes
+  through every state each of them can reach. It found two faults in the
+  code, which are mended.
 
 ```sh
 go test ./pkg/fleets/ -run Rollout -rapid.checks=100000
 go test ./pkg/apiserver/ -run '^$' -fuzz FuzzAdmit -fuzztime 5m
 cd formal && lake build
+make models
 ```
 
 It has also run on real machines: five Linux hosts in two regions, arm64 and
@@ -318,8 +324,8 @@ was looked at and left out, and why.
 Nothing reaches `main` without passing
 [CI](.github/workflows/ci.yml): the linters, the tests under the race
 detector on Linux amd64, Linux arm64 and macOS, a thousand tries of every
-property, the fuzz targets, the load test, the proofs, a scan for known
-vulnerabilities, and the quick start above with real containers. A release
+property, the fuzz targets, the load test, the proofs, the models, a scan
+for known vulnerabilities, and the quick start above with real containers. A release
 is tried the same way once it is out, with the binary and the sidecar
 image that were published.
 
@@ -349,7 +355,7 @@ build does not use it. Start with `pkg/store`, then
 |---|---|
 | [docs/planning.md](docs/planning.md) | Goals, scope and the record of decisions (Japanese) |
 | [docs/design.md](docs/design.md) | Architecture, every component, and a reading order for the code (Japanese) |
-| [formal/README.md](formal/README.md) | What is proved, and what is not (Japanese) |
+| [formal/README.md](formal/README.md) | What is proved and what is model-checked, and what is not (Japanese) |
 | [deploy/](deploy) | systemd units and example configuration |
 | [Agones documentation](https://agones.dev/site/docs/) | The SDKs, the manifests and the Allocation API themselves |
 

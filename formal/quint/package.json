@@ -1,0 +1,8 @@
+{
+  "name": "scrim-models",
+  "private": true,
+  "description": "Pins the Quint that checks the models in this directory. See formal/README.md.",
+  "devDependencies": {
+    "@informalsystems/quint": "0.34.0"
+  }
+}

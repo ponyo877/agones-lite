@@ -1,9 +1,12 @@
-// Package vectors holds what the Lean models in ../Formal answer for many
-// small inputs, so that Go tests can replay them against the real functions.
-// A proof about a model says nothing about the Go code unless the two behave
+// Package vectors holds what the models answer for many small inputs, so
+// that Go tests can replay them against the real functions. A proof or a
+// check of a model says nothing about the Go code unless the two behave
 // alike; these files are how that is checked.
 //
-// `lake exe vectors` in the parent directory writes the files.
+// The files here are those of the Lean models in ../Formal, which
+// `lake exe vectors` in the parent directory writes. The files in quint are
+// those of the Quint models in ../quint, which `build/ci/models.sh vectors`
+// writes.
 package vectors
 
 import (
@@ -13,10 +16,11 @@ import (
 	"testing"
 )
 
-//go:embed *.jsonl
+//go:embed *.jsonl quint/*.jsonl
 var files embed.FS
 
-// Read returns the vectors of one file, each line decoded into a T.
+// Read returns the vectors of one file, each line decoded into a T. A
+// file of the Quint models is named with its directory: "quint/plans.jsonl".
 func Read[T any](t testing.TB, name string) []T {
 	t.Helper()
 	file, err := files.Open(name)

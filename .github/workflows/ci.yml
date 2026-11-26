@@ -243,6 +243,19 @@ jobs:
         working-directory: formal
         run: lake exe vectors && git diff --exit-code -- vectors
 
+  # The Quint models hold, in every state each of them can reach, and the
+  # two that are of a fault still show it. The vectors the Go tests replay
+  # are what the models' tables answer.
+  models:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check every model, in every state it can reach
+        run: build/ci/models.sh
+      - name: The vectors in the repository are what the models answer
+        run: build/ci/models.sh vectors && git diff --exit-code -- formal/vectors/quint
+
   # No vulnerability that is known today and that the code reaches.
   vulnerabilities:
     runs-on: ubuntu-24.04
@@ -273,7 +286,7 @@ jobs:
   # and fails when one failed, was cancelled or did not run.
   ci:
     if: always()
-    needs: [lint, build, quick-start, test, coverage, properties, fuzz, load, generated, proofs, vulnerabilities, pinned]
+    needs: [lint, build, quick-start, test, coverage, properties, fuzz, load, generated, proofs, models, vulnerabilities, pinned]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
