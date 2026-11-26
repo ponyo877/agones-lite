@@ -1,0 +1,12 @@
+{"after":{"drain":false,"unschedulable":false},"drain":false,"duty":"Open","operation":"Uncordon","unschedulable":false}
+{"after":{"drain":false,"unschedulable":false},"drain":false,"duty":"Open","operation":"Uncordon","unschedulable":true}
+{"after":{"drain":false,"unschedulable":false},"drain":true,"duty":"Open","operation":"Uncordon","unschedulable":false}
+{"after":{"drain":false,"unschedulable":false},"drain":true,"duty":"Open","operation":"Uncordon","unschedulable":true}
+{"after":{"drain":false,"unschedulable":true},"drain":false,"duty":"Cordoned","operation":"Cordon","unschedulable":false}
+{"after":{"drain":false,"unschedulable":true},"drain":false,"duty":"Cordoned","operation":"Cordon","unschedulable":true}
+{"after":{"drain":false,"unschedulable":true},"drain":true,"duty":"Cordoned","operation":"Cordon","unschedulable":false}
+{"after":{"drain":false,"unschedulable":true},"drain":true,"duty":"Cordoned","operation":"Cordon","unschedulable":true}
+{"after":{"drain":true,"unschedulable":true},"drain":false,"duty":"Draining","operation":"Drain","unschedulable":false}
+{"after":{"drain":true,"unschedulable":true},"drain":false,"duty":"Draining","operation":"Drain","unschedulable":true}
+{"after":{"drain":true,"unschedulable":true},"drain":true,"duty":"Draining","operation":"Drain","unschedulable":false}
+{"after":{"drain":true,"unschedulable":true},"drain":true,"duty":"Draining","operation":"Drain","unschedulable":true}

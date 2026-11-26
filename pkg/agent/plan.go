@@ -64,46 +64,60 @@ func Plan(desired []*agonesv1.GameServer, actual []docker.Container) []Action {
 	return append(actions, discardRest(containers)...)
 }
 
-// planOne handles one GameServer and the containers that carry its name.
-func planOne(gs *agonesv1.GameServer, containers []docker.Container) (Action, bool) {
-	creating := gs.Status.State == agonesv1.GameServerStateCreating
-	switch {
-	case gs.DeletionTimestamp != nil:
-		return Action{Kind: Remove, GameServer: gs, Containers: containers}, true
-	case creating && len(containers) == 0:
-		return Action{Kind: Create, GameServer: gs}, true
-	case creating && started(gs, containers):
-		// It is gs that is out of date, not the containers: see started.
-		// Saying it again is ignored by a control plane that knows.
-		return Action{Kind: Tell, Event: gameservers.ContainersCreated}, true
-	case creating:
-		// Left over from a creation that was interrupted, or from an earlier
-		// GameServer of the same name. Clear them and start again on the
-		// next pass.
-		return Action{Kind: Discard, Containers: containers}, true
-	case gameservers.Final(gs.Status.State):
-		return Action{}, false // kept as they are until the GameServer is deleted
+// want is what a GameServer asks of its containers: how far bringing them
+// up should have come, going by its state and by the Stage of its record.
+type want int
+
+const (
+	wantsRemoved want = iota // Leaving: stop and delete them
+	wantsCreated             // Creating: the control plane knows of none yet
+	wantsStarted             // Starting: it knows they were made, and waits for them to run
+	wantsRunning             // any later state that is not final: they all ran, and should still
+	wantsKept                // a final state: as they are, until the GameServer is deleted
+)
+
+func wantOf(gs *agonesv1.GameServer) want {
+	switch state := gs.Status.State; {
+	case gameservers.StageOf(gs) == gameservers.Leaving:
+		return wantsRemoved
+	case state == agonesv1.GameServerStateCreating:
+		return wantsCreated
+	case gameservers.Final(state):
+		return wantsKept
+	case state == agonesv1.GameServerStateStarting:
+		return wantsStarted
 	}
-	return watchOver(gs, containers)
+	return wantsRunning
 }
 
-// watchOver handles a GameServer whose containers the control plane has
-// taken note of: it says so when they are no longer what they should be.
-func watchOver(gs *agonesv1.GameServer, containers []docker.Container) (Action, bool) {
-	if event, ok := trouble(containers); ok {
-		return Action{Kind: Tell, Event: event}, true
+// planOne handles one GameServer and the containers that carry its name.
+func planOne(gs *agonesv1.GameServer, containers []docker.Container) (Action, bool) {
+	switch wanted := wantOf(gs); wanted {
+	case wantsRemoved:
+		return Action{Kind: Remove, GameServer: gs, Containers: containers}, true
+	case wantsCreated:
+		return create(gs, containers), true
+	case wantsKept:
+		return Action{}, false
+	default:
+		return watchOver(wanted, containers)
 	}
-	if gs.Status.State == agonesv1.GameServerStateStarting {
-		return resume(containers)
+}
+
+// create handles a GameServer the control plane takes to have no containers.
+func create(gs *agonesv1.GameServer, containers []docker.Container) Action {
+	switch {
+	case len(containers) == 0:
+		return Action{Kind: Create, GameServer: gs}
+	case started(gs, containers):
+		// It is gs that is out of date, not the containers: see started.
+		// Saying it again is ignored by a control plane that knows.
+		return tell(gameservers.ContainersCreated)
 	}
-	if len(neverStarted(containers)) > 0 {
-		// Past Starting, all of its containers ran. Ones that never did are
-		// not those: they were made later, by an agent that did not know
-		// better, and what the game server ran in is gone. Nothing would
-		// ever start them, and the GameServer would wait for ever.
-		return Action{Kind: Tell, Event: gameservers.ContainersMissing}, true
-	}
-	return Action{}, false
+	// Left over from a creation that was interrupted, or from an earlier
+	// GameServer of the same name. Clear them and start again on the next
+	// pass.
+	return Action{Kind: Discard, Containers: containers}
 }
 
 // started reports whether a container of gs itself, and not of an earlier
@@ -122,30 +136,77 @@ func started(gs *agonesv1.GameServer, containers []docker.Container) bool {
 	return false
 }
 
-// trouble turns containers that are gone or have stopped into an Event.
-func trouble(containers []docker.Container) (gameservers.Event, bool) {
+// condition is what the containers of one GameServer amount to, once the
+// control plane has taken note of them.
+type condition int
+
+const (
+	broken          condition = iota // the sidecar or the game container is missing, or the sidecar has stopped
+	exitedCleanly                    // the game container ended with exit code 0
+	exitedWithError                  // the game container ended with any other code
+	halfStarted                      // some were created and left at that
+	gameRuns                         // all were started, and the game container runs
+	inBetween                        // all were started; the game container neither runs nor has ended
+)
+
+// conditionOf looks at the containers. Of the conditions that fit, the
+// first one counts: containers that have stopped are not started again.
+func conditionOf(containers []docker.Container) condition {
 	sidecar, hasSidecar := withRole(containers, podspec.RoleSidecar)
 	game, hasGame := withRole(containers, podspec.RoleGame)
 	switch {
 	case !hasSidecar || !hasGame || sidecar.Exited():
-		return gameservers.ContainersMissing, true
+		return broken
 	case game.Exited() && game.ExitCode == 0:
-		return gameservers.ExitedCleanly, true
+		return exitedCleanly
 	case game.Exited():
-		return gameservers.ExitedWithError, true
+		return exitedWithError
+	case len(neverStarted(containers)) > 0:
+		return halfStarted
+	case game.State == "running":
+		return gameRuns
 	}
-	return "", false
+	return inBetween
 }
 
-// resume takes up a start that was cut short. The agent may have stopped
-// between creating the containers and starting them all, or its report
-// that they run may have been lost.
-func resume(containers []docker.Container) (Action, bool) {
-	if waiting := neverStarted(containers); len(waiting) > 0 {
-		return Action{Kind: Start, Containers: waiting}, true
+// reactions is what the agent does about containers in a condition, by what
+// the GameServer asks of them. A pair that is not listed calls for nothing.
+var reactions = map[want]map[condition]Action{
+	wantsStarted: {
+		broken:          tell(gameservers.ContainersMissing),
+		exitedCleanly:   tell(gameservers.ExitedCleanly),
+		exitedWithError: tell(gameservers.ExitedWithError),
+		// A start that was cut short is taken up again. The agent may have
+		// stopped between creating the containers and starting them all.
+		halfStarted: {Kind: Start},
+		// Its report that they run may have been lost.
+		gameRuns: tell(gameservers.ContainersRunning),
+	},
+	wantsRunning: {
+		broken:          tell(gameservers.ContainersMissing),
+		exitedCleanly:   tell(gameservers.ExitedCleanly),
+		exitedWithError: tell(gameservers.ExitedWithError),
+		// Past Starting, all of its containers ran. Ones that never did are
+		// not those: they were made later, by an agent that did not know
+		// better, and what the game server ran in is gone. Nothing would
+		// ever start them, and the GameServer would wait for ever.
+		halfStarted: tell(gameservers.ContainersMissing),
+	},
+}
+
+// tell is the Action that reports event and touches nothing.
+func tell(event gameservers.Event) Action {
+	return Action{Kind: Tell, Event: event}
+}
+
+// watchOver handles a GameServer whose containers the control plane has
+// taken note of: it does what their condition calls for.
+func watchOver(wanted want, containers []docker.Container) (Action, bool) {
+	action, called := reactions[wanted][conditionOf(containers)]
+	if action.Kind == Start {
+		action.Containers = neverStarted(containers)
 	}
-	game, _ := withRole(containers, podspec.RoleGame)
-	return Action{Kind: Tell, Event: gameservers.ContainersRunning}, game.State == "running"
+	return action, called
 }
 
 // neverStarted returns the containers that were created and left at that,

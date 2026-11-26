@@ -273,7 +273,6 @@ func TestApplyLeavesEveryCounterAndListInOrder(t *testing.T) {
 
 		taken, _ := Apply(gsa, gs, noon)
 
-		assert.Equal(t, allocated, taken.Status.State)
 		for name, counter := range taken.Status.Counters {
 			assert.True(t, 0 <= counter.Count && counter.Count <= counter.Capacity, "%s holds %d of %d", name, counter.Count, counter.Capacity)
 		}
@@ -281,6 +280,24 @@ func TestApplyLeavesEveryCounterAndListInOrder(t *testing.T) {
 			assert.LessOrEqual(t, int64(len(list.Values)), list.Capacity, "%s holds %v", name, list.Values)
 			assert.LessOrEqual(t, list.Capacity, int64(maxListCapacity), name)
 			assert.Len(t, slices.Compact(slices.Sorted(slices.Values(list.Values))), len(list.Values), "%s holds a value twice: %v", name, list.Values)
+		}
+	})
+}
+
+// An allocation moves the state the way the table of pkg/gameservers says,
+// and no other way: a GameServer that could be given to a request is
+// Allocated afterwards, and any other is what it was.
+func TestApplyMovesTheStateByTheTable(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		gsa, gs := aRequest(t), aGameServer(t, "gs")
+		want, allocatable := gameservers.Next(gs.Status.State, gameservers.Allocated)
+
+		taken, _ := Apply(gsa, gs, noon)
+
+		assert.Equal(t, want, taken.Status.State)
+		if candidate(gsa, gs) {
+			assert.True(t, allocatable)
+			assert.Equal(t, allocated, taken.Status.State)
 		}
 	})
 }

@@ -2,6 +2,7 @@ package sdkserver
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"log/slog"
 	"time"
@@ -39,7 +40,11 @@ func (Credentials) RequireTransportSecurity() bool {
 
 // tell queues a request for the agent and returns at once. The SDK contract
 // is that these calls are acknowledged before they take effect.
+//
+// The request gets a name of its own. Should its answer get lost, it is sent
+// again (send), and the control plane must not take it for a second one.
 func (s *Server) tell(req *sidecarv1.TellRequest) (*sdk.Empty, error) {
+	req.ChangeId = rand.Text()
 	select {
 	case s.outbox <- req:
 		return &sdk.Empty{}, nil

@@ -1,0 +1,4 @@
+{"drain":false,"duty":"Cordoned","unschedulable":true}
+{"drain":false,"duty":"Open","unschedulable":false}
+{"drain":true,"duty":"Draining","unschedulable":false}
+{"drain":true,"duty":"Draining","unschedulable":true}

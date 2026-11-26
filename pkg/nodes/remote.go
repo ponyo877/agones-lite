@@ -226,6 +226,7 @@ func (r *Remote) Report(ctx context.Context, report gameservers.Report) error {
 		ReserveSeconds: int64(report.Reserve / time.Second),
 		Detail:         report.Detail,
 		Uid:            string(report.UID),
+		RequestId:      report.ID,
 	})
 	return err
 }

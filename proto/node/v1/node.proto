@@ -113,6 +113,10 @@ message ReportRequest {
   // under the same name has another, and the report is not applied to it.
   // Empty means whichever GameServer has the name.
   string uid = 6;
+  // The name the sidecar gave the request, for what a game server asked
+  // through the SDK. A request whose name is the one carried out last is not
+  // carried out again. Empty for what has no name: it is taken as new.
+  string request_id = 7;
 }
 
 message ReportResponse {}

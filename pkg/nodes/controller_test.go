@@ -299,7 +299,7 @@ func TestDrainShutsDownIdleServersAndKeepsSessions(t *testing.T) {
 	require.NoError(t, err)
 	f.add(inState("ready", agonesv1.GameServerStateReady), inState("allocated", agonesv1.GameServerStateAllocated))
 
-	require.NoError(t, f.Cordon("node-1", true))
+	require.NoError(t, f.Operate("node-1", "drain"))
 	f.sync()
 
 	assert.Equal(t, agonesv1.GameServerStateShutdown, f.state("ready"))
@@ -307,7 +307,7 @@ func TestDrainShutsDownIdleServersAndKeepsSessions(t *testing.T) {
 	n, _ := f.nodes.Get("", "node-1")
 	assert.False(t, n.Schedulable())
 
-	require.NoError(t, f.Uncordon("node-1"))
+	require.NoError(t, f.Operate("node-1", "uncordon"))
 	n, _ = f.nodes.Get("", "node-1")
 	assert.True(t, n.Schedulable())
 }

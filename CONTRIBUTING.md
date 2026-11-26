@@ -34,6 +34,7 @@ Some checks need more, and only when you touch what they check:
 | `make lint` | [golangci-lint](https://golangci-lint.run) v2.15.0 |
 | `make proto` | `protoc` 33.4 |
 | The proofs in `formal/` | [elan](https://github.com/leanprover/elan), which installs the Lean version named in `formal/lean-toolchain` |
+| The models in `formal/quint` (`make models`) | Node.js with npm, which installs the Quint version named in `formal/quint/package-lock.json`, `jq`, and a Java of version 21 or later |
 
 ## What the code is held to
 
@@ -60,7 +61,7 @@ make check
 runs what CI runs, as far as one machine can: the linters, every test under
 the race detector in a shuffled order, a thousand tries of every property
 test, the coverage floor, a short run of every fuzz target, the scan for
-known vulnerabilities, and the proofs.
+known vulnerabilities, the proofs, and the models.
 
 `main` is protected. A pull request is merged when the job `ci` has passed
 on a branch that is up to date with `main`.

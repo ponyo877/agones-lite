@@ -224,11 +224,8 @@ func listNodes(ctx context.Context, c client, out io.Writer) error {
 // game servers, as "kubectl get nodes" does.
 func nodeStatus(n scrimv1.Node) string {
 	status := string(n.Status.Phase)
-	switch {
-	case n.Spec.Drain:
-		status += ",Draining"
-	case n.Spec.Unschedulable:
-		status += ",Cordoned"
+	if duty := n.Duty(); duty != scrimv1.Open {
+		status += "," + string(duty)
 	}
 	return status
 }

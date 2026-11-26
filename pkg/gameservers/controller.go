@@ -35,6 +35,12 @@ const (
 	// made through the SDK. The sidecar sends a change again when the answer
 	// got lost; the name keeps it from being made twice.
 	LastCountsChangeAnnotation = "scrim/last-counts-change"
+	// LastRequestAnnotation names the last request for a state that a game
+	// server made through the SDK and that was carried out. The sidecar
+	// sends a request again when the answer got lost. Carried out twice, a
+	// Ready would take back a game server that a matchmaker was given in
+	// between, players and all.
+	LastRequestAnnotation = "scrim/last-request"
 )
 
 // Report is an Event that an agent or a sidecar saw happen to a GameServer.
@@ -51,11 +57,20 @@ type Report struct {
 	// Detail is what the reporter knows of the cause, for the event history:
 	// for CreateFailed, what Docker said. It may be empty.
 	Detail string
+	// ID, when set, names the request of a game server that the Report
+	// passes on. One that arrives a second time is carried out only once:
+	// see LastRequestAnnotation.
+	ID string
 }
 
 // about reports whether gs is the GameServer the Report speaks of.
 func (r Report) about(gs *agonesv1.GameServer) bool {
 	return r.UID == "" || r.UID == gs.UID
+}
+
+// repeats reports whether gs has carried the Report out already.
+func (r Report) repeats(gs *agonesv1.GameServer) bool {
+	return r.ID != "" && gs.Annotations[LastRequestAnnotation] == r.ID
 }
 
 // maxDetail is how much of a Report's detail the event history keeps.
@@ -164,7 +179,7 @@ func (c *Controller) afterNodeChange(e store.Event) []store.Key {
 	}
 	keys := []store.Key{thoseWaiting}
 	for _, gs := range store.OnNode(c.servers, node.Name) {
-		if gs.DeletionTimestamp != nil {
+		if StageOf(gs) == Leaving {
 			keys = append(keys, store.KeyOf(store.GameServers, gs))
 		}
 	}
@@ -190,41 +205,10 @@ func (c *Controller) all() []store.Key {
 	return keys
 }
 
-// step is what the sync loop should do for one GameServer.
-type step int
-
-const (
-	wait        step = iota // nothing to do until something is reported
-	place                   // choose a node and host ports
-	grantReady              // RequestReady becomes Ready
-	startDelete             // Shutdown: ask for the containers to be removed
-	forget                  // nothing left to clean up: drop the record
-)
-
-// decide is the judgement half of the sync loop. It looks only at gs and at
-// whether the agent of its node can currently be reached.
-func decide(gs *agonesv1.GameServer, reachable bool) step {
-	unplaced := gs.Status.NodeName == ""
-	switch {
-	case gs.DeletionTimestamp != nil && (unplaced || !reachable):
-		// Nobody will report the cleanup. If the node comes back, its agent
-		// finds containers that belong to nothing and removes them.
-		return forget
-	case gs.DeletionTimestamp != nil:
-		return wait // the agent reports ContainersRemoved when it is done
-	case gs.Status.State == agonesv1.GameServerStateShutdown:
-		return startDelete
-	case unplaced && !Final(gs.Status.State):
-		return place
-	case gs.Status.State == agonesv1.GameServerStateRequestReady:
-		return grantReady
-	}
-	return wait
-}
-
-// sync is the execution half: it carries out what decide chose. A node is
-// not chosen here, for one GameServer: placeWaiting does that for all that
-// wait, under a key of its own.
+// sync is the execution half of the sync loop: it reports the Event that
+// decide (lifecycle.go) chose. Placed is not reported here, for one
+// GameServer: placeWaiting does that for all that wait, under a key of its
+// own.
 func (c *Controller) sync(_ context.Context, key store.Key) error {
 	if key == thoseWaiting {
 		return c.placeWaiting()
@@ -233,13 +217,9 @@ func (c *Controller) sync(_ context.Context, key store.Key) error {
 	if !ok {
 		return nil
 	}
-	switch decide(gs, c.reachable(gs.Status.NodeName)) {
-	case grantReady:
-		return c.Report(Report{Namespace: gs.Namespace, Name: gs.Name, Event: Readied})
-	case startDelete:
-		return c.Delete(gs.Namespace, gs.Name)
-	case forget:
-		return ignoreNotFound(c.servers.Delete(gs.Namespace, gs.Name))
+	switch event := decide(gs, c.reachable(gs.Status.NodeName)); event {
+	case Readied, DeletionAsked, Abandoned:
+		return c.Report(Report{Namespace: gs.Namespace, Name: gs.Name, Event: event})
 	}
 	return nil
 }
@@ -283,7 +263,7 @@ func (c *Controller) placeWaiting() error {
 func waitingForANode(unplaced []*agonesv1.GameServer) []*agonesv1.GameServer {
 	var waiting []*agonesv1.GameServer
 	for _, gs := range unplaced {
-		if decide(gs, false) == place {
+		if decide(gs, false) == Placed {
 			waiting = append(waiting, gs)
 		}
 	}
@@ -317,20 +297,21 @@ func (c *Controller) sayWhoWaits(noRoom map[store.Key]bool) {
 // Delete asks for a GameServer to be removed. The record stays until its
 // containers are gone, which the agent reports with ContainersRemoved.
 func (c *Controller) Delete(namespace, name string) error {
-	return c.servers.MarkDeleted(namespace, name, c.now())
+	return c.Report(Report{Namespace: namespace, Name: name, Event: DeletionAsked})
 }
 
 // Report applies an Event to a GameServer. Events that do not apply in the
-// GameServer's current state are ignored.
+// GameServer's current state, or at the Stage its record has reached, are
+// ignored.
 func (c *Controller) Report(r Report) error {
-	if r.Event == ContainersRemoved {
-		return c.forgetDeleted(r)
+	if _, known := stageRules[r.Event]; known {
+		return c.moveOn(r)
 	}
 	var from, to agonesv1.GameServerState
 	var moved *agonesv1.GameServer
 	err := c.servers.Change(r.Namespace, r.Name, func(gs *agonesv1.GameServer) bool {
 		next, ok := Next(gs.Status.State, r.Event)
-		if !ok || gs.DeletionTimestamp != nil || !r.about(gs) {
+		if !ok || StageOf(gs) != Live || !r.about(gs) || r.repeats(gs) {
 			return false
 		}
 		node, known := c.nodes.Peek("", gs.Status.NodeName)
@@ -362,11 +343,18 @@ func severity(s agonesv1.GameServerState) events.Type {
 	return events.Normal
 }
 
-// forgetDeleted drops the record of a GameServer whose containers are gone.
-func (c *Controller) forgetDeleted(r Report) error {
+// moveOn applies an Event that moves the record of a GameServer to its next
+// Stage and leaves its state alone: see lifecycle.go.
+func (c *Controller) moveOn(r Report) error {
 	gs, ok := c.servers.Peek(r.Namespace, r.Name)
-	if !ok || gs.DeletionTimestamp == nil || !r.about(gs) {
+	if !ok || !r.about(gs) {
 		return nil
+	}
+	switch next, applies := NextStage(StageOf(gs), r.Event); {
+	case !applies:
+		return nil
+	case next == Leaving:
+		return c.servers.MarkDeleted(r.Namespace, r.Name, c.now())
 	}
 	return ignoreNotFound(c.servers.Delete(r.Namespace, r.Name))
 }
@@ -375,6 +363,9 @@ func (c *Controller) forgetDeleted(r Report) error {
 func apply(gs *agonesv1.GameServer, next agonesv1.GameServerState, r Report, node *scrimv1.Node, now time.Time) {
 	gs.Status.State = next
 	gs.Status.ReservedUntil = reservedUntil(next, r.Reserve, now)
+	if r.ID != "" {
+		metav1.SetMetaDataAnnotation(&gs.ObjectMeta, LastRequestAnnotation, r.ID)
+	}
 	if r.Event == SDKAllocate {
 		stamp, _ := now.UTC().MarshalText()
 		metav1.SetMetaDataAnnotation(&gs.ObjectMeta, LastAllocatedAnnotation, string(stamp))
@@ -441,7 +432,7 @@ const SDKPrefix = "agones.dev/sdk-"
 func (c *Controller) UpdateCounts(namespace, name, change string, counters []CounterUpdate, lists []ListUpdate) (*agonesv1.GameServer, error) {
 	err := c.servers.Change(namespace, name, func(gs *agonesv1.GameServer) bool {
 		made := change != "" && gs.Annotations[LastCountsChangeAnnotation] == change
-		if made || gs.DeletionTimestamp != nil {
+		if made || StageOf(gs) != Live {
 			return false
 		}
 		ApplyCounts(gs, counters, lists)
@@ -458,7 +449,7 @@ func (c *Controller) UpdateCounts(namespace, name, change string, counters []Cou
 // SetMetadata adds labels and annotations a game server set through the SDK.
 func (c *Controller) SetMetadata(namespace, name string, labels, annotations map[string]string) error {
 	return c.servers.Change(namespace, name, func(gs *agonesv1.GameServer) bool {
-		if gs.DeletionTimestamp != nil {
+		if StageOf(gs) != Live {
 			return false
 		}
 		for key, value := range labels {

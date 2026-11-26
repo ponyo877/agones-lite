@@ -74,7 +74,7 @@ func (s *Simulator) report(ctx context.Context, gs *agonesv1.GameServer, events 
 // next lists what happens to gs on a node where everything goes well.
 func next(gs *agonesv1.GameServer) []gameservers.Event {
 	switch {
-	case gs.DeletionTimestamp != nil:
+	case gameservers.StageOf(gs) == gameservers.Leaving:
 		return []gameservers.Event{gameservers.ContainersRemoved}
 	case gs.Status.State == agonesv1.GameServerStateCreating:
 		return []gameservers.Event{gameservers.ContainersCreated, gameservers.ContainersRunning, gameservers.SDKReady}

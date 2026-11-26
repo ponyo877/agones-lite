@@ -56,9 +56,11 @@ message TellRequest {
   // the game server made them.
   repeated CounterUpdate counters = 5;
   repeated ListUpdate lists = 6;
-  // For EVENT_UPDATE_COUNTS: a name no other change has. A request is sent
-  // again when its answer was lost, and the name lets the control plane see
-  // that it is the same change and not a second one.
+  // A name no other request has. A request is sent again when its answer
+  // was lost, and the name lets the control plane see that it is the same
+  // request and not a second one. Without it, Counters and Lists would be
+  // changed twice, and a Ready that arrives again would end the session a
+  // matchmaker began in between.
   string change_id = 7;
 }
 

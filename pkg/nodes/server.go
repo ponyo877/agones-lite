@@ -87,9 +87,12 @@ func (s *Server) Register(ctx context.Context, req *nodev1.RegisterRequest) (*no
 // connected for as long as the call lasts.
 func (s *Server) Watch(req *nodev1.WatchRequest, stream grpc.ServerStreamingServer[nodev1.WatchResponse]) error {
 	node := req.GetNode()
-	// Subscribe before listing, so a change in between is not missed.
-	// It may then be sent twice, which is harmless.
-	changes, cancel := s.servers.Watch()
+	// What is on the node and the changes that follow are taken in one step.
+	// Taken apart, a change in between would be in the list and be sent again
+	// behind it. The agent acts on its copy: a GameServer that was deleted
+	// and made again under its name meanwhile would vanish from the copy
+	// when the removal of the first arrives, and its containers with it.
+	placed, changes, cancel := store.OnNodeAndWatch(s.servers, node)
 	defer cancel()
 	s.connected(node, +1)
 	defer s.connected(node, -1)
@@ -97,7 +100,7 @@ func (s *Server) Watch(req *nodev1.WatchRequest, stream grpc.ServerStreamingServ
 	s.local.Attach(node, logs)
 	defer s.local.Detach(node, logs)
 
-	if err := s.sendPlaced(stream, node); err != nil {
+	if err := s.sendPlaced(stream, placed); err != nil {
 		return err
 	}
 	for {
@@ -119,9 +122,13 @@ func (s *Server) Watch(req *nodev1.WatchRequest, stream grpc.ServerStreamingServ
 	}
 }
 
-// sendPlaced sends everything that is on the node now, then says so.
-func (s *Server) sendPlaced(stream grpc.ServerStreamingServer[nodev1.WatchResponse], node string) error {
-	placed, _ := s.local.Assigned(node)
+// sendPlaced sends everything that was on the node when the call began, then
+// says so. An agent starts containers on it, so it is sent once the file
+// has it, as Local.Assigned has it for an agent in this process.
+func (s *Server) sendPlaced(stream grpc.ServerStreamingServer[nodev1.WatchResponse], placed []*agonesv1.GameServer) error {
+	if err := s.servers.Sync(stream.Context()); err != nil {
+		return err
+	}
 	for _, gs := range placed {
 		if err := sendGameServer(stream, gs); err != nil {
 			return err
@@ -191,6 +198,7 @@ func (s *Server) Report(ctx context.Context, req *nodev1.ReportRequest) (*nodev1
 		Event:     event,
 		Reserve:   sidecarv1.ReserveFor(req.GetReserveSeconds()),
 		Detail:    req.GetDetail(),
+		ID:        req.GetRequestId(),
 	})
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())

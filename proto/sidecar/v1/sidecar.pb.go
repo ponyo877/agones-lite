@@ -194,9 +194,11 @@ type TellRequest struct {
 	// the game server made them.
 	Counters []*CounterUpdate `protobuf:"bytes,5,rep,name=counters,proto3" json:"counters,omitempty"`
 	Lists    []*ListUpdate    `protobuf:"bytes,6,rep,name=lists,proto3" json:"lists,omitempty"`
-	// For EVENT_UPDATE_COUNTS: a name no other change has. A request is sent
-	// again when its answer was lost, and the name lets the control plane see
-	// that it is the same change and not a second one.
+	// A name no other request has. A request is sent again when its answer
+	// was lost, and the name lets the control plane see that it is the same
+	// request and not a second one. Without it, Counters and Lists would be
+	// changed twice, and a Ready that arrives again would end the session a
+	// matchmaker began in between.
 	ChangeId      string `protobuf:"bytes,7,opt,name=change_id,json=changeId,proto3" json:"change_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

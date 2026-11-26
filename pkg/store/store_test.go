@@ -352,6 +352,38 @@ func TestOnNodeFindsTheGameServersOfANodeAndFollowsThemAsTheyMove(t *testing.T) 
 	assert.Empty(t, names("node-1"))
 }
 
+// An agent keeps a copy of what is on its node, and acts on it. It takes the
+// list and the changes in one step, so that nothing the list shows is told
+// again behind it. Told again, the deletion of an earlier GameServer would
+// take the one that has its name now out of the copy, and the agent would
+// remove its containers.
+func TestOnNodeAndWatchTellsOnlyWhatCameAfterTheList(t *testing.T) {
+	servers := GameServersOf(open(t, filepath.Join(t.TempDir(), "state.db")))
+	place := func() *agonesv1.GameServer {
+		gs := gameServer("a")
+		gs.Status.NodeName = "node-1"
+		created, err := servers.Create(gs)
+		require.NoError(t, err)
+		return created
+	}
+	earlier := place()
+	require.NoError(t, servers.Delete("default", "a"))
+	current := place()
+	require.NotEqual(t, earlier.UID, current.UID, "the same name, another GameServer")
+
+	placed, events, cancel := OnNodeAndWatch(servers, "node-1")
+	defer cancel()
+
+	require.Len(t, placed, 1)
+	assert.Equal(t, current.UID, placed[0].UID)
+	assert.Empty(t, events, "the list has all of it")
+
+	require.NoError(t, servers.Delete("default", "a"))
+	gone := <-events
+	assert.Equal(t, Deleted, gone.Type)
+	assert.Equal(t, current.UID, gone.Object.GetUID(), "and this removal is news")
+}
+
 // Five random characters do not go far among ten thousand names. A name
 // that is taken is drawn again, and only one that keeps coming up is given
 // up on.

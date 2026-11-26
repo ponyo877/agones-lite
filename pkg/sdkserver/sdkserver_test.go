@@ -48,13 +48,16 @@ func (f *fakeAgent) Tell(_ context.Context, req *sidecarv1.TellRequest, _ ...grp
 		return nil, status.Errorf(codes.InvalidArgument, "unknown event %v", req.GetEvent())
 	}
 	f.told = append(f.told, req)
-	if f.stored == nil || req.GetEvent() != sidecarv1.Event_EVENT_UPDATE_COUNTS {
-		return &sidecarv1.TellResponse{}, nil
+	counts := f.stored != nil && req.GetEvent() == sidecarv1.Event_EVENT_UPDATE_COUNTS
+	if counts {
+		f.store(req)
 	}
-	f.store(req)
 	if f.losses > 0 {
 		f.losses--
 		return nil, errors.New("the answer got lost")
+	}
+	if !counts {
+		return &sidecarv1.TellResponse{}, nil
 	}
 	data, err := proto.Marshal(f.stored)
 	return &sidecarv1.TellResponse{GameServer: data}, err
@@ -120,6 +123,32 @@ func TestARequestSurvivesAnAgentRestart(t *testing.T) {
 	assert.Eventually(t, func() bool { return len(agent.events()) == 1 }, 3*retryDelay, 10*time.Millisecond)
 }
 
+// A request whose answer got lost is sent again, and the control plane must
+// know it for the same request: a Ready that is carried out twice ends the
+// session a matchmaker began in between. So every request has a name of its
+// own, and keeps it for as often as it is sent.
+func TestARequestIsSentAgainUnderTheNameItHad(t *testing.T) {
+	agent := &fakeAgent{losses: 1}
+	s := New(agent)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.deliver(ctx)
+
+	_, err := s.Ready(ctx, &sdk.Empty{})
+	require.NoError(t, err)
+	_, err = s.Allocate(ctx, &sdk.Empty{})
+	require.NoError(t, err)
+
+	want := []sidecarv1.Event{sidecarv1.Event_EVENT_READY, sidecarv1.Event_EVENT_READY, sidecarv1.Event_EVENT_ALLOCATE}
+	require.Eventually(t, func() bool { return assert.ObjectsAreEqual(want, agent.events()) }, 3*retryDelay, 10*time.Millisecond)
+	agent.mu.Lock()
+	defer agent.mu.Unlock()
+	first, again, next := agent.told[0].GetChangeId(), agent.told[1].GetChangeId(), agent.told[2].GetChangeId()
+	assert.NotEmpty(t, first)
+	assert.Equal(t, first, again, "the same request")
+	assert.NotEqual(t, first, next, "another request")
+}
+
 // When the time is up the sidecar does not ask for Ready, as it would for
 // the game server: that could end a session the game server has just begun.
 func TestAReserveThatRunsOutSaysSoAndLeavesTheRestToTheControlPlane(t *testing.T) {
@@ -146,19 +175,19 @@ func TestATimerThatFiredTooLateSaysNothingAboutTheNextReservation(t *testing.T) 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go s.deliver(ctx)
-	timer := func() *time.Timer {
+	latest := func() int {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		return s.reserve
+		return s.asked
 	}
 	_, err := s.Reserve(ctx, &sdk.Duration{Seconds: 3600})
 	require.NoError(t, err)
-	first := timer()
+	first := latest()
 	_, err = s.Reserve(ctx, &sdk.Duration{Seconds: 3600})
 	require.NoError(t, err)
 
 	s.expired(first) // the first timer, arriving after it was stopped
-	s.expired(timer())
+	s.expired(latest())
 
 	want := []sidecarv1.Event{sidecarv1.Event_EVENT_RESERVE, sidecarv1.Event_EVENT_RESERVE, sidecarv1.Event_EVENT_RESERVE_EXPIRED}
 	assert.Eventually(t, func() bool { return assert.ObjectsAreEqual(want, agent.events()) }, 3*time.Second, 20*time.Millisecond)

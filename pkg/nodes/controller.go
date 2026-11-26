@@ -88,12 +88,12 @@ func MostAreGone(nodes []*scrimv1.Node) bool {
 // Drained returns the GameServers a draining node should now shut down:
 // those without a session. Allocated and Reserved ones are left to finish.
 func Drained(node *scrimv1.Node, onNode []*agonesv1.GameServer) []*agonesv1.GameServer {
-	if !node.Spec.Drain {
+	if node.Duty() != scrimv1.Draining {
 		return nil
 	}
 	var idle []*agonesv1.GameServer
 	for _, gs := range onNode {
-		if _, ok := gameservers.Next(gs.Status.State, gameservers.ScaledDown); ok && gs.DeletionTimestamp == nil {
+		if _, ok := gameservers.Next(gs.Status.State, gameservers.ScaledDown); ok && gameservers.StageOf(gs) == gameservers.Live {
 			idle = append(idle, gs)
 		}
 	}
@@ -231,19 +231,26 @@ func (c *Controller) report(node string, servers []*agonesv1.GameServer, event g
 	return nil
 }
 
-// Cordon stops new game servers and allocations from landing on a node.
-// With drain, the node also sheds the game servers that have no session.
-func (c *Controller) Cordon(name string, drain bool) error {
-	return c.nodes.Change("", name, func(node *scrimv1.Node) bool {
-		node.Spec.Unschedulable, node.Spec.Drain = true, drain
-		return true
-	})
+// operations is what an operator can do to a node, by the name the API and
+// the CLI have for it, and the Duty each leaves the node with. What was
+// asked of the node before does not matter: cordoning a node that is being
+// drained stops the drain, and keeps new game servers away still.
+var operations = map[string]scrimv1.Duty{
+	"cordon":   scrimv1.Cordoned,
+	"drain":    scrimv1.Draining,
+	"uncordon": scrimv1.Open,
 }
 
-// Uncordon makes a node available again.
-func (c *Controller) Uncordon(name string) error {
+// Operate carries out an operator's request on a node: cordon stops new
+// game servers and allocations from landing there, drain also sheds the game
+// servers that have no session, and uncordon makes the node available again.
+func (c *Controller) Operate(name, operation string) error {
+	duty, known := operations[operation]
+	if !known {
+		return store.ErrNotFound
+	}
 	return c.nodes.Change("", name, func(node *scrimv1.Node) bool {
-		node.Spec.Unschedulable, node.Spec.Drain = false, false
+		node.Ask(duty)
 		return true
 	})
 }

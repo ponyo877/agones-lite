@@ -1,4 +1,4 @@
-.PHONY: build test lint check dist
+.PHONY: build test lint check dist models
 
 VERSION ?= dev
 LDFLAGS := -s -w -X github.com/ponyo877/scrim/pkg/version.Version=$(VERSION)
@@ -35,6 +35,13 @@ check: lint
 	build/ci/pinned.sh
 	go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
 	cd formal && lake build --wfail
+	build/ci/models.sh
+
+# The Quint models in formal/quint: every state each of them can reach.
+# After changing a table of a model, write its answers down again for the Go
+# tests: build/ci/models.sh vectors
+models:
+	build/ci/models.sh
 
 .PHONY: proto sidecar-image
 

@@ -23,6 +23,10 @@ const maxListCapacity = 1000
 // actions, and the last-allocated annotation. Failed counter and list
 // actions do not stop an allocation upstream, so they are returned alongside.
 //
+// The state moves by the table every other move goes by: the Allocated
+// event of pkg/gameservers. gs must be a candidate, which is what makes
+// that event apply.
+//
 // Upstream: applyAllocationToGameServer in
 // pkg/gameserverallocations/allocator.go, up to the point where it updates
 // the GameServer.
@@ -30,7 +34,7 @@ func Apply(gsa *allocationv1.GameServerAllocation, gs *agonesv1.GameServer, now 
 	allocated := gs.DeepCopy()
 	patchMetadata(allocated, gsa.Spec.MetaPatch)
 	stampLastAllocated(allocated, now)
-	allocated.Status.State = agonesv1.GameServerStateAllocated
+	allocated.Status.State, _ = gameservers.Next(gs.Status.State, gameservers.Allocated)
 	failed := slices.Concat(
 		counterActions(gsa.Spec.Counters, allocated),
 		listActions(gsa.Spec.Lists, allocated),
