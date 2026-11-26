@@ -354,19 +354,19 @@ func TestDecide(t *testing.T) {
 		node     string
 		deleted  bool
 		nodeGone bool
-		want     step
+		want     Event
 	}{
-		"new, needs ports":            {state: portAllocation, want: place},
-		"new, no ports to allocate":   {state: creating, want: place},
-		"placed, agent's turn":        {state: creating, node: "n", want: wait},
-		"asked to be ready":           {state: requestReady, node: "n", want: grantReady},
-		"ready":                       {state: ready, node: "n", want: wait},
-		"shut down":                   {state: shutdown, node: "n", want: startDelete},
-		"deleting, containers exist":  {state: shutdown, node: "n", deleted: true, want: wait},
-		"deleting, never placed":      {state: creating, deleted: true, want: forget},
-		"deleting, node out of reach": {state: shutdown, node: "n", deleted: true, nodeGone: true, want: forget},
-		"failed before placement":     {state: failed, want: wait},
-		"unhealthy stays for a look":  {state: unhealthy, node: "n", want: wait},
+		"new, needs ports":            {state: portAllocation, want: Placed},
+		"new, no ports to allocate":   {state: creating, want: Placed},
+		"placed, agent's turn":        {state: creating, node: "n", want: nothing},
+		"asked to be ready":           {state: requestReady, node: "n", want: Readied},
+		"ready":                       {state: ready, node: "n", want: nothing},
+		"shut down":                   {state: shutdown, node: "n", want: DeletionAsked},
+		"deleting, containers exist":  {state: shutdown, node: "n", deleted: true, want: nothing},
+		"deleting, never placed":      {state: creating, deleted: true, want: Abandoned},
+		"deleting, node out of reach": {state: shutdown, node: "n", deleted: true, nodeGone: true, want: Abandoned},
+		"failed before placement":     {state: failed, want: nothing},
+		"unhealthy stays for a look":  {state: unhealthy, node: "n", want: nothing},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {

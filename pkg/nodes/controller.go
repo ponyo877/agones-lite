@@ -93,7 +93,7 @@ func Drained(node *scrimv1.Node, onNode []*agonesv1.GameServer) []*agonesv1.Game
 	}
 	var idle []*agonesv1.GameServer
 	for _, gs := range onNode {
-		if _, ok := gameservers.Next(gs.Status.State, gameservers.ScaledDown); ok && gs.DeletionTimestamp == nil {
+		if _, ok := gameservers.Next(gs.Status.State, gameservers.ScaledDown); ok && gameservers.StageOf(gs) == gameservers.Live {
 			idle = append(idle, gs)
 		}
 	}

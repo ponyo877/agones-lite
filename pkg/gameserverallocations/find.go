@@ -214,7 +214,7 @@ func matcher(selector *allocationv1.GameServerSelector) func(*agonesv1.GameServe
 // findGameServerForAllocation.
 func candidate(gsa *allocationv1.GameServerAllocation, gs *agonesv1.GameServer) bool {
 	_, allocatable := gameservers.Next(gs.Status.State, gameservers.Allocated)
-	return gs.Namespace == gsa.Namespace && gs.DeletionTimestamp.IsZero() && allocatable
+	return gs.Namespace == gsa.Namespace && gameservers.StageOf(gs) == gameservers.Live && allocatable
 }
 
 // random reports whether chance decides. Distributed spreads allocations by
