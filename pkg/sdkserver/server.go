@@ -58,6 +58,7 @@ type Server struct {
 	arrived  chan struct{}            // closed once the first GameServer came in
 	watchers map[chan *sdk.GameServer]struct{}
 	reserve  *time.Timer // returns a Reserved game server to Ready
+	asked    int         // how many requests for a state were made: the latest is the one in force
 }
 
 // New returns a Server that talks to the agent through client.

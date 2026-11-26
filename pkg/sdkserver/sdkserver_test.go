@@ -175,19 +175,19 @@ func TestATimerThatFiredTooLateSaysNothingAboutTheNextReservation(t *testing.T) 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go s.deliver(ctx)
-	timer := func() *time.Timer {
+	latest := func() int {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		return s.reserve
+		return s.asked
 	}
 	_, err := s.Reserve(ctx, &sdk.Duration{Seconds: 3600})
 	require.NoError(t, err)
-	first := timer()
+	first := latest()
 	_, err = s.Reserve(ctx, &sdk.Duration{Seconds: 3600})
 	require.NoError(t, err)
 
 	s.expired(first) // the first timer, arriving after it was stopped
-	s.expired(timer())
+	s.expired(latest())
 
 	want := []sidecarv1.Event{sidecarv1.Event_EVENT_RESERVE, sidecarv1.Event_EVENT_RESERVE, sidecarv1.Event_EVENT_RESERVE_EXPIRED}
 	assert.Eventually(t, func() bool { return assert.ObjectsAreEqual(want, agent.events()) }, 3*time.Second, 20*time.Millisecond)

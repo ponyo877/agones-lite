@@ -33,7 +33,7 @@ module requests {
 
   // -- the sidecar
   var calls: int            // how many times the game server has called
-  var reserve: int          // the call whose Reserve has a time: Go's Server.reserve; 0 for none
+  var reserve: int          // the call whose Reserve has a time, 0 for none. Go: Server.asked, while Server.reserve is set
   var running: bool         // its timer has not gone off yet
   var fired: Set[int]       // timers that went off, and whose message is not yet queued or dropped
   var outbox: List[Request] // Go's Server.outbox
