@@ -569,7 +569,11 @@ type ReportRequest struct {
 	// The uid of the GameServer the report is about. A GameServer made later
 	// under the same name has another, and the report is not applied to it.
 	// Empty means whichever GameServer has the name.
-	Uid           string `protobuf:"bytes,6,opt,name=uid,proto3" json:"uid,omitempty"`
+	Uid string `protobuf:"bytes,6,opt,name=uid,proto3" json:"uid,omitempty"`
+	// The name the sidecar gave the request, for what a game server asked
+	// through the SDK. A request whose name is the one carried out last is not
+	// carried out again. Empty for what has no name: it is taken as new.
+	RequestId     string `protobuf:"bytes,7,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -642,6 +646,13 @@ func (x *ReportRequest) GetDetail() string {
 func (x *ReportRequest) GetUid() string {
 	if x != nil {
 		return x.Uid
+	}
+	return ""
+}
+
+func (x *ReportRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
 	}
 	return ""
 }
@@ -944,14 +955,16 @@ const file_proto_node_v1_node_proto_rawDesc = "" +
 	"\aRemoved\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\"\b\n" +
-	"\x06Synced\"\xaa\x01\n" +
+	"\x06Synced\"\xc9\x01\n" +
 	"\rReportRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x14\n" +
 	"\x05event\x18\x03 \x01(\tR\x05event\x12'\n" +
 	"\x0freserve_seconds\x18\x04 \x01(\x03R\x0ereserveSeconds\x12\x16\n" +
 	"\x06detail\x18\x05 \x01(\tR\x06detail\x12\x10\n" +
-	"\x03uid\x18\x06 \x01(\tR\x03uid\"\x10\n" +
+	"\x03uid\x18\x06 \x01(\tR\x03uid\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\a \x01(\tR\trequestId\"\x10\n" +
 	"\x0eReportResponse\"\xde\x02\n" +
 	"\x12SetMetadataRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +

@@ -273,6 +273,52 @@ func TestAReservationThatRunsOutDoesNotEndASession(t *testing.T) {
 	assert.Equal(t, ready, f.server().Status.State)
 }
 
+// The sidecar sends a request again when it did not hear that it arrived.
+// The Ready below arrived, the game server was given to a match, and then
+// the same Ready arrives once more. Carried out twice, it would put the
+// game server back among the Ready ones with the match still on it.
+func TestARequestThatArrivesTwiceIsCarriedOutOnce(t *testing.T) {
+	f := newFixture(t)
+	f.addNode()
+	f.addServer()
+	f.sync()
+	f.report(ContainersCreated)
+	f.report(ContainersRunning)
+	asked := Report{Namespace: "default", Name: "gs", Event: SDKReady, ID: "the-first-ready"}
+
+	require.NoError(t, f.Report(asked))
+	f.sync()
+	f.report(Allocated)
+	require.NoError(t, f.Report(asked))
+	f.sync()
+	assert.Equal(t, allocated, f.server().Status.State, "the session goes on")
+
+	// A Ready the game server calls after the match is another request.
+	asked.ID = "the-second-ready"
+	require.NoError(t, f.Report(asked))
+	f.sync()
+	assert.Equal(t, ready, f.server().Status.State)
+}
+
+// A request that could not be carried out when it first arrived is not
+// taken for done: it is carried out when it arrives again.
+func TestARequestThatWasHeldBackIsCarriedOutWhenItArrivesAgain(t *testing.T) {
+	f := newFixture(t)
+	f.addNode()
+	f.addServer()
+	f.sync()
+	f.report(ContainersCreated)
+	asked := Report{Namespace: "default", Name: "gs", Event: SDKAllocate, ID: "allocate"}
+
+	require.NoError(t, f.nodes.Delete("", "node-1"))
+	require.NoError(t, f.Report(asked))
+	assert.Equal(t, starting, f.server().Status.State, "nobody is sent to a node that is not known")
+
+	f.addNode()
+	require.NoError(t, f.Report(asked))
+	assert.Equal(t, allocated, f.server().Status.State)
+}
+
 // history gives the fixture an event history to write to and returns what
 // the latest line about the GameServer says.
 func (f fixture) history() (latest func() string) {

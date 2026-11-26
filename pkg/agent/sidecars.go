@@ -247,6 +247,7 @@ func (s *sidecarServer) pass(ctx context.Context, key Key, uid types.UID, req *s
 		UID:       uid,
 		Event:     event,
 		Reserve:   sidecarv1.ReserveFor(req.GetReserveSeconds()),
+		ID:        req.GetChangeId(),
 	})
 }
 

@@ -35,6 +35,12 @@ const (
 	// made through the SDK. The sidecar sends a change again when the answer
 	// got lost; the name keeps it from being made twice.
 	LastCountsChangeAnnotation = "scrim/last-counts-change"
+	// LastRequestAnnotation names the last request for a state that a game
+	// server made through the SDK and that was carried out. The sidecar
+	// sends a request again when the answer got lost. Carried out twice, a
+	// Ready would take back a game server that a matchmaker was given in
+	// between, players and all.
+	LastRequestAnnotation = "scrim/last-request"
 )
 
 // Report is an Event that an agent or a sidecar saw happen to a GameServer.
@@ -51,11 +57,20 @@ type Report struct {
 	// Detail is what the reporter knows of the cause, for the event history:
 	// for CreateFailed, what Docker said. It may be empty.
 	Detail string
+	// ID, when set, names the request of a game server that the Report
+	// passes on. One that arrives a second time is carried out only once:
+	// see LastRequestAnnotation.
+	ID string
 }
 
 // about reports whether gs is the GameServer the Report speaks of.
 func (r Report) about(gs *agonesv1.GameServer) bool {
 	return r.UID == "" || r.UID == gs.UID
+}
+
+// repeats reports whether gs has carried the Report out already.
+func (r Report) repeats(gs *agonesv1.GameServer) bool {
+	return r.ID != "" && gs.Annotations[LastRequestAnnotation] == r.ID
 }
 
 // maxDetail is how much of a Report's detail the event history keeps.
@@ -296,7 +311,7 @@ func (c *Controller) Report(r Report) error {
 	var moved *agonesv1.GameServer
 	err := c.servers.Change(r.Namespace, r.Name, func(gs *agonesv1.GameServer) bool {
 		next, ok := Next(gs.Status.State, r.Event)
-		if !ok || StageOf(gs) != Live || !r.about(gs) {
+		if !ok || StageOf(gs) != Live || !r.about(gs) || r.repeats(gs) {
 			return false
 		}
 		node, known := c.nodes.Peek("", gs.Status.NodeName)
@@ -348,6 +363,9 @@ func (c *Controller) moveOn(r Report) error {
 func apply(gs *agonesv1.GameServer, next agonesv1.GameServerState, r Report, node *scrimv1.Node, now time.Time) {
 	gs.Status.State = next
 	gs.Status.ReservedUntil = reservedUntil(next, r.Reserve, now)
+	if r.ID != "" {
+		metav1.SetMetaDataAnnotation(&gs.ObjectMeta, LastRequestAnnotation, r.ID)
+	}
 	if r.Event == SDKAllocate {
 		stamp, _ := now.UTC().MarshalText()
 		metav1.SetMetaDataAnnotation(&gs.ObjectMeta, LastAllocatedAnnotation, string(stamp))

@@ -191,6 +191,7 @@ func (s *Server) Report(ctx context.Context, req *nodev1.ReportRequest) (*nodev1
 		Event:     event,
 		Reserve:   sidecarv1.ReserveFor(req.GetReserveSeconds()),
 		Detail:    req.GetDetail(),
+		ID:        req.GetRequestId(),
 	})
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())

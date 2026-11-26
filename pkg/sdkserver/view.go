@@ -2,7 +2,6 @@ package sdkserver
 
 import (
 	"context"
-	"crypto/rand"
 	"slices"
 	"strconv"
 
@@ -33,9 +32,6 @@ func (s *Server) change(ctx context.Context, judge judgement) (*sdk.GameServer, 
 	if err != nil {
 		return nil, err
 	}
-	// A name of its own: should the answer get lost, the change is sent
-	// again, and must not be taken for a second one.
-	change.ChangeId = rand.Text()
 	// Queued and noted under one lock: the agent must get the changes in the
 	// order they were made to the view.
 	if _, err := s.tell(change); err != nil {
