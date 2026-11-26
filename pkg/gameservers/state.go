@@ -14,6 +14,7 @@ const (
 	// Reported by the control plane itself.
 	Placed     Event = "Placed"     // a node and host ports were chosen
 	Readied    Event = "Readied"    // a Ready request was granted
+	Allocated  Event = "Allocated"  // an allocation request was given it
 	ScaledDown Event = "ScaledDown" // its GameServerSet has one too many
 	NodeLost   Event = "NodeLost"   // its node has been out of reach for too long
 
@@ -50,6 +51,10 @@ var rules = map[Event]rule{
 	CreateFailed:      {from: states(agonesv1.GameServerStateCreating, agonesv1.GameServerStateStarting), to: agonesv1.GameServerStateError},
 	ContainersRunning: {from: states(agonesv1.GameServerStateStarting), to: agonesv1.GameServerStateScheduled},
 	Readied:           {from: states(agonesv1.GameServerStateRequestReady), to: agonesv1.GameServerStateReady},
+	// A matchmaker gets a GameServer that waits for a session, or one that
+	// has a session already when its request asks for that: never one that
+	// is still coming up, and never one a game server holds back for itself.
+	Allocated: {from: states(agonesv1.GameServerStateReady, agonesv1.GameServerStateAllocated), to: agonesv1.GameServerStateAllocated},
 	// Never from Allocated or Reserved: a session may have started since the
 	// decision to scale down was taken.
 	ScaledDown: {from: beforeSession, to: agonesv1.GameServerStateShutdown},

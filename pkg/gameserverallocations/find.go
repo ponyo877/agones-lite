@@ -213,10 +213,8 @@ func matcher(selector *allocationv1.GameServerSelector) func(*agonesv1.GameServe
 // (pkg/gameserverallocations/allocation_cache.go), and the namespace check in
 // findGameServerForAllocation.
 func candidate(gsa *allocationv1.GameServerAllocation, gs *agonesv1.GameServer) bool {
-	state := gs.Status.State
-	return gs.Namespace == gsa.Namespace &&
-		gs.DeletionTimestamp.IsZero() &&
-		(state == agonesv1.GameServerStateReady || state == agonesv1.GameServerStateAllocated)
+	_, allocatable := gameservers.Next(gs.Status.State, gameservers.Allocated)
+	return gs.Namespace == gsa.Namespace && gs.DeletionTimestamp.IsZero() && allocatable
 }
 
 // random reports whether chance decides. Distributed spreads allocations by

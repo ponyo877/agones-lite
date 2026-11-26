@@ -1,5 +1,6 @@
 {"state":"PortAllocation","event":"Placed","next":"Creating"}
 {"state":"PortAllocation","event":"Readied","next":null}
+{"state":"PortAllocation","event":"Allocated","next":null}
 {"state":"PortAllocation","event":"ScaledDown","next":"Shutdown"}
 {"state":"PortAllocation","event":"NodeLost","next":"Unhealthy"}
 {"state":"PortAllocation","event":"ContainersCreated","next":null}
@@ -17,6 +18,7 @@
 {"state":"PortAllocation","event":"ReserveExpired","next":null}
 {"state":"Creating","event":"Placed","next":"Creating"}
 {"state":"Creating","event":"Readied","next":null}
+{"state":"Creating","event":"Allocated","next":null}
 {"state":"Creating","event":"ScaledDown","next":"Shutdown"}
 {"state":"Creating","event":"NodeLost","next":"Unhealthy"}
 {"state":"Creating","event":"ContainersCreated","next":"Starting"}
@@ -34,6 +36,7 @@
 {"state":"Creating","event":"ReserveExpired","next":null}
 {"state":"Starting","event":"Placed","next":null}
 {"state":"Starting","event":"Readied","next":null}
+{"state":"Starting","event":"Allocated","next":null}
 {"state":"Starting","event":"ScaledDown","next":"Shutdown"}
 {"state":"Starting","event":"NodeLost","next":"Unhealthy"}
 {"state":"Starting","event":"ContainersCreated","next":null}
@@ -51,6 +54,7 @@
 {"state":"Starting","event":"ReserveExpired","next":null}
 {"state":"Scheduled","event":"Placed","next":null}
 {"state":"Scheduled","event":"Readied","next":null}
+{"state":"Scheduled","event":"Allocated","next":null}
 {"state":"Scheduled","event":"ScaledDown","next":"Shutdown"}
 {"state":"Scheduled","event":"NodeLost","next":"Unhealthy"}
 {"state":"Scheduled","event":"ContainersCreated","next":null}
@@ -68,6 +72,7 @@
 {"state":"Scheduled","event":"ReserveExpired","next":null}
 {"state":"RequestReady","event":"Placed","next":null}
 {"state":"RequestReady","event":"Readied","next":"Ready"}
+{"state":"RequestReady","event":"Allocated","next":null}
 {"state":"RequestReady","event":"ScaledDown","next":"Shutdown"}
 {"state":"RequestReady","event":"NodeLost","next":"Unhealthy"}
 {"state":"RequestReady","event":"ContainersCreated","next":null}
@@ -85,6 +90,7 @@
 {"state":"RequestReady","event":"ReserveExpired","next":null}
 {"state":"Ready","event":"Placed","next":null}
 {"state":"Ready","event":"Readied","next":null}
+{"state":"Ready","event":"Allocated","next":"Allocated"}
 {"state":"Ready","event":"ScaledDown","next":"Shutdown"}
 {"state":"Ready","event":"NodeLost","next":"Unhealthy"}
 {"state":"Ready","event":"ContainersCreated","next":null}
@@ -102,6 +108,7 @@
 {"state":"Ready","event":"ReserveExpired","next":null}
 {"state":"Reserved","event":"Placed","next":null}
 {"state":"Reserved","event":"Readied","next":null}
+{"state":"Reserved","event":"Allocated","next":null}
 {"state":"Reserved","event":"ScaledDown","next":null}
 {"state":"Reserved","event":"NodeLost","next":"Unhealthy"}
 {"state":"Reserved","event":"ContainersCreated","next":null}
@@ -119,6 +126,7 @@
 {"state":"Reserved","event":"ReserveExpired","next":"RequestReady"}
 {"state":"Allocated","event":"Placed","next":null}
 {"state":"Allocated","event":"Readied","next":null}
+{"state":"Allocated","event":"Allocated","next":"Allocated"}
 {"state":"Allocated","event":"ScaledDown","next":null}
 {"state":"Allocated","event":"NodeLost","next":"Unhealthy"}
 {"state":"Allocated","event":"ContainersCreated","next":null}
@@ -136,6 +144,7 @@
 {"state":"Allocated","event":"ReserveExpired","next":null}
 {"state":"Shutdown","event":"Placed","next":null}
 {"state":"Shutdown","event":"Readied","next":null}
+{"state":"Shutdown","event":"Allocated","next":null}
 {"state":"Shutdown","event":"ScaledDown","next":null}
 {"state":"Shutdown","event":"NodeLost","next":null}
 {"state":"Shutdown","event":"ContainersCreated","next":null}
@@ -153,6 +162,7 @@
 {"state":"Shutdown","event":"ReserveExpired","next":null}
 {"state":"Unhealthy","event":"Placed","next":null}
 {"state":"Unhealthy","event":"Readied","next":null}
+{"state":"Unhealthy","event":"Allocated","next":null}
 {"state":"Unhealthy","event":"ScaledDown","next":null}
 {"state":"Unhealthy","event":"NodeLost","next":null}
 {"state":"Unhealthy","event":"ContainersCreated","next":null}
@@ -170,6 +180,7 @@
 {"state":"Unhealthy","event":"ReserveExpired","next":null}
 {"state":"Error","event":"Placed","next":null}
 {"state":"Error","event":"Readied","next":null}
+{"state":"Error","event":"Allocated","next":null}
 {"state":"Error","event":"ScaledDown","next":null}
 {"state":"Error","event":"NodeLost","next":null}
 {"state":"Error","event":"ContainersCreated","next":null}

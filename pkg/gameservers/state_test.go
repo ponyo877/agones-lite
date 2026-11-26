@@ -43,6 +43,14 @@ func TestNext(t *testing.T) {
 		{allocated, SDKReady, requestReady, true},
 		{allocated, SDKShutdown, shutdown, true},
 
+		// The allocation API hands out what waits for a session, or has one:
+		// not what is still coming up, and not what its game server holds back.
+		{ready, Allocated, allocated, true},
+		{allocated, Allocated, allocated, true},
+		{reserved, Allocated, reserved, false},
+		{scheduled, Allocated, scheduled, false},
+		{requestReady, Allocated, requestReady, false},
+
 		// A reservation that runs out takes back a server that is still
 		// Reserved. One that allocated itself in the meantime keeps its session.
 		{reserved, ReserveExpired, requestReady, true},

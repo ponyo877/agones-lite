@@ -99,7 +99,8 @@ def stateName : StateMachine.State → String
 
 /-- The name Go uses for an event. -/
 def eventName : StateMachine.Event → String
-  | .placed => "Placed" | .readied => "Readied" | .scaledDown => "ScaledDown"
+  | .placed => "Placed" | .readied => "Readied" | .allocatedByRequest => "Allocated"
+  | .scaledDown => "ScaledDown"
   | .nodeLost => "NodeLost" | .containersCreated => "ContainersCreated"
   | .createFailed => "CreateFailed" | .containersRunning => "ContainersRunning"
   | .exitedCleanly => "ExitedCleanly" | .exitedWithError => "ExitedWithError"

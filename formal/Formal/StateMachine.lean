@@ -19,7 +19,7 @@ inductive State where
 /-- What can happen to a GameServer. Go: `Event`. -/
 inductive Event where
   -- reported by the control plane itself
-  | placed | readied | scaledDown | nodeLost
+  | placed | readied | allocatedByRequest | scaledDown | nodeLost
   -- reported by the node's agent
   | containersCreated | createFailed | containersRunning
   | exitedCleanly | exitedWithError | containersMissing | containersRemoved
@@ -34,7 +34,7 @@ def State.all : List State :=
    reserved, allocated, shutdown, unhealthy, error]
 
 def Event.all : List Event :=
-  [placed, readied, scaledDown, nodeLost, containersCreated, createFailed,
+  [placed, readied, allocatedByRequest, scaledDown, nodeLost, containersCreated, createFailed,
    containersRunning, exitedCleanly, exitedWithError, containersMissing,
    containersRemoved, sdkReady, sdkAllocate, sdkReserve, sdkShutdown, healthFailed,
    reserveExpired]
@@ -64,6 +64,7 @@ def rule : Event → Option Rule
   | createFailed => some (only [creating, starting] error)
   | containersRunning => some (only [starting] scheduled)
   | readied => some (only [requestReady] ready)
+  | allocatedByRequest => some (only [ready, allocated] allocated)
   | scaledDown => some (only beforeSession shutdown)
   | sdkReady => some (anywhere requestReady)
   | sdkAllocate => some (anywhere allocated)
@@ -120,6 +121,14 @@ allocates itself; what the timer says then arrives too late to matter. -/
 theorem an_expired_reservation_ends_only_a_reservation (state after : State)
     (h : next state reserveExpired = some after) :
     state = reserved ∧ after = requestReady := by
+  cases state <;> simp_all [next, rule, final, only]
+
+/-- A matchmaker is given a GameServer only while it waits for a session, or
+has one already. One that is still coming up, held back by its game server,
+or finished is never handed out, whatever the allocation API is asked. -/
+theorem a_request_gets_only_what_can_take_a_session (state after : State)
+    (h : next state allocatedByRequest = some after) :
+    (state = ready ∨ state = allocated) ∧ after = allocated := by
   cases state <;> simp_all [next, rule, final, only]
 
 /-- No state is a trap: a GameServer that is not finished can always be
