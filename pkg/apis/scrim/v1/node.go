@@ -36,13 +36,45 @@ type Node struct {
 	Status NodeStatus `json:"status"`
 }
 
-// NodeSpec is what an operator asks of a node.
+// NodeSpec is what an operator asks of a node. Its two switches spell one
+// of three Duties: see Duty.
 type NodeSpec struct {
 	// Unschedulable stops new game servers and allocations from landing here.
 	Unschedulable bool `json:"unschedulable,omitempty"`
 	// Drain also shuts down the game servers here that have no session, so
 	// the node empties as its sessions end.
 	Drain bool `json:"drain,omitempty"`
+}
+
+// Duty is what an operator asks of a node, as one of three things.
+type Duty string
+
+const (
+	// Open takes new game servers, and new sessions on the ones it has.
+	Open Duty = "Open"
+	// Cordoned takes neither. What runs there stays.
+	Cordoned Duty = "Cordoned"
+	// Draining takes neither, and sheds the game servers that have no
+	// session, so the node empties as its sessions end.
+	Draining Duty = "Draining"
+)
+
+// Duty reads the two switches of the spec. Drain decides by itself: a node
+// that is being drained takes nothing new, whether or not it is cordoned as
+// well.
+func (n *Node) Duty() Duty {
+	switch {
+	case n.Spec.Drain:
+		return Draining
+	case n.Spec.Unschedulable:
+		return Cordoned
+	}
+	return Open
+}
+
+// Ask sets the two switches of the spec the one way that spells duty.
+func (n *Node) Ask(duty Duty) {
+	n.Spec.Unschedulable, n.Spec.Drain = duty != Open, duty == Draining
 }
 
 // NodeStatus is what the node's agent reports about itself.
@@ -73,10 +105,10 @@ type PortRange struct {
 }
 
 // Schedulable reports whether new game servers may be placed on the node,
-// and new sessions on its game servers. A node that is being drained takes
-// neither, whether or not it is cordoned as well.
+// and new sessions on its game servers: its agent is connected, and no
+// operator has asked otherwise.
 func (n *Node) Schedulable() bool {
-	return n.Status.Phase == NodeReady && !n.Spec.Unschedulable && !n.Spec.Drain
+	return n.Status.Phase == NodeReady && n.Duty() == Open
 }
 
 // DeepCopy returns a copy that shares nothing with n.

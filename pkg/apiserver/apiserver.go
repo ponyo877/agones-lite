@@ -64,10 +64,9 @@ type LogSource interface {
 }
 
 // NodeOperator is what the API needs to take a node out of and back into
-// service. pkg/nodes.Controller is one.
+// service. pkg/nodes.Controller is one, and knows the operations by name.
 type NodeOperator interface {
-	Cordon(name string, drain bool) error
-	Uncordon(name string) error
+	Operate(name, operation string) error
 }
 
 // New returns a Server working on s. recorder is where the event history is
@@ -178,18 +177,7 @@ func (s *Server) operateNode(w http.ResponseWriter, r *http.Request) {
 		fail(w, store.ErrNotFound)
 		return
 	}
-	var err error
-	switch r.PathValue("operation") {
-	case "cordon":
-		err = s.nodeOps.Cordon(name, false)
-	case "drain":
-		err = s.nodeOps.Cordon(name, true)
-	case "uncordon":
-		err = s.nodeOps.Uncordon(name)
-	default:
-		err = store.ErrNotFound
-	}
-	if err != nil {
+	if err := s.nodeOps.Operate(name, r.PathValue("operation")); err != nil {
 		fail(w, err)
 		return
 	}
