@@ -1453,6 +1453,7 @@ scrim agent                         別のマシンでエージェントを起�
 scrim apply -f FILE                 YAML を適用する
 scrim get KIND [NAME]               一覧、または 1 件を YAML で表示する
 scrim get KIND -w                   一覧のあと、変更を表示し続ける
+scrim get KIND [NAME] -o json|yaml  API が持つままの形で表示する (-w では変更ごとに JSON を 1 行)
 scrim describe KIND NAME            1 件の内容とイベント履歴を表示する
 scrim delete KIND NAME              削除する
 scrim scale fleet NAME --replicas N Fleet の台数を変える

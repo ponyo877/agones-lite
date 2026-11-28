@@ -27,16 +27,24 @@ func runGet(ctx context.Context, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("get", flag.ContinueOnError)
 	conn := clientFlags(fs)
 	watch := fs.Bool("w", false, "after the list, keep printing every change")
+	output := fs.String("o", "", "json or yaml: print the objects as the API has them, instead of a table; with -w, json only, one line per change")
 	positional, err := parse(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(positional) == 0 {
-		return errors.New("usage: scrim get KIND [NAME] [-w]")
+		return errors.New("usage: scrim get KIND [NAME] [-w] [-o json|yaml]")
 	}
 	c, err := conn.admin()
 	if err != nil {
 		return err
+	}
+	if *output != "" {
+		path, err := resourcePath(positional, conn.namespace)
+		if err != nil {
+			return err
+		}
+		return printObjects(ctx, c, path, *output, *watch, out)
 	}
 	if positional[0] == "nodes" || positional[0] == "node" {
 		return listNodes(ctx, c, out)
@@ -88,6 +96,57 @@ func show(ctx context.Context, c client, path string, out io.Writer) error {
 		return err
 	}
 	text, err := yaml.Marshal(obj)
+	if err != nil {
+		return err
+	}
+	_, err = out.Write(text)
+	return err
+}
+
+// resourcePath is where the API keeps what "get" was asked for: a kind's
+// collection, or one object of it when a name follows.
+func resourcePath(positional []string, namespace string) (string, error) {
+	name := ""
+	if len(positional) > 1 {
+		name = positional[1]
+	}
+	if positional[0] == "nodes" || positional[0] == "node" {
+		return strings.TrimSuffix("/v1/nodes/"+name, "/"), nil
+	}
+	k, err := findKind(positional[0])
+	if err != nil {
+		return "", err
+	}
+	return k.path(namespace, name), nil
+}
+
+// printObjects prints what the API answers for path as it is, for a
+// program to read rather than a person. A watch prints one line of JSON
+// for every change: {"type": "Added", "object": {...}}. It starts with the
+// list, as Added, and a line of type Synced says that the list is
+// complete: a program that changes something after it sees every change
+// that follows.
+func printObjects(ctx context.Context, c client, path, format string, watch bool, out io.Writer) error {
+	switch {
+	case format != "json" && format != "yaml":
+		return fmt.Errorf("unknown output format %q: json or yaml", format)
+	case watch && format != "json":
+		return errors.New("-w prints one line of JSON per change: use it with -o json")
+	case watch:
+		return c.events(ctx, path+"?watch=true", func(event string, data []byte) error {
+			_, err := fmt.Fprintf(out, "{\"type\":%q,\"object\":%s}\n", event, data)
+			return err
+		})
+	}
+	var obj json.RawMessage
+	if _, err := c.call(ctx, http.MethodGet, path, nil, &obj); err != nil {
+		return err
+	}
+	text, err := yaml.JSONToYAML(obj)
+	if format == "json" {
+		text, err = json.MarshalIndent(obj, "", "  ")
+		text = append(text, '\n')
+	}
 	if err != nil {
 		return err
 	}
