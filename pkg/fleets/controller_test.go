@@ -43,13 +43,15 @@ func (f fixture) addSet(set *agonesv1.GameServerSet) *agonesv1.GameServerSet {
 	return stored
 }
 
-// addServer stores a GameServer of set in the given state.
-func (f fixture) addServer(set *agonesv1.GameServerSet, state agonesv1.GameServerState) {
+// addServer stores a GameServer of set in the given state, and returns it
+// as stored.
+func (f fixture) addServer(set *agonesv1.GameServerSet, state agonesv1.GameServerState) *agonesv1.GameServer {
 	f.t.Helper()
 	gs := set.GameServer()
 	gs.Status.State = state
-	_, err := f.servers.Create(gs)
+	stored, err := f.servers.Create(gs)
 	require.NoError(f.t, err)
+	return stored
 }
 
 func (f fixture) sync() {

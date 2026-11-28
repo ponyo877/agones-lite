@@ -254,6 +254,16 @@ So do the conformance clients that Agones runs for each of its SDKs: Go,
 REST and WebSocket, Python, C#, Node.js, Rust and C++. CI builds them from
 the Agones source, unchanged, and runs each as a scrim game server until it
 shuts itself down.
+
+CI also installs Agones v1.62.0 in a kind cluster, makes the same game
+servers, allocations and Fleet changes there and on scrim, and compares
+what the two answer and store, field by field. Only what cannot be the same
+is left out before the comparison: addresses, ports, node names, times, the
+random part of generated names, scrim's own annotations, and the
+`immutableReplicas` that the Agones CRD adds for Kubernetes. One difference
+is kept on purpose, in how far a rolling update scales down an old
+GameServerSet that is busy with sessions, and the comparison names it
+instead of hiding it.
 [docs/planning.md](docs/planning.md) has the full list of what is in and
 what is out, and why.
 
@@ -328,8 +338,9 @@ Nothing reaches `main` without passing
 [CI](.github/workflows/ci.yml): the linters, the tests under the race
 detector on Linux amd64, Linux arm64 and macOS, a thousand tries of every
 property, the fuzz targets, the load test, the proofs, the models, a scan
-for known vulnerabilities, the Agones conformance clients of every SDK, and
-the quick start above with real containers. A release
+for known vulnerabilities, the Agones conformance clients of every SDK, the
+comparison with Agones itself, and the quick start above with real
+containers. A release
 is tried the same way once it is out, with the binary and the sidecar
 image that were published.
 

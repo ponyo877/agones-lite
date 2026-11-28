@@ -133,6 +133,27 @@ jobs:
       - name: The client, as a game server on scrim
         run: build/ci/agones-sdks.sh bin/scrim ${{ matrix.client }}
 
+  # The same game servers, allocations and Fleet changes, on Agones in a
+  # kind cluster and on scrim, and what the two answer compared.
+  agones-diff:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: The binary and the sidecar image of this commit
+        run: make build sidecar-image
+      - name: Agones in a kind cluster
+        run: |
+          go install sigs.k8s.io/kind@v0.33.0
+          build/ci/agones-kind.sh
+      - name: The same calls on both
+        run: build/ci/agones-diff.sh bin/scrim
+
   # Every test, on the three kinds of machine scrim runs on, with the
   # race detector and in an order drawn anew each time. On Linux nothing a
   # test needs is missing, Docker included, so a test that cannot run fails
@@ -331,7 +352,7 @@ jobs:
   # and fails when one failed, was cancelled or did not run.
   ci:
     if: always()
-    needs: [lint, build, quick-start, agones-sdks, test, coverage, properties, fuzz, load, generated, proofs, models, vulnerabilities, pinned]
+    needs: [lint, build, quick-start, agones-sdks, agones-diff, test, coverage, properties, fuzz, load, generated, proofs, models, vulnerabilities, pinned]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

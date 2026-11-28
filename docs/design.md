@@ -142,12 +142,25 @@ scrim は、何も検証しない実装を渡す。
 scrim は起動時に `ParseFeatures("")` を呼び、v1.62.0 の既定値で固定する。
 利用者が gate を切り替える手段は用意しない。
 
+本家の既定値は、GameServer と Fleet の注釈 `agones.dev/sdk-version` に本家の版を書く。
+その版は本家のビルドが埋め込むもので、埋め込まなければ `dev` になる。
+scrim は同じ起動時の処理で v1.62.0 を入れる（`pkg/agones`）。
+
 `Validate()` だけでは足りない。
 本家の検証は、Kubernetes の API サーバが CRD のスキーマで先に検査を済ませていることを前提にしている。
 負の `replicas`、範囲外のポート番号、DNS の名前として使えない名前は、スキーマが止めるので、`Validate()` は調べない。
 scrim にはその API サーバがないので、スキーマの制約のうち、実行に影響する項目を自分で検査する（`pkg/apiserver/schema.go`）。
 スキーマが与える既定値も同じ場所で付ける。
-容量を省いた Counter と List は 1000 になり、`priorities` の `order` を省くと Ascending になる。
+容量を省いた Counter と List は 1000 になり、値を省いた List の `values` は空の配列になる。
+`priorities` の `order` を省くと Ascending になる。
+
+Fleet のテンプレートは、書かれたまま（スキーマの既定値だけを付けて）保存する。
+`Fleet.Validate()` は、検査しながらテンプレートに本家の既定値を付ける。
+本家ではこれを検証用の webhook が呼ぶので、付けた既定値は保存されない。
+scrim は写しを検査する。
+本家の既定値は、テンプレートから GameServer を作るときに付く。
+この扱いより前の版で保存した Fleet は、テンプレートに既定値が付いている。
+同じマニフェストを適用し直すと、テンプレートが変わったものとして、GameServer が一度入れ替わる。
 
 受け付けは次の順に進む。
 
@@ -985,6 +998,15 @@ gate のほかの部分（`maxSurge` を Allocated の分だけ上乗せする�
 旧世代の GameServerSet を消すのは、GameServer を 1 つも持たなくなってからである。
 status は実際より遅れることがあるので、status だけでは判断しない。
 
+Fleet の status の台数と Counter と List は、GameServerSet の status を足して書く。
+`allocations` だけは足し算ではなく、Fleet の GameServer が Allocated に移った回数の累計である。
+割り当てサービスによるものも、SDK の Allocate によるものも数える。
+Allocated のまま変更された GameServer は数え直さない。
+本家は、informer が渡す変更の前後の GameServer を比べて数える。
+store の変更の通知には変更後の GameServer しかないので、制御が GameServer ごとに直前の状態を覚えておく（`pkg/fleets/allocations.go`）。
+覚えた状態は、購読を始めるたびに store の一覧から作り直す。
+数えた分は、status を書けたときに累計に足す。
+
 ### 連鎖削除
 
 親が消えたら、子は自分の制御の中でそれに気付いて自分を消す。
@@ -1733,6 +1755,7 @@ CI（`.github/workflows/ci.yml`）は、その手前の最後の検査である�
 | build | 配布する 4 つのプラットフォーム向けのバイナリと、2 つのアーキテクチャ向けの sidecar イメージがビルドできること |
 | quick-start | README のクイックスタートが、そのコミットのバイナリと sidecar イメージで、実際のコンテナを使って通ること。Fleet を適用し、2 台が Ready になり、1 台を割り当て、その 1 台がプレイヤーのパケットに応える |
 | agones-sdks | 本家が SDK ごとに走らせる適合テスト用のクライアントが、書き換えずに、scrim のゲームサーバとして最後まで通ること（Go、REST と WebSocket、Python、C#、Node.js、Rust の同期と非同期、C++） |
+| agones-diff | kind の上の Agones v1.62.0 と scrim に同じ GameServer、割り当て、Fleet の操作を行い、答えと結果が同じになること |
 | test | Linux の amd64、Linux の arm64、macOS で、全テストが競合検出つき、毎回違う順序で通ること。Linux では、飛ばされたテストがないこと |
 | coverage | テストが文の 79% 以上を通ること |
 | properties | 性質テストとモデルテストが、それぞれ 1,000 回の試行で通ること |
@@ -1833,6 +1856,29 @@ WebSocket のクライアントは、つないだ直後に送られてくる Gam
 本家は REST のクライアントを先に走らせる。
 相手はローカルモードの SDK サーバで、REST のクライアントが最後に呼ぶ Shutdown の後も動き続けるので、WebSocket のクライアントには Shutdown の GameServer が届く。
 scrim では Shutdown でゲームサーバが終わるので、1 つのコンテナで WebSocket のクライアントを先に走らせ、つなぐ前に GameServer を Reserved にしておく（`build/conformance/rest.sh`）。
+
+**実物の Agones との差分テスト**：同じ操作を、kind の上の Agones v1.62.0 と scrim に行い、答えを比べる（`build/ci/agones-diff.sh`、`test/agones-diff`）。
+Agones は `install.yaml` のまま入れ、割り当てサービスだけ TLS を切って REST で呼ぶ（`build/ci/agones-kind.sh`）。
+CI のジョブ agones-diff で毎回走る。
+操作は次の 2 つである。
+
+- GameServer を 4 台作り、13 通りの割り当ての要求を送り、その後の GameServer を見る。要求には、ラベルや Counter と List による選択、優先順位、Counter と List の操作、何も当てはまらない場合、誤った要求を含む。
+- Fleet を作り、2 台を割り当て、割り当て済みより少なく縮め、広げ、テンプレートを変える。
+
+比べるのは、割り当ての答え（HTTP の状態コードと本文）と、各段階の GameServer、GameServerSet、Fleet である。
+アドレス、ポート番号、ノード名、時刻、Fleet が作る名前の乱数の部分は、比べる前に取り除く。
+scrim だけが持つ注釈（`scrim/` で始まるもの）と、本家の CRD だけが持つ `immutableReplicas` も取り除く。
+`immutableReplicas` は Kubernetes の Scale のための項目で、Go の型にはない。
+Fleet の各段階は、40 秒変わらなくなってから読む。
+本家の Fleet の制御は、前の段階の変化を聞き逃すと、informer の再同期（30 秒ごと）まで次に進まないためである。
+
+ラベルの値が規則に合わない割り当ての要求は、比べる対象から外している。
+本家は HTTP 500 を返し、scrim は 400（gRPC の InvalidArgument）を返す。
+
+「Fleet の制御」に書いた本家との違いのうち 3 つ目が、テンプレートを変えた後の GameServerSet に出る。
+自分の台数以上の対戦を抱えた旧世代を、scrim は 0 台にする。
+本家は 1 段だけ減らし、台数と実際の数が合わないので、対戦が終わるまでその台数のまま待つ。
+比べる前に、本家の答えのこの点だけを scrim の答え方に直している（スクリプトの `done_on_purpose`）。
 
 **障害注入**：わざと壊して、その後を確かめる（`pkg/controlplane/fault_test.go`）。
 疑似ノードを、別のマシンのエージェントと同じくネットワーク越しに接続させ、次の 3 つを起こす。

@@ -1,0 +1,23 @@
+# A Fleet to allocate from, scale and update. Its game servers count rooms,
+# so that the Fleet's status adds them up.
+apiVersion: agones.dev/v1
+kind: Fleet
+metadata:
+  name: diff-fleet
+spec:
+  replicas: 3
+  template:
+    metadata:
+      labels: {version: one}
+    spec:
+      ports: [{name: default, containerPort: 7654}]
+      counters:
+        rooms: {count: 0, capacity: 3}
+      template:
+        spec:
+          containers:
+          - name: simple-game-server
+            image: us-docker.pkg.dev/agones-images/examples/simple-game-server:0.44
+            resources:
+              requests: {memory: 64Mi, cpu: 20m}
+              limits: {memory: 64Mi, cpu: 20m}

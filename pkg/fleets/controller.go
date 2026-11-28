@@ -24,21 +24,24 @@ const (
 // Controller carries out what Plan decides. It is the thin half of this
 // package: everything that needs thought is in plan.go.
 type Controller struct {
-	fleets  store.Typed[*agonesv1.Fleet]
-	sets    store.Typed[*agonesv1.GameServerSet]
-	servers store.Typed[*agonesv1.GameServer]
-	events  *events.Recorder
-	now     func() time.Time
+	fleets      store.Typed[*agonesv1.Fleet]
+	sets        store.Typed[*agonesv1.GameServerSet]
+	servers     store.Typed[*agonesv1.GameServer]
+	allocations *allocations
+	events      *events.Recorder
+	now         func() time.Time
 }
 
 // NewController returns a Controller working on s.
 func NewController(s *store.Store, recorder *events.Recorder) *Controller {
+	servers := store.GameServersOf(s)
 	return &Controller{
-		fleets:  store.FleetsOf(s),
-		sets:    store.GameServerSetsOf(s),
-		servers: store.GameServersOf(s),
-		events:  recorder,
-		now:     s.Now,
+		fleets:      store.FleetsOf(s),
+		sets:        store.GameServerSetsOf(s),
+		servers:     servers,
+		allocations: newAllocations(servers),
+		events:      recorder,
+		now:         s.Now,
 	}
 }
 
@@ -48,6 +51,7 @@ func (c *Controller) Loop() (control.Loop, []control.Watch) {
 	return control.Loop{Sync: c.sync, All: c.all, Resync: resyncPeriod}, []control.Watch{
 		{Subscribe: c.fleets.Watch, Keys: control.Self},
 		{Subscribe: c.sets.Watch, Keys: ownerOf},
+		{Subscribe: c.allocations.watch, Keys: c.allocations.seen},
 	}
 }
 
@@ -76,6 +80,7 @@ func ownerOf(e store.Event) []store.Key {
 func (c *Controller) sync(_ context.Context, key store.Key) error {
 	fleet, ok := c.fleets.Get(key.Namespace, key.Name)
 	if !ok {
+		c.allocations.forget(key)
 		return nil
 	}
 	owned := c.owned(fleet)
@@ -93,7 +98,7 @@ func (c *Controller) sync(_ context.Context, key store.Key) error {
 	if err := c.carryOut(fleet, changes); err != nil {
 		return err
 	}
-	return c.publish(fleet, owned)
+	return c.publish(key, fleet, owned)
 }
 
 // owned returns the GameServerSets that fleet controls.
@@ -214,14 +219,21 @@ func (c *Controller) scale(fleet *agonesv1.Fleet, set string, replicas int32) er
 	return err
 }
 
-// publish writes the Fleet's status when it changed.
-func (c *Controller) publish(fleet *agonesv1.Fleet, owned []*agonesv1.GameServerSet) error {
+// publish writes the Fleet's status when it changed, with the allocations
+// that came in since it was last written.
+func (c *Controller) publish(key store.Key, fleet *agonesv1.Fleet, owned []*agonesv1.GameServerSet) error {
 	status := Status(fleet, owned)
+	allocated := c.allocations.count(key)
+	status.Allocations += allocated
 	if apiequality.Semantic.DeepEqual(fleet.Status, status) {
 		return nil
 	}
-	return c.fleets.Change(fleet.Namespace, fleet.Name, func(current *agonesv1.Fleet) bool {
+	err := c.fleets.Change(fleet.Namespace, fleet.Name, func(current *agonesv1.Fleet) bool {
 		current.Status = status
 		return true
 	})
+	if err == nil {
+		c.allocations.added(key, allocated)
+	}
+	return err
 }
