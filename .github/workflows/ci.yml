@@ -91,8 +91,8 @@ jobs:
   # The conformance clients that Agones runs for each of its SDKs, run
   # unchanged as game servers on scrim, with real containers. They are
   # built from third_party/agones, and the cache keeps what was built: the
-  # client for C++ needs gRPC built from source, which takes most of an
-  # hour the first time.
+  # client for C++ needs gRPC built from source, which took 30 minutes the
+  # first time.
   agones-sdks:
     strategy:
       fail-fast: false

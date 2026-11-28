@@ -2,8 +2,8 @@
 # built the way build/build-sdk-images/cpp/build-sdk-test.sh of Agones
 # builds it. The SDK accepts one version of gRPC only, the one Agones
 # builds from source (grpc_release_tag in build/includes/sdk.mk). That
-# build takes the better part of an hour, and is its own stage so that a
-# cache keeps it.
+# build took 30 minutes on a runner of GitHub Actions, and is its own stage
+# so that a cache keeps it.
 FROM debian:trixie AS grpc
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential cmake git ca-certificates pkg-config && \
