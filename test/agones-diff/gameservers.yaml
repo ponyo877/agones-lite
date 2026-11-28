@@ -1,0 +1,81 @@
+# Four game servers that differ in their labels, Counters and Lists, so that
+# each allocation in requests.jsonl has one right answer.
+apiVersion: agones.dev/v1
+kind: GameServer
+metadata:
+  name: diff-a
+  labels: {diff: "yes", mode: ranked, region: east}
+spec:
+  ports: [{name: default, containerPort: 7654}]
+  counters:
+    rooms: {count: 1, capacity: 10}
+  lists:
+    players: {capacity: 4, values: [p1]}
+  template:
+    spec:
+      containers:
+      - name: simple-game-server
+        image: us-docker.pkg.dev/agones-images/examples/simple-game-server:0.44
+        resources:
+          requests: {memory: 64Mi, cpu: 20m}
+          limits: {memory: 64Mi, cpu: 20m}
+---
+apiVersion: agones.dev/v1
+kind: GameServer
+metadata:
+  name: diff-b
+  labels: {diff: "yes", mode: ranked, region: west}
+spec:
+  ports: [{name: default, containerPort: 7654}]
+  counters:
+    rooms: {count: 5, capacity: 10}
+  lists:
+    players: {capacity: 4}
+  template:
+    spec:
+      containers:
+      - name: simple-game-server
+        image: us-docker.pkg.dev/agones-images/examples/simple-game-server:0.44
+        resources:
+          requests: {memory: 64Mi, cpu: 20m}
+          limits: {memory: 64Mi, cpu: 20m}
+---
+apiVersion: agones.dev/v1
+kind: GameServer
+metadata:
+  name: diff-c
+  labels: {diff: "yes", mode: casual, region: east}
+spec:
+  ports: [{name: default, containerPort: 7654}]
+  counters:
+    rooms: {count: 9, capacity: 10}
+  lists:
+    players: {capacity: 4, values: [p2, p3, p4]}
+  template:
+    spec:
+      containers:
+      - name: simple-game-server
+        image: us-docker.pkg.dev/agones-images/examples/simple-game-server:0.44
+        resources:
+          requests: {memory: 64Mi, cpu: 20m}
+          limits: {memory: 64Mi, cpu: 20m}
+---
+apiVersion: agones.dev/v1
+kind: GameServer
+metadata:
+  name: diff-d
+  labels: {diff: "yes", mode: casual, region: west}
+spec:
+  ports: [{name: default, containerPort: 7654}]
+  counters:
+    rooms: {count: 0, capacity: 2}
+  lists:
+    players: {capacity: 2}
+  template:
+    spec:
+      containers:
+      - name: simple-game-server
+        image: us-docker.pkg.dev/agones-images/examples/simple-game-server:0.44
+        resources:
+          requests: {memory: 64Mi, cpu: 20m}
+          limits: {memory: 64Mi, cpu: 20m}

@@ -1,0 +1,14 @@
+{"why": "a selector that one game server matches, with labels and annotations to add", "request": {"namespace": "default", "gameServerSelectors": [{"matchLabels": {"mode": "ranked", "region": "west"}}], "metadata": {"labels": {"match": "m1"}, "annotations": {"note": "first"}}}}
+{"why": "the least room left on a counter first", "request": {"namespace": "default", "gameServerSelectors": [{"matchLabels": {"region": "east"}}], "priorities": [{"type": "Counter", "key": "rooms", "order": "Ascending"}]}}
+{"why": "room left on a counter, the most first, and the counter raised", "request": {"namespace": "default", "gameServerSelectors": [{"matchLabels": {"diff": "yes"}, "counters": {"rooms": {"minAvailable": 2}}}], "priorities": [{"type": "Counter", "key": "rooms", "order": "Descending"}], "counters": {"rooms": {"action": "Increment", "amount": "1"}}}}
+{"why": "an allocated game server found again by its label, and a player added", "request": {"namespace": "default", "gameServerSelectors": [{"gameServerState": "ALLOCATED", "matchLabels": {"match": "m1"}}], "lists": {"players": {"addValues": ["p9"]}}}}
+{"why": "more players than the list has room for", "request": {"namespace": "default", "gameServerSelectors": [{"gameServerState": "ALLOCATED", "matchLabels": {"match": "m1"}}], "lists": {"players": {"addValues": ["x1", "x2", "x3", "x4"]}}}}
+{"why": "a counter taken below zero", "request": {"namespace": "default", "gameServerSelectors": [{"gameServerState": "ALLOCATED", "matchLabels": {"match": "m1"}}], "counters": {"rooms": {"action": "Decrement", "amount": "100"}}}}
+{"why": "the first selector matches nothing, the second does", "request": {"namespace": "default", "gameServerSelectors": [{"matchLabels": {"region": "north"}}, {"matchLabels": {"diff": "yes"}}]}}
+{"why": "nothing matches", "request": {"namespace": "default", "gameServerSelectors": [{"matchLabels": {"region": "north"}}]}}
+{"why": "an action that does not exist", "request": {"namespace": "default", "counters": {"rooms": {"action": "Multiply", "amount": "1"}}}}
+{"why": "a list selector that asks for a value", "request": {"namespace": "default", "gameServerSelectors": [{"gameServerState": "ALLOCATED", "lists": {"players": {"containsValue": "p9"}}}]}}
+{"why": "the deprecated required and preferred selectors", "request": {"namespace": "default", "requiredGameServerSelector": {"matchLabels": {"diff": "yes"}}, "preferredGameServerSelectors": [{"matchLabels": {"region": "west"}}]}}
+{"why": "a namespace without game servers", "request": {"namespace": "elsewhere"}}
+{"why": "no namespace", "request": {"gameServerSelectors": [{"matchLabels": {"diff": "yes"}}]}}
+{"why": "a label value that is not allowed", "request": {"namespace": "default", "metadata": {"labels": {"bad": "not a label value!"}}}}
