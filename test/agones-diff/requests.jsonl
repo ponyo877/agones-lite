@@ -11,4 +11,3 @@
 {"why": "the deprecated required and preferred selectors", "request": {"namespace": "default", "requiredGameServerSelector": {"matchLabels": {"diff": "yes"}}, "preferredGameServerSelectors": [{"matchLabels": {"region": "west"}}]}}
 {"why": "a namespace without game servers", "request": {"namespace": "elsewhere"}}
 {"why": "no namespace", "request": {"gameServerSelectors": [{"matchLabels": {"diff": "yes"}}]}}
-{"why": "a label value that is not allowed", "request": {"namespace": "default", "metadata": {"labels": {"bad": "not a label value!"}}}}

@@ -1755,6 +1755,7 @@ CI（`.github/workflows/ci.yml`）は、その手前の最後の検査である�
 | build | 配布する 4 つのプラットフォーム向けのバイナリと、2 つのアーキテクチャ向けの sidecar イメージがビルドできること |
 | quick-start | README のクイックスタートが、そのコミットのバイナリと sidecar イメージで、実際のコンテナを使って通ること。Fleet を適用し、2 台が Ready になり、1 台を割り当て、その 1 台がプレイヤーのパケットに応える |
 | agones-sdks | 本家が SDK ごとに走らせる適合テスト用のクライアントが、書き換えずに、scrim のゲームサーバとして最後まで通ること（Go、REST と WebSocket、Python、C#、Node.js、Rust の同期と非同期、C++） |
+| agones-diff | kind の上の Agones v1.62.0 と scrim に同じ GameServer、割り当て、Fleet の操作を行い、答えと結果が同じになること |
 | test | Linux の amd64、Linux の arm64、macOS で、全テストが競合検出つき、毎回違う順序で通ること。Linux では、飛ばされたテストがないこと |
 | coverage | テストが文の 79% 以上を通ること |
 | properties | 性質テストとモデルテストが、それぞれ 1,000 回の試行で通ること |
@@ -1855,6 +1856,24 @@ WebSocket のクライアントは、つないだ直後に送られてくる Gam
 本家は REST のクライアントを先に走らせる。
 相手はローカルモードの SDK サーバで、REST のクライアントが最後に呼ぶ Shutdown の後も動き続けるので、WebSocket のクライアントには Shutdown の GameServer が届く。
 scrim では Shutdown でゲームサーバが終わるので、1 つのコンテナで WebSocket のクライアントを先に走らせ、つなぐ前に GameServer を Reserved にしておく（`build/conformance/rest.sh`）。
+
+**実物の Agones との差分テスト**：同じ操作を、kind の上の Agones v1.62.0 と scrim に行い、答えを比べる（`build/ci/agones-diff.sh`、`test/agones-diff`）。
+Agones は `install.yaml` のまま入れ、割り当てサービスだけ TLS を切って REST で呼ぶ（`build/ci/agones-kind.sh`）。
+CI のジョブ agones-diff で毎回走る。
+操作は次の 2 つである。
+
+- GameServer を 4 台作り、13 通りの割り当ての要求を送り、その後の GameServer を見る。要求には、ラベルや Counter と List による選択、優先順位、Counter と List の操作、何も当てはまらない場合、誤った要求を含む。
+- Fleet を作り、2 台を割り当て、割り当て済みより少なく縮め、広げ、テンプレートを変える。
+
+比べるのは、割り当ての答え（HTTP の状態コードと本文）と、各段階の GameServer、GameServerSet、Fleet である。
+アドレス、ポート番号、ノード名、時刻、Fleet が作る名前の乱数の部分は、比べる前に取り除く。
+scrim だけが持つ注釈（`scrim/` で始まるもの）と、本家の CRD だけが持つ `immutableReplicas` も取り除く。
+`immutableReplicas` は Kubernetes の Scale のための項目で、Go の型にはない。
+Fleet の各段階は、40 秒変わらなくなってから読む。
+本家の Fleet の制御は、前の段階の変化を聞き逃すと、informer の再同期（30 秒ごと）まで次に進まないためである。
+
+ラベルの値が規則に合わない割り当ての要求は、比べる対象から外している。
+本家は HTTP 500 を返し、scrim は 400（gRPC の InvalidArgument）を返す。
 
 **障害注入**：わざと壊して、その後を確かめる（`pkg/controlplane/fault_test.go`）。
 疑似ノードを、別のマシンのエージェントと同じくネットワーク越しに接続させ、次の 3 つを起こす。

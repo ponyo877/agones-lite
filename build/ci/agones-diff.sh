@@ -2,7 +2,9 @@
 # Plays the same game servers, allocations and Fleet changes on Agones and
 # on scrim, and fails if the two answer differently. Before they are
 # compared, what cannot be the same is taken out: addresses, ports, node
-# names, times, and the names that Fleets make up.
+# names, times, and the names that Fleets make up. So is what one of the
+# two has and the other cannot: scrim's own annotations, and the
+# immutableReplicas that Agones' CRD adds for a Kubernetes Scale.
 #
 # Usage: build/ci/agones-diff.sh PATH_TO_SCRIM
 #
@@ -32,9 +34,15 @@ scrim_allocate() {
 		https://127.0.0.1:9444/gameserverallocation
 }
 
-# The names a Fleet makes up end in random letters; so do those of its
-# GameServerSets.
-anonymous='walk(if type == "string" then sub("^diff-fleet-[a-z0-9]{5}(-[a-z0-9]{5})?$"; "diff-fleet-*") else . end)'
+# alike takes out what is bound to differ. The names a Fleet makes up end
+# in random letters; so do those of its GameServerSets.
+alike='walk(
+	if type == "string" then sub("^diff-fleet-[a-z0-9]{5}(-[a-z0-9]{5})?$"; "diff-fleet-*")
+	elif type == "object" then
+		del(.immutableReplicas)
+		| with_entries(select(.key | startswith("scrim/") | not))
+		| if has("agones.dev/last-allocated") then .["agones.dev/last-allocated"] = "a time" else . end
+	else . end)'
 
 # answer prints what the allocator said to REQUEST.
 answer() {
@@ -42,7 +50,7 @@ answer() {
 	out=$("${side}_allocate" "$1")
 	jq -S --argjson code "${out##*$'\n'}" "{code: \$code, answer: (
 		del(.address, .addresses, .nodeName, .source)
-		| if .ports then .ports |= map(del(.port)) else . end)} | $anonymous" <<<"${out%$'\n'*}"
+		| if .ports then .ports |= map(del(.port)) else . end)} | $alike" <<<"${out%$'\n'*}"
 }
 
 servers() {
@@ -51,7 +59,7 @@ servers() {
 		annotations: .metadata.annotations, finalizers: .metadata.finalizers,
 		spec: (.spec | .ports |= map(del(.hostPort))),
 		status: (.status | del(.address, .addresses, .nodeName) | .ports |= (. // [] | map(del(.port))))
-	}) | $anonymous | sort_by(.name, .status.state, .labels.version)"
+	}) | $alike | sort_by(.name, .status.state, .labels.version)"
 }
 
 fleet() {
@@ -62,20 +70,25 @@ fleet() {
 		sets: \$sets.items | sort_by(.metadata.creationTimestamp) | map({
 			labels: .spec.template.metadata.labels, replicas: .spec.replicas, status}),
 		servers: \$servers | map({labels, state: .status.state, counters: .status.counters})
-	} | $anonymous"
+	} | $alike"
 }
 
-# settle prints what WHAT shows once it stops changing, and no game server
-# is on its way from one state to another.
+# settle prints what WHAT shows once it has not changed for QUIET seconds,
+# with no game server on its way from one state to another.
+#
+# A Fleet needs a long QUIET. Agones' Fleet controller goes on to the next
+# step of a change when it hears of the last one, and when it misses that,
+# at the informers' resync, every 30 seconds.
 settle() {
-	local before='' now
-	for _ in $(seq 100); do
-		now=$("$1")
-		if [ "$now" = "$before" ] && ! grep -qE '"(PortAllocation|Creating|Starting|Scheduled|RequestReady|Shutdown)"' <<<"$now"; then
+	local what=$1 quiet=$2 before='' now since=$SECONDS
+	for _ in $(seq 200); do
+		now=$("$what")
+		if [ "$now" != "$before" ] || grep -qE '"(PortAllocation|Creating|Starting|Scheduled|RequestReady|Shutdown)"' <<<"$now"; then
+			before=$now since=$SECONDS
+		elif ((SECONDS - since >= quiet)); then
 			printf '%s\n' "$now"
 			return
 		fi
-		before=$now
 		sleep 3
 	done
 	echo "$side never settled: $now" >&2
@@ -106,32 +119,32 @@ play() {
 	side=$1
 	echo "# four game servers"
 	"${side}_apply" "$cases/gameservers.yaml"
-	settle servers
+	settle servers 6
 	allocations
 	echo "# the game servers after the allocations"
-	settle servers
+	settle servers 6
 	"${side}_delete" gameservers diff-a diff-b diff-c diff-d
 	empty gameservers
 
 	echo "# a Fleet of three"
 	"${side}_apply" "$cases/fleet.yaml"
-	settle fleet
+	settle fleet 40
 	echo "# two allocations from it"
 	for _ in 1 2; do
 		answer '{"namespace": "default", "gameServerSelectors": [{"matchLabels": {"agones.dev/fleet": "diff-fleet"}}], "counters": {"rooms": {"action": "Increment", "amount": "1"}}}'
 		sleep 1
 	done
-	settle fleet
+	settle fleet 40
 	echo "# scaled down below what is allocated"
 	"${side}_scale" diff-fleet 1
-	settle fleet
+	settle fleet 40
 	echo "# scaled up"
 	"${side}_scale" diff-fleet 4
-	settle fleet
+	settle fleet 40
 	echo "# a new template"
 	sed 's/version: one/version: two/' "$cases/fleet.yaml" >fleet-two.yaml
 	"${side}_apply" fleet-two.yaml
-	settle fleet
+	settle fleet 40
 	"${side}_delete" fleets diff-fleet
 	empty gameservers
 }
@@ -150,6 +163,11 @@ play agones >agones.txt
 play scrim >scrim.txt
 if ! diff -u agones.txt scrim.txt; then
 	echo "scrim answered differently from Agones (- Agones, + scrim)" >&2
+	for side in agones scrim; do
+		echo "::group::what $side answered"
+		cat $side.txt
+		echo "::endgroup::"
+	done
 	exit 1
 fi
 echo "scrim answered as Agones did, $(grep -c '^#' agones.txt) times"
