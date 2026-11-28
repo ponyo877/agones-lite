@@ -1,6 +1,7 @@
 package scheduling
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"testing"
@@ -22,7 +23,8 @@ import (
 
 // someNodes draws up to four nodes that are short of everything: a few
 // host ports, room for a few GameServers, a core or two. Some are out of
-// reach, cordoned or draining.
+// reach, cordoned or draining. Some have a second range of ports, named
+// "game", apart from the first.
 func someNodes(t *rapid.T) []*scrimv1.Node {
 	nodes := make([]*scrimv1.Node, rapid.IntRange(0, 4).Draw(t, "nodes"))
 	for i := range nodes {
@@ -34,6 +36,9 @@ func someNodes(t *rapid.T) []*scrimv1.Node {
 			n.Status.Capacity.CPU = someOf(t, "cpu", "0", "1", "2")
 			n.Status.Capacity.Memory = someOf(t, "memory", "0", "1Gi")
 			n.Status.PortRange = scrimv1.PortRange{Min: 7000 + rapid.Int32Range(0, 2).Draw(t, "minPort"), Max: 7000 + rapid.Int32Range(0, 4).Draw(t, "maxPort")}
+			if rapid.Bool().Draw(t, "game") {
+				n.Status.PortRanges = map[string]scrimv1.PortRange{"game": {Min: 7010 + rapid.Int32Range(0, 2).Draw(t, "minGamePort"), Max: 7010 + rapid.Int32Range(0, 4).Draw(t, "maxGamePort")}}
+			}
 		})
 	}
 	return nodes
@@ -44,7 +49,8 @@ func someOf(t *rapid.T, label string, amounts ...string) resource.Quantity {
 }
 
 // aGameServer draws a GameServer that asks for a little of everything, or
-// for nothing. Its Static ports are distinct, as admission guarantees.
+// for nothing. Its Static ports are distinct, as admission guarantees. Its
+// other ports name the default range or "game", or leave the name out.
 func aGameServer(t *rapid.T, name string) *agonesv1.GameServer {
 	gs := server(name, "", "")
 	gs.Spec.Scheduling = rapid.SampledFrom([]apis.SchedulingStrategy{apis.Packed, apis.Distributed}).Draw(t, "scheduling")
@@ -59,8 +65,10 @@ func aGameServer(t *rapid.T, name string) *agonesv1.GameServer {
 		port.PortPolicy = rapid.SampledFrom([]agonesv1.PortPolicy{agonesv1.Dynamic, agonesv1.Passthrough, agonesv1.Static, agonesv1.None}).Draw(t, "policy")
 		port.Protocol = rapid.SampledFrom([]corev1.Protocol{corev1.ProtocolUDP, corev1.ProtocolTCP, agonesv1.ProtocolTCPUDP}).Draw(t, "protocol")
 		if port.PortPolicy == agonesv1.Static {
-			port.HostPort = rapid.Int32Range(7000, 7005).Filter(func(p int32) bool { return !taken[p] }).Draw(t, "hostPort")
+			port.HostPort = rapid.Int32Range(7000, 7012).Filter(func(p int32) bool { return !taken[p] }).Draw(t, "hostPort")
 			taken[port.HostPort] = true
+		} else {
+			port.Range = rapid.SampledFrom([]string{"", agonesv1.DefaultPortRange, "game"}).Draw(t, "range")
 		}
 		gs.Spec.Ports = append(gs.Spec.Ports, port)
 	}
@@ -129,7 +137,7 @@ func hasTheResources(node *scrimv1.Node, gs *agonesv1.GameServer, residents []*a
 
 func hasThePorts(node *scrimv1.Node, gs *agonesv1.GameServer, residents []*agonesv1.GameServer) bool {
 	busy := hostPortsOf(residents)
-	needed := 0
+	needed := map[string]int{}
 	for _, port := range gs.Spec.Ports {
 		switch port.PortPolicy {
 		case agonesv1.Static:
@@ -138,16 +146,27 @@ func hasThePorts(node *scrimv1.Node, gs *agonesv1.GameServer, residents []*agone
 			}
 			busy[port.HostPort] = true // its own Static port is not free for its Dynamic ones
 		case agonesv1.Dynamic, agonesv1.Passthrough:
-			needed++
+			needed[cmp.Or(port.Range, agonesv1.DefaultPortRange)]++
 		}
 	}
+	ranges := node.Status.Ranges()
+	for name, n := range needed {
+		r, has := ranges[name]
+		if !has || freeIn(r, busy) < n {
+			return false
+		}
+	}
+	return true
+}
+
+func freeIn(r scrimv1.PortRange, busy map[int32]bool) int {
 	free := 0
-	for port := node.Status.PortRange.Min; port <= node.Status.PortRange.Max; port++ {
+	for port := r.Min; port <= r.Max; port++ {
 		if !busy[port] {
 			free++
 		}
 	}
-	return free >= needed
+	return free
 }
 
 func hostPortsOf(servers []*agonesv1.GameServer) map[int32]bool {
@@ -190,9 +209,10 @@ func TestPlaceOnlyUsesANodeThatCanTakeTheGameServer(t *testing.T) {
 		assert.True(t, canTake(node, gs, residents), "%s cannot take it", node.Name)
 		busy := hostPortsOf(residents)
 		for _, port := range placed.Spec.Ports {
-			inRange := node.Status.PortRange.Min <= port.HostPort && port.HostPort <= node.Status.PortRange.Max
+			r := node.Status.Ranges()[cmp.Or(port.Range, agonesv1.DefaultPortRange)]
+			inRange := r.Min <= port.HostPort && port.HostPort <= r.Max
 			assert.False(t, busy[port.HostPort] && port.PortPolicy != agonesv1.None, "port %d is a neighbour's", port.HostPort)
-			assert.True(t, inRange || port.PortPolicy == agonesv1.Static || port.PortPolicy == agonesv1.None, "port %d is outside %v", port.HostPort, node.Status.PortRange)
+			assert.True(t, inRange || port.PortPolicy == agonesv1.Static || port.PortPolicy == agonesv1.None, "port %d is outside %v, the range it names", port.HostPort, r)
 		}
 	})
 }

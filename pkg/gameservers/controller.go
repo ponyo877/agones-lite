@@ -107,9 +107,10 @@ type Controller struct {
 	// Entered, when set, is told about every state a GameServer enters.
 	// It is how the metrics learn of transitions.
 	Entered func(gs *agonesv1.GameServer, state agonesv1.GameServerState)
-	// waiting holds the GameServers that found no node, so that the reason
-	// is recorded once and not on every pass. Only the sync loop touches it.
-	waiting map[store.Key]bool
+	// waiting holds the GameServers that found no node, and why, so that
+	// the reason is recorded once and not on every pass. Only the sync loop
+	// touches it.
+	waiting map[store.Key]string
 	// heard holds every node as it was when last heard of, to tell a change
 	// from a sign of life. Only what follows the nodes touches it.
 	heard map[string]*scrimv1.Node
@@ -128,7 +129,7 @@ func NewController(s *store.Store, recorder *events.Recorder) *Controller {
 		nodes:   store.NodesOf(s),
 		events:  recorder,
 		now:     s.Now,
-		waiting: map[store.Key]bool{},
+		waiting: map[store.Key]string{},
 		heard:   map[string]*scrimv1.Node{},
 	}
 }
@@ -244,16 +245,16 @@ func (c *Controller) placeWaiting() error {
 		return nil
 	}
 	room := scheduling.RoomOn(c.nodes.View(""), c.servers.View(""))
-	noRoom := map[store.Key]bool{}
+	unplaced := map[store.Key]string{}
 	var errs error
 	for _, gs := range waiting {
 		if placed, found := room.Place(gs); found {
 			errs = errors.Join(errs, c.settle(placed))
 		} else {
-			noRoom[store.KeyOf(store.GameServers, gs)] = true
+			unplaced[store.KeyOf(store.GameServers, gs)] = whyUnplaced(room, gs)
 		}
 	}
-	c.sayWhoWaits(noRoom)
+	c.sayWhoWaits(unplaced)
 	return errs
 }
 
@@ -283,15 +284,23 @@ func (c *Controller) settle(placed *agonesv1.GameServer) error {
 	return nil
 }
 
+// whyUnplaced says why no node took gs.
+func whyUnplaced(room *scheduling.Room, gs *agonesv1.GameServer) string {
+	if name, missing := room.Missing(gs); missing {
+		return fmt.Sprintf("no node has the port range %q; waiting for one", name)
+	}
+	return "no node has room; waiting for one"
+}
+
 // sayWhoWaits records, for each GameServer that found no node, why it is
 // waiting: once, and not again on every pass that finds the same.
-func (c *Controller) sayWhoWaits(noRoom map[store.Key]bool) {
-	for key := range noRoom {
-		if !c.waiting[key] {
-			c.events.Record(Kind, key.Namespace, key.Name, events.Warning, "Unschedulable", "no node has room; waiting for one")
+func (c *Controller) sayWhoWaits(unplaced map[store.Key]string) {
+	for key, why := range unplaced {
+		if c.waiting[key] != why {
+			c.events.Record(Kind, key.Namespace, key.Name, events.Warning, "Unschedulable", "%s", why)
 		}
 	}
-	c.waiting = noRoom
+	c.waiting = unplaced
 }
 
 // Delete asks for a GameServer to be removed. The record stays until its

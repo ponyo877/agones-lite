@@ -278,11 +278,6 @@ func refusedByTheSchema(t testing.TB) map[string]refusal {
 			replace(t, scalerManifest, "type: Buffer", "type: Chain\n    chain: [{id: a, type: Chain}]"),
 			"spec.policy.chain[0].type",
 		},
-		"a port from a range of ports that is not there": {
-			http.MethodPost, gameServersPath,
-			replace(t, manifest, "containerPort: 7654", "containerPort: 7654\n      range: games"),
-			"spec.ports[0].range",
-		},
 		"an unknown log level": {
 			http.MethodPost, gameServersPath,
 			replace(t, manifest, "spec:\n", "spec:\n  sdkServer: {logLevel: Loud}\n"),

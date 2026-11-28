@@ -14,6 +14,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
 )
 
 func TestFlagsMayComeBeforeOrAfterPositionalArguments(t *testing.T) {
@@ -94,6 +96,12 @@ func TestAConfigFileValueIsReadTheWayItWouldBeTyped(t *testing.T) {
 		"an empty text is a value like any other": {
 			content: "listen: \"\"\n",
 			check:   func(t *testing.T, o *serverOptions) { assert.Empty(t, o.listen) },
+		},
+		"a map is the JSON object of a flag that takes one": {
+			content: "additional-port-ranges:\n  game: [5000, 6000]\n",
+			check: func(t *testing.T, o *serverOptions) {
+				assert.Equal(t, map[string]scrimv1.PortRange{"game": {Min: 5000, Max: 6000}}, o.node.agent.PortRanges)
+			},
 		},
 	}
 	for name, tc := range tests {
@@ -363,4 +371,46 @@ func TestOnlyAGameServerIsLabeledThisWay(t *testing.T) {
 	err := Main(context.Background(), []string{"label", "fleet", "simple", "mode=ranked"}, io.Discard)
 
 	assert.ErrorContains(t, err, "apply the manifest of a Fleet again")
+}
+
+// The ranges are written as for upstream's controller, and must be ranges
+// that hold a port, apart from each other and from the default one.
+func TestTheAdditionalPortRangesOfANode(t *testing.T) {
+	o, err := serverFlags([]string{"--additional-port-ranges", `{"game": [5000, 6000], "query": [8001, 8001]}`})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]scrimv1.PortRange{"game": {Min: 5000, Max: 6000}, "query": {Min: 8001, Max: 8001}}, o.node.agent.PortRanges)
+	require.NoError(t, o.node.check())
+
+	refused := map[string]string{
+		`[5000, 6000]`:              "need a JSON object",
+		`{"default": [5000, 6000]}`: "the default range is --min-port and --max-port",
+		`{"game": [6000, 5000]}`:    "not a port range",
+		`{"game": [5000]}`:          "not a port range",
+		`{"game": [0, 10]}`:         "not a port range",
+		`{"game": [60000, 70000]}`:  "not a port range",
+	}
+	for value, want := range refused {
+		_, err := serverFlags([]string{"--additional-port-ranges", value})
+		assert.ErrorContains(t, err, want, value)
+	}
+
+	overlapping := map[string]string{
+		`{"game": [7500, 9000]}`:                 "default (7000-8000) and game (7500-9000) overlap",
+		`{"a": [5000, 5010], "b": [5010, 5020]}`: "a (5000-5010) and b (5010-5020) overlap",
+	}
+	for value, want := range overlapping {
+		o, err := serverFlags([]string{"--additional-port-ranges", value})
+		require.NoError(t, err, value)
+		assert.ErrorContains(t, o.node.check(), want, value)
+	}
+}
+
+func TestTheAdditionalPortRangesAreShownAsTheyAreTyped(t *testing.T) {
+	r := portRanges{"query": {Min: 8001, Max: 8001}, "game": {Min: 5000, Max: 6000}}
+	assert.Equal(t, `{"game": [5000, 6000], "query": [8001, 8001]}`, r.String())
+
+	var again portRanges
+	require.NoError(t, again.Set(r.String()))
+	assert.Equal(t, r, again)
+	assert.Empty(t, new(portRanges).String(), "no default is shown in the help")
 }

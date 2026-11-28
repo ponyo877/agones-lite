@@ -231,6 +231,19 @@ const (
 
 var dockerName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]+$`)
 
+// rangesFor gives a node the default range and every other range gs names,
+// none of them overlapping, so that the containers of gs are made.
+func rangesFor(gs *agonesv1.GameServer) map[string]scrimv1.PortRange {
+	ranges := map[string]scrimv1.PortRange{agonesv1.DefaultPortRange: {Min: 7000, Max: 7999}}
+	for i, name := range portallocator.Named(gs) {
+		if _, has := ranges[name]; !has {
+			low := int32(10_000 + 100*i)
+			ranges[name] = scrimv1.PortRange{Min: low, Max: low + 99}
+		}
+	}
+	return ranges
+}
+
 // badContainers takes each GameServer as far as the agent does, to the
 // containers it would ask Docker for, and reports what Docker would
 // refuse, or would run differently from what the manifest says.
@@ -239,7 +252,7 @@ func badContainers(servers []*agonesv1.GameServer) []string {
 	for _, gs := range servers {
 		gs = gs.DeepCopy()
 		gs.Status.NodeName = "node-1"
-		if !portallocator.Allocate(gs, scrimv1.PortRange{Min: 7000, Max: 7999}, map[int32]bool{}) {
+		if !portallocator.Allocate(gs, rangesFor(gs), map[int32]bool{}) {
 			continue // it asks for more ports than a node has, and waits: that is safe
 		}
 		specs := podspec.Containers(gs, podspec.Sidecar{Image: "example/sidecar:1", AgentAddress: "host.docker.internal:9447", Token: "secret"})

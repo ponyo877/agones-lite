@@ -1,16 +1,22 @@
 package cli
 
 import (
+	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
+
+	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 
 	"github.com/ponyo877/scrim/pkg/agent"
 	"github.com/ponyo877/scrim/pkg/agones"
@@ -30,6 +36,7 @@ type nodeOptions struct {
 	agent        agent.Config
 	minPort      int
 	maxPort      int
+	ranges       portRanges
 	maxServers   int
 }
 
@@ -41,6 +48,7 @@ func (n *nodeOptions) register(fs *flag.FlagSet) {
 	fs.StringVar(&n.agent.Address, "address", "127.0.0.1", "address players use to reach game servers on this node")
 	fs.IntVar(&n.minPort, "min-port", 7000, "first host port for game servers")
 	fs.IntVar(&n.maxPort, "max-port", 8000, "last host port for game servers")
+	fs.Var(&n.ranges, "additional-port-ranges", `more ranges of host ports, by name, that a port of a game server can name with "range": {"game": [5000, 6000]}, as upstream's controller takes them`)
 	fs.IntVar(&n.maxServers, "max-gameservers", 0, "most game servers on this node; 0 means no limit")
 	fs.StringVar(&n.agent.SidecarImage, "sidecar-image", version.SidecarImage(), "image of the SDK sidecar")
 	fs.StringVar(&n.agent.SidecarListen, "sidecar-listen", "", "where the agent listens for sidecars: unix:///dir/agent.sock or host:port (default: chosen per platform)")
@@ -67,6 +75,7 @@ func defaultDockerConfig() string {
 func (n *nodeOptions) finish() {
 	n.agent.PortRange = scrimv1.PortRange{Min: int32(n.minPort), Max: int32(n.maxPort)} //nolint:gosec // see above
 	n.agent.MaxGameServers = int32(n.maxServers)                                        //nolint:gosec // see above
+	n.agent.PortRanges = n.ranges
 }
 
 // connect checks the node's settings and that the Docker daemon answers,
@@ -100,6 +109,67 @@ func (n *nodeOptions) check() error {
 	}
 	if n.maxServers < 0 || n.maxServers > math.MaxInt32 {
 		return fmt.Errorf("--max-gameservers %d is not a number of game servers: need 0 <= n <= %d", n.maxServers, math.MaxInt32)
+	}
+	return apart(n.agent.PortRanges, n.agent.PortRange)
+}
+
+// portRanges is the value of --additional-port-ranges: named ranges of
+// host ports, in the JSON that upstream's controller takes.
+type portRanges map[string]scrimv1.PortRange
+
+func (r *portRanges) String() string {
+	if r == nil || len(*r) == 0 {
+		return ""
+	}
+	var each []string
+	for _, name := range slices.Sorted(maps.Keys(*r)) {
+		each = append(each, fmt.Sprintf("%q: [%d, %d]", name, (*r)[name].Min, (*r)[name].Max))
+	}
+	return "{" + strings.Join(each, ", ") + "}"
+}
+
+// Set reads {"name": [min, max], ...}.
+func (r *portRanges) Set(text string) error {
+	var given map[string][]int
+	if err := json.Unmarshal([]byte(text), &given); err != nil {
+		return errors.New(`need a JSON object of named ranges: {"game": [5000, 6000]}`)
+	}
+	ranges := portRanges{}
+	for name, bounds := range given {
+		if name == "" || name == agonesv1.DefaultPortRange {
+			return fmt.Errorf("%q: the default range is --min-port and --max-port", name)
+		}
+		if len(bounds) != 2 || bounds[0] < 1 || bounds[1] > 65535 || bounds[0] > bounds[1] {
+			return fmt.Errorf("%s: %v is not a port range: need [min, max] with 1 <= min <= max <= 65535", name, bounds)
+		}
+		ranges[name] = scrimv1.PortRange{Min: int32(bounds[0]), Max: int32(bounds[1])} //nolint:gosec // checked above
+	}
+	*r = ranges
+	return nil
+}
+
+// takesJSONObject lets a config file give the ranges as a map.
+func (*portRanges) takesJSONObject() {}
+
+// apart refuses ranges of a node that share a port. The allocator picks
+// from one range after the other, counting what one gave as taken in the
+// next; with ranges apart, the order never matters, and a GameServer that
+// fits is never turned away.
+func apart(named map[string]scrimv1.PortRange, first scrimv1.PortRange) error {
+	ranges := maps.Clone(named)
+	if ranges == nil {
+		ranges = map[string]scrimv1.PortRange{}
+	}
+	ranges[agonesv1.DefaultPortRange] = first
+	names := slices.SortedFunc(maps.Keys(ranges), func(a, b string) int {
+		return cmp.Or(cmp.Compare(ranges[a].Min, ranges[b].Min), cmp.Compare(a, b))
+	})
+	for i := 1; i < len(names); i++ {
+		low, high := ranges[names[i-1]], ranges[names[i]]
+		if high.Min <= low.Max {
+			return fmt.Errorf("the port ranges %s (%d-%d) and %s (%d-%d) overlap: the ranges of a node must not share a port",
+				names[i-1], low.Min, low.Max, names[i], high.Min, high.Max)
+		}
 	}
 	return nil
 }

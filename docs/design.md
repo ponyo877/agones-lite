@@ -634,7 +634,7 @@ GameServer の制御は、ノードのない GameServer を 1 回の処理でま
 - 配置済みの GameServer の `requests` の合計にこの GameServer の分を足すと、CPU かメモリの容量を超えるノード
 - 配置済みの台数が `maxGameServers` に達しているノード
 - Static ポリシーで指定されたポートがすでに使われているノード
-- Dynamic と Passthrough のポートに必要な数の空きが、ポート範囲に残っていないノード
+- Dynamic と Passthrough のポートが名指すポート範囲を持たないノードと、その範囲に必要な数の空きが残っていないノード
 
 次に、残ったノードから `spec.scheduling` に従って 1 つ選ぶ。
 **Packed** ならゲームサーバが最も多いノードを、**Distributed** なら最も少ないノードを選ぶ。
@@ -651,11 +651,27 @@ GameServer の制御は、ノードのない GameServer を 1 回の処理でま
 | ポリシー | 割り当て |
 |---|---|
 | Static | 定義に書かれた `hostPort` をそのまま使う |
-| Dynamic | ノードのポート範囲から空きを選んで `hostPort` にする |
+| Dynamic | ポートが名指すポート範囲から空きを選んで `hostPort` にする |
 | Passthrough | 空きを選び、`hostPort` と `containerPort` の両方に同じ値を使う |
 | None | 公開しない。`status.ports` には `containerPort` を載せる |
 
 `protocol` が TCPUDP のポートは、本家と同じく TCP 用と UDP 用の 2 つに展開する（`pkg/portallocator/portallocator.go`）。
+
+ポートは、本家と同じく、空きを選ぶ範囲を `range` で名指せる。
+書かなければ、既定の範囲（`default`）から選ぶ。
+既定の範囲は `--min-port` と `--max-port` で、ほかの範囲は `--additional-port-ranges` で、ノードごとに決める。
+`--additional-port-ranges` の値は、本家のコントローラの同じ名前のフラグと同じ JSON（`{"game": [5000, 6000]}`）である。
+本家はこの設定をクラスタに 1 つ持つが、scrim はノードごとに持つ。
+既定の範囲をノードごとに決めるのと同じく、マシンごとに防火壁の設定が違ってもよいようにするためである。
+
+1 つのノードの範囲は互いに重なってはならず、重なる設定ではエージェントが起動しない。
+割り当ては範囲を名前の順に 1 つずつ選び、前の範囲で選んだポートを、次の範囲では GameServer 自身の Static ポートと同じく使用中として扱う。
+範囲が重なっていると、先に選んだ範囲が後の範囲の空きを使ってしまい、別の順で選べば置けた GameServer を断ることがある。
+重ならなければ、どの範囲の選び方もほかの範囲に影響しない。
+
+どのノードも持たない範囲を名指す GameServer は、その範囲を持つノードが現れるまで待ち、待つ理由をイベントで伝える（`no node has the port range "game"`）。
+受け付けの時点では断らない。
+あとから参加するノードが、その範囲を持つかもしれないからである。
 
 どのポートが使用中かは、どこにも保存しない。
 配置済みの GameServer の `status.nodeName` と、各ポートの `hostPort` から、そのつど計算する。
@@ -1234,7 +1250,7 @@ bufferSize: 90
 
 | 操作 | 内容 |
 |---|---|
-| Register | ノードの名前、公開アドレス、容量、ポート範囲を知らせる。10 秒ごとに繰り返し、生存の合図を兼ねる |
+| Register | ノードの名前、公開アドレス、容量、ポートの範囲を知らせる。10 秒ごとに繰り返し、生存の合図を兼ねる |
 | Watch | そのノードが担当する GameServer を受け取る。最初に全件、続いて変更のたびに差分が届く |
 | Report | GameServer に起きた出来事を報告する。対象の `uid` と、あれば原因の説明を添える |
 | SetMetadata | SDK で付けられたラベルとアノテーションを伝える |
@@ -1619,6 +1635,8 @@ max-port: 8000
 | `--node-lost-allocated-grace` | 24 時間 | 同じく、割り当て済みのゲームサーバを待つ時間 |
 | `--address` | `127.0.0.1` | プレイヤーがこのノードのゲームサーバに接続するアドレス |
 | `--max-gameservers` | 0（制限なし） | このノードに置く台数の上限 |
+| `--min-port`、`--max-port` | 7000、8000 | ゲームサーバに配るホストのポートの既定の範囲 |
+| `--additional-port-ranges` | なし | ポートが `range` で名指せるほかの範囲。`{"game": [5000, 6000]}` の形で書く |
 | `--docker-host` | `$DOCKER_HOST`、なければ標準のソケット | Docker の接続先 |
 
 ## パッケージ構成

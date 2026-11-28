@@ -5,6 +5,9 @@
 package v1
 
 import (
+	"maps"
+
+	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -86,10 +89,25 @@ type NodeStatus struct {
 	Capacity Resources `json:"capacity,omitempty"`
 	// MaxGameServers limits the number of game servers. Zero means no limit.
 	MaxGameServers int32 `json:"maxGameServers,omitempty"`
-	// PortRange is where Dynamic and Passthrough host ports come from.
-	PortRange         PortRange   `json:"portRange"`
-	LastHeartbeatTime metav1.Time `json:"lastHeartbeatTime,omitempty"`
-	Version           string      `json:"version,omitempty"`
+	// PortRange is where Dynamic and Passthrough host ports come from,
+	// unless a port names another range.
+	PortRange PortRange `json:"portRange"`
+	// PortRanges are the other ranges a port can name, by name. No two
+	// ranges of a node overlap.
+	PortRanges        map[string]PortRange `json:"portRanges,omitempty"`
+	LastHeartbeatTime metav1.Time          `json:"lastHeartbeatTime,omitempty"`
+	Version           string               `json:"version,omitempty"`
+}
+
+// Ranges returns every port range of the node by name, the default one
+// under the name upstream gives it.
+func (s NodeStatus) Ranges() map[string]PortRange {
+	ranges := maps.Clone(s.PortRanges)
+	if ranges == nil {
+		ranges = map[string]PortRange{}
+	}
+	ranges[agonesv1.DefaultPortRange] = s.PortRange
+	return ranges
 }
 
 // Resources is an amount of CPU and memory.
@@ -118,6 +136,7 @@ func (n *Node) DeepCopy() *Node {
 	out.Status.Capacity.CPU = n.Status.Capacity.CPU.DeepCopy()
 	out.Status.Capacity.Memory = n.Status.Capacity.Memory.DeepCopy()
 	out.Status.LastHeartbeatTime = *n.Status.LastHeartbeatTime.DeepCopy()
+	out.Status.PortRanges = maps.Clone(n.Status.PortRanges)
 	return &out
 }
 

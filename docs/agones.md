@@ -72,9 +72,14 @@ refused with its path and `not supported by scrim`.
 
 ### Other fields
 
-- **Port ranges.** A port's `range` must be `default`. Each machine has one
-  range of host ports, 7000 to 8000 unless `--min-port` and `--max-port`
-  say otherwise.
+- **Port ranges.** A port's `range` names the range its host port comes
+  from, as in Agones. The `default` range is 7000 to 8000 unless
+  `--min-port` and `--max-port` say otherwise; the others are given with
+  `--additional-port-ranges`, in the JSON the Agones controller's flag of
+  that name takes (`{"game": [5000, 6000]}`). Agones has one such setting
+  for the cluster; scrim has one for each machine, so machines may differ.
+  The ranges of a machine must not overlap. A GameServer that names a range
+  no machine has waits for one, and its events say which range.
 - **Static ports** must give their `hostPort`. Two Static ports on the same
   host port and protocol are refused when the manifest is applied; on
   Kubernetes it is the Pod that fails later.
@@ -169,8 +174,9 @@ bookkeeping. Nothing should depend on them.
 3. **Apply the manifests** with `scrim apply -f`. What scrim cannot honour is
    refused with the path of the field, and what it ignores comes back as a
    warning. Fields that usually need a change: `initContainers`, volumes
-   from a ConfigMap or a Secret, `env[].valueFrom`, and a port `range` other
-   than `default`.
+   from a ConfigMap or a Secret, and `env[].valueFrom`. The additional port
+   ranges of the Agones installation (`gameservers.additionalPortRanges` in
+   its Helm chart) go to each machine as `--additional-port-ranges`.
 4. **Registry credentials** move from `imagePullSecrets` to `docker login`
    on each machine. scrim reads what `docker login` writes into the Docker
    configuration file; a credential helper (`credsStore`, `credHelpers`)
@@ -192,7 +198,11 @@ bookkeeping. Nothing should depend on them.
 3. **Requests named with `scrim/allocation-key`** lose that meaning: a
    request asked again after a timeout can be given a second game server.
 4. **Images from a private registry** need `imagePullSecrets`.
-5. **Day-to-day operation** moves to `kubectl`: `scrim scale fleet` becomes
+5. **Port ranges** become one setting for the cluster: the default range is
+   the controller's `--min-port` and `--max-port` (`gameservers.minPort`
+   and `gameservers.maxPort` in the Helm chart), and the others go to
+   `gameservers.additionalPortRanges`.
+6. **Day-to-day operation** moves to `kubectl`: `scrim scale fleet` becomes
    `kubectl scale fleet`, `scrim label` and `scrim annotate` become
    `kubectl label` and `kubectl annotate`, `scrim describe` becomes
    `kubectl describe`, and `scrim logs` becomes `kubectl logs`.

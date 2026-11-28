@@ -77,7 +77,7 @@ func TestAllocateAgreesWithTheLeanModel(t *testing.T) {
 	for i, v := range all {
 		gs := v.gameServer()
 
-		ok := Allocate(gs, scrimv1.PortRange{Min: v.Lo, Max: v.Hi}, v.used())
+		ok := Allocate(gs, only(scrimv1.PortRange{Min: v.Lo, Max: v.Hi}), v.used())
 
 		if v.HostPorts == nil {
 			require.False(t, ok, "vector %d: the model allocates nothing: %+v", i, v)
