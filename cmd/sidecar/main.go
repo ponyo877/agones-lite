@@ -24,6 +24,7 @@ const (
 	envToken      = "SCRIM_TOKEN"
 	envGRPCPort   = "AGONES_SDK_GRPC_PORT"
 	envHTTPPort   = "AGONES_SDK_HTTP_PORT"
+	envLogLevel   = "LOG_LEVEL"
 )
 
 func main() {
@@ -34,6 +35,7 @@ func main() {
 }
 
 func run() error {
+	slog.SetLogLoggerLevel(level(os.Getenv(envLogLevel)))
 	grpcPort, err := port(envGRPCPort, 9357)
 	if err != nil {
 		return err
@@ -60,4 +62,19 @@ func port(name string, fallback int) (int, error) {
 		return 0, fmt.Errorf("%s=%q is not a port number", name, value)
 	}
 	return n, nil
+}
+
+// level reads spec.sdkServer.logLevel. Upstream logs every SDK call at
+// Debug, and Trace is its level below that. Anything else is Info, the
+// default.
+func level(name string) slog.Level {
+	switch name {
+	case "Error":
+		return slog.LevelError
+	case "Debug":
+		return slog.LevelDebug
+	case "Trace":
+		return slog.LevelDebug - 4
+	}
+	return slog.LevelInfo
 }

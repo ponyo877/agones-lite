@@ -43,6 +43,9 @@ const (
 	// The SDK port variables are upstream's, also given to the game containers.
 	EnvGRPCPort = "AGONES_SDK_GRPC_PORT"
 	EnvHTTPPort = "AGONES_SDK_HTTP_PORT"
+	// EnvLogLevel is spec.sdkServer.logLevel, under the name upstream gives
+	// it in the sidecar.
+	EnvLogLevel = "LOG_LEVEL"
 )
 
 const defaultGracePeriod = 30 * time.Second
@@ -119,6 +122,7 @@ func sidecarSpec(gs *agonesv1.GameServer, sidecar Sidecar) docker.Spec {
 			EnvAgent+"="+sidecar.AgentAddress,
 			EnvGameServer+"="+gs.Namespace+"/"+gs.Name,
 			EnvToken+"="+sidecar.Token,
+			EnvLogLevel+"="+string(gs.Spec.SdkServer.LogLevel),
 		),
 		Labels: labels,
 		Ports:  published(gs),

@@ -728,6 +728,8 @@ GameServer 1 台は、次のコンテナの組として動く。
 Kubernetes の Pod と同じ構造である。
 
 ゲームコンテナには、本家と同じ環境変数 `AGONES_SDK_GRPC_PORT` と `AGONES_SDK_HTTP_PORT` を渡す。
+sidecar には、`spec.sdkServer.logLevel` を本家と同じ環境変数 `LOG_LEVEL` で渡す。
+Debug にすると、本家と同じく、SDK の呼び出しを 1 件ずつ記録する。
 
 コンテナには次のラベルを付ける。
 エージェントは、ラベルを頼りに自分が管理するコンテナを見分ける。
@@ -2077,7 +2079,6 @@ sidecar とエージェントの間は Unix ソケットなので、開けるも
 - ノードの容量の自動検出。CPU とメモリの容量は、設定しなければ制限なしとして扱う。
 - sidecar が止まると、その GameServer は Allocated でも Unhealthy になる。
 - 終了した GameServer のログは読めない。コンテナは GameServer と一緒に撤去する。
-- `spec.sdkServer.logLevel` は受け付けるが、sidecar のログの量は変わらない。
 - 資格情報ヘルパ（`credsStore`）を使うレジストリからは、イメージを取得できない。
 - `priorities` を指定した Distributed の割り当てと、条件に合う GameServer が少ない Distributed の割り当ては、同じ namespace の全 GameServer を見る。1 万台では 1 件あたり数ミリ秒かかる。
 - 要求のキー（`scrim/allocation-key`）は、マッチメイカが自分で付ける。付けない要求の再試行は、従来どおり別の 1 台を取る。

@@ -33,7 +33,7 @@ details of both.
 | SDK protocol | gRPC, REST and WebSocket | the same, from the same generated code |
 | SDK calls | Stable and Beta; Alpha behind feature gates | Stable and Beta, Counters and Lists included. The Alpha PlayerTracking calls answer `PlayerTracking not enabled`, as Agones does with its default gates |
 | SDK ports | `AGONES_SDK_GRPC_PORT`, `AGONES_SDK_HTTP_PORT`, from `spec.sdkServer` | the same |
-| `spec.sdkServer.logLevel` | sets the sidecar's log level | checked, but has no effect yet |
+| `spec.sdkServer.logLevel` | sets the sidecar's log level; Debug notes every SDK call | the same |
 | The sidecar | `agones-gameserver-sidecar`, the `agones-sdk` image | the same container name, scrim's own image (`--sidecar-image`) |
 | A game container that exits | before Ready, the kubelet may restart it, as `restartPolicy` says; after Ready, the GameServer becomes Unhealthy | never restarted, before Ready or after: `restartPolicy` is ignored |
 

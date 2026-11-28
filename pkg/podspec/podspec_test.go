@@ -326,6 +326,8 @@ func TestContainers(t *testing.T) {
 		{Name: "debug", PortPolicy: agonesv1.None, ContainerPort: 6060, Protocol: corev1.ProtocolTCP},
 	}
 
+	gs.Spec.SdkServer.LogLevel = agonesv1.SdkServerLogLevelDebug
+
 	specs := Containers(gs, Sidecar{Image: "sidecar:dev", AgentAddress: "host.docker.internal:9447", Token: "secret"})
 
 	require.Len(t, specs, 3)
@@ -338,6 +340,7 @@ func TestContainers(t *testing.T) {
 	assert.Contains(t, sidecar.Env, "SCRIM_AGENT=host.docker.internal:9447")
 	assert.Contains(t, sidecar.Env, "SCRIM_GAMESERVER=default/gs")
 	assert.Contains(t, sidecar.Env, "SCRIM_TOKEN=secret")
+	assert.Contains(t, sidecar.Env, "LOG_LEVEL=Debug")
 	assert.Equal(t, RoleSidecar, sidecar.Labels[LabelRole])
 	assert.Equal(t, "secret", sidecar.Labels[LabelToken])
 
