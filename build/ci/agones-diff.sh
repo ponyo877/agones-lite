@@ -62,6 +62,16 @@ servers() {
 	}) | $alike | sort_by(.name, .status.state, .labels.version)"
 }
 
+# done_on_purpose is the one place where scrim answers differently from
+# Agones v1.62 on purpose, applied to what Agones answers. An old
+# GameServerSet that holds as many sessions as its size, or more, is done:
+# scrim scales it to 0 at once. Agones lowers it a step, finds it short of
+# its size, and waits there until the sessions end (docs/design.md says why
+# scrim does not).
+done_on_purpose='.sets |= ((.[:-1] | map(
+	if .replicas > 0 and .status.allocatedReplicas + .status.reservedReplicas >= .replicas
+	then .replicas = 0 else . end)) + .[-1:])'
+
 fleet() {
 	jq -S -n --argjson fleets "$("${side}_list" fleets)" \
 		--argjson sets "$("${side}_list" gameserversets)" \
@@ -70,7 +80,7 @@ fleet() {
 		sets: \$sets.items | sort_by(.metadata.creationTimestamp) | map({
 			labels: .spec.template.metadata.labels, replicas: .spec.replicas, status}),
 		servers: \$servers | map({labels, state: .status.state, counters: .status.counters})
-	} | $alike"
+	} | $alike | if \"$side\" == \"agones\" then $done_on_purpose else . end"
 }
 
 # settle prints what WHAT shows once it has not changed for QUIET seconds,
