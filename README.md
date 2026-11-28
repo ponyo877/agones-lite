@@ -264,8 +264,9 @@ random part of generated names, scrim's own annotations, and the
 is kept on purpose, in how far a rolling update scales down an old
 GameServerSet that is busy with sessions, and the comparison names it
 instead of hiding it.
-[docs/planning.md](docs/planning.md) has the full list of what is in and
-what is out, and why.
+[docs/agones.md](docs/agones.md) lists every place where scrim differs from
+Agones, for a game server, a manifest, a matchmaker and an operator, and
+what to change when moving from one to the other.
 
 ## Performance
 
@@ -368,6 +369,7 @@ build does not use it. Start with `pkg/store`, then
 
 | Document | What it covers |
 |---|---|
+| [docs/agones.md](docs/agones.md) | Where scrim differs from Agones, and moving between the two |
 | [docs/planning.md](docs/planning.md) | Goals, scope and the record of decisions (Japanese) |
 | [docs/design.md](docs/design.md) | Architecture, every component, and a reading order for the code (Japanese) |
 | [formal/README.md](formal/README.md) | What is proved and what is model-checked, and what is not (Japanese) |
