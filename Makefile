@@ -8,13 +8,17 @@ build:
 
 # Release binaries for every supported platform, into dist/.
 # Usage: make dist VERSION=v1.0.0
+#
+# -trimpath leaves out where the source was, so that the same commit, built
+# with the same Go, gives the same bytes anywhere: a release can be rebuilt
+# and compared with checksums.txt.
 dist:
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o dist/scrim-linux-amd64 ./cmd/scrim
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o dist/scrim-linux-arm64 ./cmd/scrim
-	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o dist/scrim-darwin-amd64 ./cmd/scrim
-	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o dist/scrim-darwin-arm64 ./cmd/scrim
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o dist/sidecar-linux-amd64 ./cmd/sidecar
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o dist/sidecar-linux-arm64 ./cmd/sidecar
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o dist/scrim-linux-amd64 ./cmd/scrim
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o dist/scrim-linux-arm64 ./cmd/scrim
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o dist/scrim-darwin-amd64 ./cmd/scrim
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o dist/scrim-darwin-arm64 ./cmd/scrim
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o dist/sidecar-linux-amd64 ./cmd/sidecar
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o dist/sidecar-linux-arm64 ./cmd/sidecar
 
 test:
 	go test ./...

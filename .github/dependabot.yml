@@ -1,0 +1,53 @@
+# Weekly proposals to update what scrim depends on, each once it has been
+# out for two weeks.
+#
+# agones.dev/agones is not among them, nor the minor and major versions of
+# k8s.io: they move together with the release of Agones that scrim is
+# compatible with.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      go:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: agones.dev/agones
+      - dependency-name: k8s.io/*
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # The images that build Agones' conformance clients stay on the major
+  # versions those SDKs are built with.
+  - package-ecosystem: docker
+    directory: /build/conformance
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      images:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: npm
+    directory: /formal/quint
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14

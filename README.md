@@ -209,6 +209,15 @@ make build sidecar-image    # bin/scrim, and the sidecar image it uses
 
 The samples are then in `third_party/agones/examples/simple-game-server`.
 
+Releases after v0.2.0 also carry `checksums.txt`, a software bill of
+materials for each binary, and a signed record that the release workflow
+of this repository built them from the tagged commit. To check a binary
+you downloaded (the rest is in [SECURITY.md](SECURITY.md#verifying-a-release)):
+
+```sh
+gh attestation verify scrim --repo ponyo877/scrim
+```
+
 ## Running on more machines
 
 The control plane listens for agents once it is given an address for them.
