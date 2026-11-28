@@ -1732,6 +1732,7 @@ CI（`.github/workflows/ci.yml`）は、その手前の最後の検査である�
 | lint | golangci-lint の全検査。`go.mod` が `go mod tidy` の結果と一致すること。ワークフローとスクリプトの書式 |
 | build | 配布する 4 つのプラットフォーム向けのバイナリと、2 つのアーキテクチャ向けの sidecar イメージがビルドできること |
 | quick-start | README のクイックスタートが、そのコミットのバイナリと sidecar イメージで、実際のコンテナを使って通ること。Fleet を適用し、2 台が Ready になり、1 台を割り当て、その 1 台がプレイヤーのパケットに応える |
+| agones-sdks | 本家が SDK ごとに走らせる適合テスト用のクライアントが、書き換えずに、scrim のゲームサーバとして最後まで通ること（Go、REST と WebSocket、Python、C#、Node.js、Rust の同期と非同期、C++） |
 | test | Linux の amd64、Linux の arm64、macOS で、全テストが競合検出つき、毎回違う順序で通ること。Linux では、飛ばされたテストがないこと |
 | coverage | テストが文の 79% 以上を通ること |
 | properties | 性質テストとモデルテストが、それぞれ 1,000 回の試行で通ること |
@@ -1806,6 +1807,32 @@ REST でも同じ操作を行い、JSON の項目名と値の形を確かめる�
 WatchGameServer は、HTTP のストリームと WebSocket の両方で受ける。
 sidecar の先は、エージェント、コントロールプレーン、store まで実物である。
 Docker だけを代役にし、その代役は「sidecar コンテナの起動」を、本物の SDK サーバの起動に置き換える。
+
+**本家の適合テスト用クライアント**：本家は SDK ごとに、SDK の全操作を呼んで答えを確かめるクライアントを持っている（`third_party/agones/test/sdk`）。
+これを書き換えずにイメージにし、scrim のゲームサーバとして実際のコンテナで動かす（`build/conformance`、`build/ci/agones-sdks.sh`）。
+対象は Go、REST と WebSocket、Python、C#、Node.js、Rust（同期と非同期）、C++ の 8 つで、CI のジョブ agones-sdks で毎回走る。
+クライアントは、自分の確かめがすべて通ったときにだけ、最後に Shutdown を呼ぶ。
+
+合否の決め方は、本家とは違う。
+本家は、SDK サーバの代役（ローカルモード）に対してクライアントを動かし、届いた要求の種類が期待どおりかを見る。
+scrim では代役を使わず、要求は sidecar とエージェントを通ってコントロールプレーンまで届く。
+そこで、届いた要求の結果を、コントロールプレーンが持つ GameServer で確かめる。
+Ready、Allocated、Shutdown の順に移り、Unhealthy にならなかったこと。
+クライアントが付けたラベルと注釈が、本家が確かめるのと同じ値（作られた時刻と UID）を持つこと。
+Counter と List の初期値は、本家の代役が持つのと同じにしてある。
+本家の代役はヘルスチェックをしないので、クライアントはヘルスの報告を 1 回か数回しか送らない。
+そのため、ヘルスチェックはクライアントが終わった後に始まるように設定している。
+
+REST のクライアントだけは、Counter と List を確かめさせずに走らせる。
+このクライアントは、UpdateList の答えとして更新後の List を求める。
+本家のローカルモードの SDK サーバはそう答えるが、本家がゲームサーバの隣で動かす SDK サーバは空の List を答え、scrim はこちらに合わせている。
+REST からの Counter と List の操作は、上の SDK の適合テスト（`test/conformance`）が確かめている。
+
+REST と WebSocket のクライアントは、走らせる順序を本家と逆にしている。
+WebSocket のクライアントは、つないだ直後に送られてくる GameServer（つないだ時点の GameServer）を確かめ、その状態が Reserved か Shutdown でなければ失敗する。
+本家は REST のクライアントを先に走らせる。
+相手はローカルモードの SDK サーバで、REST のクライアントが最後に呼ぶ Shutdown の後も動き続けるので、WebSocket のクライアントには Shutdown の GameServer が届く。
+scrim では Shutdown でゲームサーバが終わるので、1 つのコンテナで WebSocket のクライアントを先に走らせ、つなぐ前に GameServer を Reserved にしておく（`build/conformance/rest.sh`）。
 
 **障害注入**：わざと壊して、その後を確かめる（`pkg/controlplane/fault_test.go`）。
 疑似ノードを、別のマシンのエージェントと同じくネットワーク越しに接続させ、次の 3 つを起こす。
