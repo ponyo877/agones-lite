@@ -168,7 +168,9 @@ bookkeeping. Nothing should depend on them.
    from a ConfigMap or a Secret, `env[].valueFrom`, and a port `range` other
    than `default`.
 4. **Registry credentials** move from `imagePullSecrets` to `docker login`
-   on each machine.
+   on each machine. scrim reads what `docker login` writes into the Docker
+   configuration file; a credential helper (`credsStore`, `credHelpers`)
+   is not run, and an image behind one is pulled without credentials.
 5. **The matchmaker** is pointed at the allocation address of scrim, and
    told to trust `scrim-data/tls/ca.crt`. It can keep its client
    certificate when the CA that signed it is put in
