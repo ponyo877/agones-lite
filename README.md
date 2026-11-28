@@ -241,13 +241,13 @@ manifest means here what it means there.
 
 | Works as in Agones | Left out on purpose |
 |---|---|
-| `GameServer`, `Fleet`, `GameServerSet`, `FleetAutoscaler` | `kubectl`, Helm and CRDs |
+| `GameServer` (development ones too), `Fleet`, `GameServerSet`, `FleetAutoscaler` | `kubectl`, Helm and CRDs |
 | The SDK protocol: gRPC, REST and WebSocket | A redundant control plane |
 | The allocator's gRPC and REST API | Allocation across clusters |
 | Counters and Lists, in the SDK, in allocation and in autoscaling | Features that are Alpha or Dev in Agones |
 | Rolling updates and the `Recreate` strategy | Windows containers |
 | Health checks, `Reserve`, graceful shutdown | `initContainers`, and volumes from `configMap` or `secret` |
-| Packed and Distributed scheduling | Adding and removing the VMs themselves |
+| Packed and Distributed scheduling, and named port ranges | Adding and removing the VMs themselves |
 
 The sample images of the C++, Node.js, Rust and Unity SDKs run unchanged.
 So do the conformance clients that Agones runs for each of its SDKs: Go,
