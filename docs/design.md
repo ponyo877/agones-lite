@@ -998,6 +998,15 @@ gate のほかの部分（`maxSurge` を Allocated の分だけ上乗せする�
 旧世代の GameServerSet を消すのは、GameServer を 1 つも持たなくなってからである。
 status は実際より遅れることがあるので、status だけでは判断しない。
 
+Fleet の status の台数と Counter と List は、GameServerSet の status を足して書く。
+`allocations` だけは足し算ではなく、Fleet の GameServer が Allocated に移った回数の累計である。
+割り当てサービスによるものも、SDK の Allocate によるものも数える。
+Allocated のまま変更された GameServer は数え直さない。
+本家は、informer が渡す変更の前後の GameServer を比べて数える。
+store の変更の通知には変更後の GameServer しかないので、制御が GameServer ごとに直前の状態を覚えておく（`pkg/fleets/allocations.go`）。
+覚えた状態は、購読を始めるたびに store の一覧から作り直す。
+数えた分は、status を書けたときに累計に足す。
+
 ### 連鎖削除
 
 親が消えたら、子は自分の制御の中でそれに気付いて自分を消す。
