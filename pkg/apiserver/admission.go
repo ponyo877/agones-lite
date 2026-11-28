@@ -51,7 +51,10 @@ func admitFleet(fleet *agonesv1.Fleet) (warnings []string, errs field.ErrorList)
 	errs = slices.Concat(
 		notForDevelopment(fleet.Spec.Template.Annotations, template.Child("metadata", "annotations")),
 		fleetSchema(fleet),
-		fleet.Validate(agones.NoHooks{}),
+		// Validate fills in the defaults of the template as it goes. Upstream
+		// runs it in a validating webhook, whose changes are not kept, so the
+		// template is stored as it was written.
+		fleet.DeepCopy().Validate(agones.NoHooks{}),
 	)
 	ignored, unsupported := podspec.Check(&fleet.Spec.Template.Spec, template.Child("spec"))
 	return append(warnings, ignored...), append(errs, unsupported...)

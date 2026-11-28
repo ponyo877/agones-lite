@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -425,10 +426,48 @@ func TestCountersAndListsGetTheSchemasDefaultCapacity(t *testing.T) {
 	}
 	assert.Equal(t, map[string]int64{"players": 1000, "spectators": 1000, "banned": 0, "friends": 5}, capacities)
 	assert.Equal(t, gs.Spec.Counters, gs.Status.Counters, "the status starts from the spec, defaults and all")
+	assert.JSONEq(t, `{"capacity": 1000, "values": []}`, jsonAt(t, rec, "spec", "lists", "players"))
+	assert.JSONEq(t, `{"capacity": 1000, "values": []}`, jsonAt(t, rec, "status", "lists", "players"))
 
-	fleet := replace(t, fleetManifest, "    spec:\n      ports:", "    spec:\n      lists: {players: {}}\n      ports:")
-	require.Equal(t, http.StatusCreated, call(t, h, http.MethodPut, fleetPath, fleet).Code)
-	assert.Equal(t, int64(1000), getFleet(t, h).Spec.Template.Spec.Lists["players"].Capacity)
+	fleet := replace(t, fleetManifest, "    spec:\n      ports:", "    spec:\n      lists: {players: {values: null}}\n      ports:")
+	rec = call(t, h, http.MethodPut, fleetPath, fleet)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.JSONEq(t, `{"capacity": 1000, "values": []}`, jsonAt(t, rec, "spec", "template", "spec", "lists", "players"))
+}
+
+// jsonAt returns one field of the object in a response, as JSON, so that an
+// empty list and a missing one are told apart.
+func jsonAt(t *testing.T, rec *httptest.ResponseRecorder, path ...string) string {
+	t.Helper()
+	var at any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &at))
+	for _, key := range path {
+		object, ok := at.(map[string]any)
+		require.True(t, ok, "no %s in %s", key, rec.Body.String())
+		at = object[key]
+	}
+	out, err := json.Marshal(at)
+	require.NoError(t, err)
+	return string(out)
+}
+
+// On Kubernetes the template is stored as it was written, with the defaults
+// of the CRD schema only. Upstream's defaults are filled in when a
+// GameServer is made from it. Stored with them, the template differed from
+// the one a Fleet applied again from the same manifest has on Kubernetes.
+func TestAFleetsTemplateIsStoredAsItWasWritten(t *testing.T) {
+	h := newServer(t)
+
+	rec := call(t, h, http.MethodPut, fleetPath, fleetManifest)
+
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.JSONEq(t, `[{"name": "default", "containerPort": 7654}]`, jsonAt(t, rec, "spec", "template", "spec", "ports"))
+	spec := getFleet(t, h).Spec.Template.Spec
+	assert.Empty(t, spec.Container)
+	assert.Empty(t, spec.Scheduling)
+	assert.Zero(t, spec.Health)
+	assert.Zero(t, spec.SdkServer)
+	assert.Nil(t, spec.Eviction)
 }
 
 // The schema's default. Left empty, the order made the removal order of a

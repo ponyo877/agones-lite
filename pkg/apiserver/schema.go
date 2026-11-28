@@ -38,11 +38,11 @@ const (
 // so these look at the manifest as it was written.
 
 func fillGameServer(gs *agonesv1.GameServer, written map[string]any) {
-	fillCapacities(&gs.Spec, dig(written, "spec"))
+	fillCountersAndLists(&gs.Spec, dig(written, "spec"))
 }
 
 func fillFleet(fleet *agonesv1.Fleet, written map[string]any) {
-	fillCapacities(&fleet.Spec.Template.Spec, dig(written, "spec", "template", "spec"))
+	fillCountersAndLists(&fleet.Spec.Template.Spec, dig(written, "spec", "template", "spec"))
 	for i := range fleet.Spec.Priorities {
 		if fleet.Spec.Priorities[i].Order == "" {
 			// The schema's default. Without an order, upstream's
@@ -53,9 +53,10 @@ func fillFleet(fleet *agonesv1.Fleet, written map[string]any) {
 	}
 }
 
-// fillCapacities gives every Counter and List whose capacity the manifest
-// leaves out the default one. written is the GameServer spec of the manifest.
-func fillCapacities(spec *agonesv1.GameServerSpec, written any) {
+// fillCountersAndLists gives every Counter and List whose capacity the
+// manifest leaves out the default one, and every List without values an
+// empty one. written is the GameServer spec of the manifest.
+func fillCountersAndLists(spec *agonesv1.GameServerSpec, written any) {
 	for name, counter := range spec.Counters {
 		if dig(written, "counters", name, "capacity") == nil {
 			counter.Capacity = defaultCapacity
@@ -65,8 +66,13 @@ func fillCapacities(spec *agonesv1.GameServerSpec, written any) {
 	for name, list := range spec.Lists {
 		if dig(written, "lists", name, "capacity") == nil {
 			list.Capacity = defaultCapacity
-			spec.Lists[name] = list
 		}
+		// Kubernetes drops a null before it fills in defaults, so values
+		// left out and values: null both end up as [].
+		if list.Values == nil {
+			list.Values = []string{}
+		}
+		spec.Lists[name] = list
 	}
 }
 

@@ -142,12 +142,25 @@ scrim は、何も検証しない実装を渡す。
 scrim は起動時に `ParseFeatures("")` を呼び、v1.62.0 の既定値で固定する。
 利用者が gate を切り替える手段は用意しない。
 
+本家の既定値は、GameServer と Fleet の注釈 `agones.dev/sdk-version` に本家の版を書く。
+その版は本家のビルドが埋め込むもので、埋め込まなければ `dev` になる。
+scrim は同じ起動時の処理で v1.62.0 を入れる（`pkg/agones`）。
+
 `Validate()` だけでは足りない。
 本家の検証は、Kubernetes の API サーバが CRD のスキーマで先に検査を済ませていることを前提にしている。
 負の `replicas`、範囲外のポート番号、DNS の名前として使えない名前は、スキーマが止めるので、`Validate()` は調べない。
 scrim にはその API サーバがないので、スキーマの制約のうち、実行に影響する項目を自分で検査する（`pkg/apiserver/schema.go`）。
 スキーマが与える既定値も同じ場所で付ける。
-容量を省いた Counter と List は 1000 になり、`priorities` の `order` を省くと Ascending になる。
+容量を省いた Counter と List は 1000 になり、値を省いた List の `values` は空の配列になる。
+`priorities` の `order` を省くと Ascending になる。
+
+Fleet のテンプレートは、書かれたまま（スキーマの既定値だけを付けて）保存する。
+`Fleet.Validate()` は、検査しながらテンプレートに本家の既定値を付ける。
+本家ではこれを検証用の webhook が呼ぶので、付けた既定値は保存されない。
+scrim は写しを検査する。
+本家の既定値は、テンプレートから GameServer を作るときに付く。
+この扱いより前の版で保存した Fleet は、テンプレートに既定値が付いている。
+同じマニフェストを適用し直すと、テンプレートが変わったものとして、GameServer が一度入れ替わる。
 
 受け付けは次の順に進む。
 
