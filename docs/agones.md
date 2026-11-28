@@ -33,7 +33,7 @@ details of both.
 | SDK protocol | gRPC, REST and WebSocket | the same, from the same generated code |
 | SDK calls | Stable and Beta; Alpha behind feature gates | Stable and Beta, Counters and Lists included. The Alpha PlayerTracking calls answer `PlayerTracking not enabled`, as Agones does with its default gates |
 | SDK ports | `AGONES_SDK_GRPC_PORT`, `AGONES_SDK_HTTP_PORT`, from `spec.sdkServer` | the same |
-| `spec.sdkServer.logLevel` | sets the sidecar's log level | checked, but has no effect yet |
+| `spec.sdkServer.logLevel` | sets the sidecar's log level; Debug notes every SDK call | the same |
 | The sidecar | `agones-gameserver-sidecar`, the `agones-sdk` image | the same container name, scrim's own image (`--sidecar-image`) |
 | A game container that exits | before Ready, the kubelet may restart it, as `restartPolicy` says; after Ready, the GameServer becomes Unhealthy | never restarted, before Ready or after: `restartPolicy` is ignored |
 
@@ -72,14 +72,26 @@ refused with its path and `not supported by scrim`.
 
 ### Other fields
 
-- **Port ranges.** A port's `range` must be `default`. Each machine has one
-  range of host ports, 7000 to 8000 unless `--min-port` and `--max-port`
-  say otherwise.
+- **Port ranges.** A port's `range` names the range its host port comes
+  from, as in Agones. The `default` range is 7000 to 8000 unless
+  `--min-port` and `--max-port` say otherwise; the others are given with
+  `--additional-port-ranges`, in the JSON the Agones controller's flag of
+  that name takes (`{"game": [5000, 6000]}`). Agones has one such setting
+  for the cluster; scrim has one for each machine, so machines may differ.
+  The ranges of a machine must not overlap. A GameServer that names a range
+  no machine has waits for one, and its events say which range.
 - **Static ports** must give their `hostPort`. Two Static ports on the same
   host port and protocol are refused when the manifest is applied; on
   Kubernetes it is the Pod that fails later.
-- **Development GameServers** (the `agones.dev/dev-address` annotation) are
-  refused. scrim would run them in a container like any other.
+- **Development GameServers** (the `agones.dev/dev-address` annotation)
+  are registered as in Agones: nothing is run, and the GameServer is Ready
+  at the address of the annotation, on its Static ports, to be allocated
+  like any other. Unlike Agones, it is Ready as soon as it is created,
+  without passing through Creating, and its `status.nodeName` stays empty,
+  since no machine runs it. A Fleet whose template has the annotation is
+  refused. There is no out-of-cluster SDK server: the game on the
+  developer's machine talks to the Agones SDK server in local mode
+  (`--local`).
 - **FleetAutoscaler.** The Buffer, Counter, List, Webhook, Schedule and Chain
   policies work. Wasm does not. A Webhook needs a `url` (there are no
   Kubernetes Services to name), and it must be an http or https URL. A
@@ -89,9 +101,13 @@ refused with its path and `not supported by scrim`.
 
 ### After a manifest is applied
 
-- A **GameServer** cannot be changed in place: applying it again answers
-  that it already exists. Its labels and annotations can still be set by
-  the game server, through the SDK, and by an allocation.
+- Of a **GameServer**, only the labels and annotations can be changed:
+  `scrim label` and `scrim annotate` work as `kubectl label` and `kubectl
+  annotate` do, and the API takes a JSON merge patch of them. The keys that
+  are not named stay, those the game server set through the SDK among them.
+  The annotations under `scrim/` are scrim's and cannot be changed.
+  Applying a GameServer that exists again answers that it already exists:
+  its spec is what its containers were made from.
 - A **Fleet** or a **FleetAutoscaler** applied again is replaced by the
   manifest, and keeps its status. `scrim scale fleet` changes the size of a
   Fleet.
@@ -137,7 +153,7 @@ with it.
 
 | | Agones | scrim |
 |---|---|---|
-| Tools | `kubectl`, Helm | the `scrim` CLI: `apply`, `get` (also `-w`, `-o json\|yaml`), `describe`, `delete`, `scale`, `logs`, `allocate`, `node`, `token` |
+| Tools | `kubectl`, Helm | the `scrim` CLI: `apply`, `get` (also `-w`, `-o json\|yaml`), `describe`, `delete`, `scale`, `label`, `annotate`, `logs`, `allocate`, `node`, `token` |
 | The API | the Kubernetes API | a REST API of its own under `/v1`; `kubectl` and client-go do not work with it |
 | Namespaces | Kubernetes Namespaces | any valid name; there is nothing to create first |
 | Events | Kubernetes Events | an event history of its own, kept for a day, shown by `scrim describe` |
@@ -165,8 +181,9 @@ bookkeeping. Nothing should depend on them.
 3. **Apply the manifests** with `scrim apply -f`. What scrim cannot honour is
    refused with the path of the field, and what it ignores comes back as a
    warning. Fields that usually need a change: `initContainers`, volumes
-   from a ConfigMap or a Secret, `env[].valueFrom`, and a port `range` other
-   than `default`.
+   from a ConfigMap or a Secret, and `env[].valueFrom`. The additional port
+   ranges of the Agones installation (`gameservers.additionalPortRanges` in
+   its Helm chart) go to each machine as `--additional-port-ranges`.
 4. **Registry credentials** move from `imagePullSecrets` to `docker login`
    on each machine. scrim reads what `docker login` writes into the Docker
    configuration file; a credential helper (`credsStore`, `credHelpers`)
@@ -188,6 +205,11 @@ bookkeeping. Nothing should depend on them.
 3. **Requests named with `scrim/allocation-key`** lose that meaning: a
    request asked again after a timeout can be given a second game server.
 4. **Images from a private registry** need `imagePullSecrets`.
-5. **Day-to-day operation** moves to `kubectl`: `scrim scale fleet` becomes
-   `kubectl scale fleet`, `scrim describe` becomes `kubectl describe`, and
-   `scrim logs` becomes `kubectl logs`.
+5. **Port ranges** become one setting for the cluster: the default range is
+   the controller's `--min-port` and `--max-port` (`gameservers.minPort`
+   and `gameservers.maxPort` in the Helm chart), and the others go to
+   `gameservers.additionalPortRanges`.
+6. **Day-to-day operation** moves to `kubectl`: `scrim scale fleet` becomes
+   `kubectl scale fleet`, `scrim label` and `scrim annotate` become
+   `kubectl label` and `kubectl annotate`, `scrim describe` becomes
+   `kubectl describe`, and `scrim logs` becomes `kubectl logs`.

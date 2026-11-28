@@ -46,11 +46,12 @@ type lot struct {
 	residents   int
 	cpu, memory resource.Quantity // what the residents ask for, together
 	ports       map[int32]bool    // the host ports they have
-	// free is the range host ports are still handed out from. It begins as
-	// the node's range and loses its low end as ports are given: they are
-	// given lowest first, so what lies below the last one given is taken.
-	// Without it, every placement would walk past all the ports before it.
-	free scrimv1.PortRange
+	// free holds, for each range of the node, what host ports are still
+	// handed out from. A range loses its low end as ports are given: they
+	// are given lowest first, so what lies below the last one given is
+	// taken. Without it, every placement would walk past all the ports
+	// before it.
+	free map[string]scrimv1.PortRange
 }
 
 // RoomOn counts what servers leave free on nodes.
@@ -58,7 +59,7 @@ func RoomOn(nodes []*scrimv1.Node, servers []*agonesv1.GameServer) *Room {
 	room := &Room{}
 	byName := map[string]*lot{}
 	for _, node := range nodes {
-		l := &lot{node: node, ports: map[int32]bool{}, free: node.Status.PortRange}
+		l := &lot{node: node, ports: map[int32]bool{}, free: node.Status.Ranges()}
 		byName[node.Name] = l
 		room.lots = append(room.lots, l)
 	}
@@ -85,10 +86,21 @@ func (r *Room) Place(gs *agonesv1.GameServer) (*agonesv1.GameServer, bool) {
 		}
 		placed.Status.NodeName = l.node.Name
 		l.take(placed)
-		l.free.Min = max(l.free.Min, portallocator.Highest(placed)+1)
+		l.passGiven(placed)
 		return placed, true
 	}
 	return nil, false
+}
+
+// Missing returns a range that a port of gs names and no node has. Such a
+// GameServer waits for a node with that range, not for room.
+func (r *Room) Missing(gs *agonesv1.GameServer) (string, bool) {
+	for _, name := range portallocator.Named(gs) {
+		if !slices.ContainsFunc(r.lots, func(l *lot) bool { _, has := l.free[name]; return has }) {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 // ranked orders the nodes from most to least preferred: fullest first for
@@ -106,13 +118,26 @@ func (r *Room) ranked(strategy apis.SchedulingStrategy) []*lot {
 	return out
 }
 
-// passTaken moves the low end of the free range past the ports that are
+// passTaken moves the low end of each free range past the ports that are
 // taken. A node whose ports have all gone is then seen to be full at a
 // glance: Packed tries the fullest nodes first, and would otherwise walk
 // the whole range of each of them for every GameServer it places.
 func (l *lot) passTaken() {
-	for l.free.Min < l.free.Max && l.ports[l.free.Min] {
-		l.free.Min++
+	for name, r := range l.free {
+		for r.Min < r.Max && l.ports[r.Min] {
+			r.Min++
+		}
+		l.free[name] = r
+	}
+}
+
+// passGiven moves the low end of each range past the ports just given
+// from it.
+func (l *lot) passGiven(placed *agonesv1.GameServer) {
+	for name, highest := range portallocator.Highest(placed) {
+		r := l.free[name]
+		r.Min = max(r.Min, highest+1)
+		l.free[name] = r
 	}
 }
 

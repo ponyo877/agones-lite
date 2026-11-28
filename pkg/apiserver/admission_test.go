@@ -11,6 +11,7 @@ import (
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/ponyo877/scrim/pkg/agones"
@@ -277,11 +278,6 @@ func refusedByTheSchema(t testing.TB) map[string]refusal {
 			http.MethodPut, scalerPath,
 			replace(t, scalerManifest, "type: Buffer", "type: Chain\n    chain: [{id: a, type: Chain}]"),
 			"spec.policy.chain[0].type",
-		},
-		"a port from a range of ports that is not there": {
-			http.MethodPost, gameServersPath,
-			replace(t, manifest, "containerPort: 7654", "containerPort: 7654\n      range: games"),
-			"spec.ports[0].range",
 		},
 		"an unknown log level": {
 			http.MethodPost, gameServersPath,
@@ -714,17 +710,61 @@ func TestVolumeSettingsDockerDoesNotHaveAreIgnoredWithAWarning(t *testing.T) {
 	}, rec.Header().Values("Warning"))
 }
 
-// Upstream registers such a GameServer without running anything: the game
-// is a process on the developer's machine. Here it would be run in a
-// container like any other, and upstream's validation skips most of its
-// checks for it.
-func TestADevelopmentGameServerIsRefused(t *testing.T) {
-	body := developmentGameServer(t)
+// As upstream does, a development GameServer is registered Ready at the
+// address of its annotation, without running anything: the game is a
+// process on the developer's machine. Its Pod definition is not looked at,
+// so the mistake in it does not matter.
+func TestADevelopmentGameServerIsRegisteredReady(t *testing.T) {
+	rec := call(t, newServer(t), http.MethodPost, gameServersPath, developmentGameServer(t))
 
-	rec := call(t, newServer(t), http.MethodPost, gameServersPath, body)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	gs := &agonesv1.GameServer{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), gs))
+	assert.Equal(t, agonesv1.GameServerStateReady, gs.Status.State)
+	assert.Equal(t, "192.0.2.1", gs.Status.Address)
+	assert.Equal(t, []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "192.0.2.1"}}, gs.Status.Addresses)
+	assert.Equal(t, []agonesv1.GameServerStatusPort{{Name: "default", Port: 7654}}, gs.Status.Ports)
+	assert.Empty(t, gs.Status.NodeName, "no node runs it")
+}
 
-	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "metadata.annotations[agones.dev/dev-address]:")
+func TestADevelopmentGameServerHasNoLogHere(t *testing.T) {
+	h := newServer(t)
+	require.Equal(t, http.StatusCreated, call(t, h, http.MethodPost, gameServersPath, developmentGameServer(t)).Code)
+
+	rec := call(t, h, http.MethodGet, gameServersPath+"/simple/logs", "")
+
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Contains(t, rec.Body.String(), "runs on the developer's machine")
+}
+
+// What upstream asks of a development GameServer, and what it refuses for
+// any Fleet in scrim: a Fleet would have every replica stand for the same
+// game.
+func TestWhatADevelopmentGameServerMustBe(t *testing.T) {
+	tests := map[string]struct {
+		method, path, body, field string
+	}{
+		"its address is an IP address": {
+			http.MethodPost, gameServersPath, replace(t, developmentGameServer(t), "192.0.2.1", "dev.example.com"),
+			"metadata.annotations.agones.dev/dev-address: Invalid value", // upstream's own path
+		},
+		"its ports are Static": {
+			http.MethodPost, gameServersPath, replace(t, developmentGameServer(t), "      portPolicy: Static\n      hostPort: 7654\n", ""),
+			"spec.ports[0].hostPort",
+		},
+		"it is not made by a Fleet": {
+			http.MethodPut, fleetPath, replace(t, fleetManifest, "  template:\n", "  template:\n    metadata:\n      annotations: {agones.dev/dev-address: 192.0.2.1}\n"),
+			"spec.template.metadata.annotations[agones.dev/dev-address]",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			rec := call(t, newServer(t), tc.method, tc.path, tc.body)
+
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), tc.field)
+		})
+	}
 }
 
 // developmentGameServer is a GameServer for local development, as

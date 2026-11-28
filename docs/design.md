@@ -603,6 +603,27 @@ GameServerSet に属するものは、GameServerSet の制御が消して作り�
 制御のループの判断は、「コントロールプレーン自身が次に報告する出来事」を返す関数になっている。
 配置、Ready の許可、削除の要求、待つのをやめること、のどれか、または何もしないことである。
 
+### 開発用の GameServer
+
+注釈 `agones.dev/dev-address` を付けた GameServer は、開発者の手元で動かしているゲームを登録するためのものである。
+本家と同じく、何も起動せず、注釈のアドレスと Static ポートの番号で Ready にする（`pkg/gameservers/development.go`）。
+ゲームを手元で作り直しながら、マッチメイカからの割り当てを試せる。
+
+受け付けの検証は本家と同じで、アドレスが IP アドレスであることと、どのポートも Static で `hostPort` を書いていることを求め、Pod の定義は見ない。
+受け付けたときに Ready にするので、本家と違って Creating を経ない。
+本家はアドレスを `status.nodeName` にも書くが、scrim では空のままにする。
+エージェントとノードの制御は、ノードの名前で自分の担当を決めるので、存在しないノードの名前を書くと、なくなったノードの GameServer として扱われるからである。
+
+ノードに置かないので、エージェントは担当として見ず、ヘルス判定もしない。
+配置を待つ GameServer からは外し、削除を求められたら、撤去するコンテナがないのですぐに記録を消す。
+割り当てでは、ノードのない Ready と Allocated の GameServer を 1 つのノードのように数えて候補にする。
+ノードのない GameServer が Ready になるのは開発用のものだけなので、ほかの GameServer は混ざらない。
+
+Fleet のテンプレートにこの注釈を付けることは断る。
+どのレプリカも、同じアドレスとポートで、同じ 1 つのゲームを指すことになるからである。
+手元のゲームから SDK でこの GameServer を操作する方法（本家の「out of cluster dev server」）はない。
+手元のゲームは、本家の SDK サーバをローカルモード（`--local`）で動かし、それにつなぐ。
+
 ### 本家と異なる点
 
 状態と遷移は本家と同じだが、遷移のきっかけには次の違いがある。
@@ -634,7 +655,7 @@ GameServer の制御は、ノードのない GameServer を 1 回の処理でま
 - 配置済みの GameServer の `requests` の合計にこの GameServer の分を足すと、CPU かメモリの容量を超えるノード
 - 配置済みの台数が `maxGameServers` に達しているノード
 - Static ポリシーで指定されたポートがすでに使われているノード
-- Dynamic と Passthrough のポートに必要な数の空きが、ポート範囲に残っていないノード
+- Dynamic と Passthrough のポートが名指すポート範囲を持たないノードと、その範囲に必要な数の空きが残っていないノード
 
 次に、残ったノードから `spec.scheduling` に従って 1 つ選ぶ。
 **Packed** ならゲームサーバが最も多いノードを、**Distributed** なら最も少ないノードを選ぶ。
@@ -651,11 +672,27 @@ GameServer の制御は、ノードのない GameServer を 1 回の処理でま
 | ポリシー | 割り当て |
 |---|---|
 | Static | 定義に書かれた `hostPort` をそのまま使う |
-| Dynamic | ノードのポート範囲から空きを選んで `hostPort` にする |
+| Dynamic | ポートが名指すポート範囲から空きを選んで `hostPort` にする |
 | Passthrough | 空きを選び、`hostPort` と `containerPort` の両方に同じ値を使う |
 | None | 公開しない。`status.ports` には `containerPort` を載せる |
 
 `protocol` が TCPUDP のポートは、本家と同じく TCP 用と UDP 用の 2 つに展開する（`pkg/portallocator/portallocator.go`）。
+
+ポートは、本家と同じく、空きを選ぶ範囲を `range` で名指せる。
+書かなければ、既定の範囲（`default`）から選ぶ。
+既定の範囲は `--min-port` と `--max-port` で、ほかの範囲は `--additional-port-ranges` で、ノードごとに決める。
+`--additional-port-ranges` の値は、本家のコントローラの同じ名前のフラグと同じ JSON（`{"game": [5000, 6000]}`）である。
+本家はこの設定をクラスタに 1 つ持つが、scrim はノードごとに持つ。
+既定の範囲をノードごとに決めるのと同じく、マシンごとに防火壁の設定が違ってもよいようにするためである。
+
+1 つのノードの範囲は互いに重なってはならず、重なる設定ではエージェントが起動しない。
+割り当ては範囲を名前の順に 1 つずつ選び、前の範囲で選んだポートを、次の範囲では GameServer 自身の Static ポートと同じく使用中として扱う。
+範囲が重なっていると、先に選んだ範囲が後の範囲の空きを使ってしまい、別の順で選べば置けた GameServer を断ることがある。
+重ならなければ、どの範囲の選び方もほかの範囲に影響しない。
+
+どのノードも持たない範囲を名指す GameServer は、その範囲を持つノードが現れるまで待ち、待つ理由をイベントで伝える（`no node has the port range "game"`）。
+受け付けの時点では断らない。
+あとから参加するノードが、その範囲を持つかもしれないからである。
 
 どのポートが使用中かは、どこにも保存しない。
 配置済みの GameServer の `status.nodeName` と、各ポートの `hostPort` から、そのつど計算する。
@@ -728,6 +765,8 @@ GameServer 1 台は、次のコンテナの組として動く。
 Kubernetes の Pod と同じ構造である。
 
 ゲームコンテナには、本家と同じ環境変数 `AGONES_SDK_GRPC_PORT` と `AGONES_SDK_HTTP_PORT` を渡す。
+sidecar には、`spec.sdkServer.logLevel` を本家と同じ環境変数 `LOG_LEVEL` で渡す。
+Debug にすると、本家と同じく、SDK の呼び出しを 1 件ずつ記録する。
 
 コンテナには次のラベルを付ける。
 エージェントは、ラベルを頼りに自分が管理するコンテナを見分ける。
@@ -1232,7 +1271,7 @@ bufferSize: 90
 
 | 操作 | 内容 |
 |---|---|
-| Register | ノードの名前、公開アドレス、容量、ポート範囲を知らせる。10 秒ごとに繰り返し、生存の合図を兼ねる |
+| Register | ノードの名前、公開アドレス、容量、ポートの範囲を知らせる。10 秒ごとに繰り返し、生存の合図を兼ねる |
 | Watch | そのノードが担当する GameServer を受け取る。最初に全件、続いて変更のたびに差分が届く |
 | Report | GameServer に起きた出来事を報告する。対象の `uid` と、あれば原因の説明を添える |
 | SetMetadata | SDK で付けられたラベルとアノテーションを伝える |
@@ -1373,6 +1412,7 @@ drain 中のノードを cordon すると、drain は止まり、新規の配置
 | `PUT /v1/namespaces/{ns}/{resource}/{name}` | 作成または更新。`resourceVersion` があれば一致を確かめる |
 | `DELETE /v1/namespaces/{ns}/{resource}/{name}` | 削除 |
 | `PUT /v1/namespaces/{ns}/fleets/{name}/scale` | Fleet の台数だけを変える |
+| `PATCH /v1/namespaces/{ns}/gameservers/{name}` | GameServer のラベルと注釈だけを変える。本文は JSON Merge Patch（RFC 7386）で、値を書いたキーを設定し、null のキーを消す |
 | `GET /v1/namespaces/{ns}/gameservers/{name}/logs` | コンテナのログ。`follow`、`tail`、`container` を指定できる |
 | `GET /v1/namespaces/{ns}/events` | イベント履歴。`kind` と `name` で対象を選ぶ |
 | `GET /v1/nodes`、`GET /v1/nodes/{name}` | ノードの一覧と取得 |
@@ -1385,10 +1425,16 @@ drain 中のノードを cordon すると、drain は止まり、新規の配置
 
 | 種類 | 作成と削除 | 更新 |
 |---|---|---|
-| GameServer | できる | できない |
+| GameServer | できる | ラベルと注釈だけ（`PATCH`） |
 | GameServerSet | できない（Fleet の制御が作る） | できない |
 | Fleet | できる | できる |
 | FleetAutoscaler | できる | できる |
+
+GameServer の spec は、コンテナを作った元なので変えない。
+status は制御が書く。
+ラベルと注釈は、本家の利用者が `kubectl label` と `kubectl annotate` で変えるものなので、その 2 つと同じ働きの `PATCH` を用意した。
+書いていないキーは残すので、ゲームサーバが SDK で付けたラベルと注釈も残る。
+`scrim/` で始まる注釈は、scrim がゲームサーバの要求と割り当てを記録するのに使っているので、変えられない。
 
 未対応の項目を無視した場合は、応答の `Warning` ヘッダに警告を載せる。
 CLI はそれを表示する。
@@ -1479,6 +1525,8 @@ scrim get KIND [NAME] -o json|yaml  API が持つままの形で表示する (-w
 scrim describe KIND NAME            1 件の内容とイベント履歴を表示する
 scrim delete KIND NAME              削除する
 scrim scale fleet NAME --replicas N Fleet の台数を変える
+scrim label gs NAME KEY=VALUE KEY-  GameServer のラベルを設定し、消す
+scrim annotate gs NAME KEY=VALUE    GameServer の注釈を設定し、消す (KEY- で消す)
 scrim logs GAMESERVER               コンテナのログを表示する (-c, -f, --tail)
 scrim allocate --fleet NAME         Allocation を 1 回試す (-f で要求を指定)
 scrim buffer --rate N --startup D   Buffer ポリシーの bufferSize を求める
@@ -1608,6 +1656,8 @@ max-port: 8000
 | `--node-lost-allocated-grace` | 24 時間 | 同じく、割り当て済みのゲームサーバを待つ時間 |
 | `--address` | `127.0.0.1` | プレイヤーがこのノードのゲームサーバに接続するアドレス |
 | `--max-gameservers` | 0（制限なし） | このノードに置く台数の上限 |
+| `--min-port`、`--max-port` | 7000、8000 | ゲームサーバに配るホストのポートの既定の範囲 |
+| `--additional-port-ranges` | なし | ポートが `range` で名指せるほかの範囲。`{"game": [5000, 6000]}` の形で書く |
 | `--docker-host` | `$DOCKER_HOST`、なければ標準のソケット | Docker の接続先 |
 
 ## パッケージ構成
@@ -2070,14 +2120,13 @@ sidecar とエージェントの間は Unix ソケットなので、開けるも
 設計のうち、次の部分はまだ入っていない。
 
 - Node の変更は購読できない。`get nodes -w` は使えない。
-- GameServer の更新。作成と削除だけができる。
+- GameServer は、ラベルと注釈しか変えられない。spec を変えるには、作り直す。
 - エージェントは Docker のイベントを購読していない。2 秒ごとの確認と、担当の変更通知で動く。
 - コンテナの作成に失敗すると、原因を問わず GameServer を Error にする。イメージの取得に一時的に失敗した場合の再試行はしない。
 - ホストのポートを別のプロセスが使っていても、ポートの割り当ては気付かない。その番号を配られた GameServer は Error になり、作り直しでも同じ番号が配られる。原因はイベント履歴に出る。ゲームサーバ用のポート範囲は、ほかの用途と重ならないように決める必要がある。
 - ノードの容量の自動検出。CPU とメモリの容量は、設定しなければ制限なしとして扱う。
 - sidecar が止まると、その GameServer は Allocated でも Unhealthy になる。
 - 終了した GameServer のログは読めない。コンテナは GameServer と一緒に撤去する。
-- `spec.sdkServer.logLevel` は受け付けるが、sidecar のログの量は変わらない。
 - 資格情報ヘルパ（`credsStore`）を使うレジストリからは、イメージを取得できない。
 - `priorities` を指定した Distributed の割り当てと、条件に合う GameServer が少ない Distributed の割り当ては、同じ namespace の全 GameServer を見る。1 万台では 1 件あたり数ミリ秒かかる。
 - 要求のキー（`scrim/allocation-key`）は、マッチメイカが自分で付ける。付けない要求の再試行は、従来どおり別の 1 台を取る。

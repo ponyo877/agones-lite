@@ -142,3 +142,31 @@ func TestPlaceTreatsZeroCapacityAsUnlimited(t *testing.T) {
 	_, ok := Place(server("new", "", "64"), []*scrimv1.Node{node("n1")}, nil)
 	assert.True(t, ok)
 }
+
+// A node takes a GameServer only if it has every range the GameServer's
+// ports name. One that names a range no node has is told so.
+func TestAPortThatNamesARangeGoesToANodeWithThatRange(t *testing.T) {
+	plain := node("n1")
+	withGame := node("n2", func(n *scrimv1.Node) {
+		n.Status.PortRanges = map[string]scrimv1.PortRange{"game": {Min: 5000, Max: 5009}}
+	})
+	gs := server("new", "", "")
+	gs.Spec.Scheduling = apis.Packed
+	gs.Spec.Ports[0].Range = "game"
+	room := RoomOn([]*scrimv1.Node{plain, withGame}, []*agonesv1.GameServer{server("a", "n1", "")})
+
+	placed, ok := room.Place(gs)
+
+	require.True(t, ok)
+	assert.Equal(t, "n2", placed.Status.NodeName, "though Packed prefers the fuller n1")
+	assert.Equal(t, int32(5000), placed.Spec.Ports[0].HostPort)
+	_, missing := room.Missing(gs)
+	assert.False(t, missing)
+
+	gs.Spec.Ports[0].Range = "query"
+	_, ok = room.Place(gs)
+	assert.False(t, ok)
+	name, missing := room.Missing(gs)
+	assert.True(t, missing)
+	assert.Equal(t, "query", name)
+}

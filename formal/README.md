@@ -39,6 +39,13 @@ Lean の価値は、証明が通らない箇所にある。
 - `pickFree_complete`：失敗するのは、範囲に空きが足りないときだけである。
 - `allocate_distinct`：割り当ての後、1 つの GameServer のポートは互いに重ならず、他の GameServer のポートとも重ならない。
 
+モデルが扱う範囲は 1 つである。
+ポートが別々の範囲を名指すときは、Go の実装が範囲を 1 つずつ順に選び、前の範囲で選んだポートを、次の範囲では GameServer 自身の Static ポートとして扱う。
+各回は 1 つの範囲の `allocate` そのものなので、`allocate_distinct` が回ごとに成り立つ。
+その前提（Static ポートが互いに重ならない）は、前の回の結論が与える。
+この帰納法は Lean には書いていない。
+複数の範囲での結論は、`pkg/portallocator` の性質テストが確かめている。
+
 見つけたこと：
 
 - `allocateBeforeTheFix_reuses_a_static_port`：以前の実装は、GameServer 自身の Static ポートを知らずに残りを選んでいた。Static ポートがノードの範囲の中にあると、同じ番号がもう一度配られる。Docker はこのコンテナを起動できない。

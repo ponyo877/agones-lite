@@ -65,11 +65,25 @@ func fill(fs *flag.FlagSet, name string, value any, given bool) error {
 	if given || value == nil {
 		return nil
 	}
+	if object, isMap := value.(map[string]any); isMap && takesJSONObject(fs.Lookup(name)) {
+		text, err := json.Marshal(object)
+		if err != nil {
+			return err
+		}
+		return fs.Set(name, string(text))
+	}
 	text, err := typed(value)
 	if err != nil {
 		return err
 	}
 	return fs.Set(name, text)
+}
+
+// takesJSONObject reports whether a flag's value is a JSON object, which a
+// map of the file is then given to it as.
+func takesJSONObject(f *flag.Flag) bool {
+	_, takes := f.Value.(interface{ takesJSONObject() })
+	return takes
 }
 
 // digitByDigit has the numbers of the file kept as they are written. Read

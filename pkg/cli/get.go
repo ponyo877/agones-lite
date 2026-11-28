@@ -7,8 +7,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -273,10 +275,21 @@ func listFleetAutoscalers(ctx context.Context, c client, namespace string, watch
 
 func listNodes(ctx context.Context, c client, out io.Writer) error {
 	row := func(n scrimv1.Node) string {
-		return fmt.Sprintf("%s\t%s\t%s\t%d-%d\t%s",
-			n.Name, nodeStatus(n), n.Status.Address, n.Status.PortRange.Min, n.Status.PortRange.Max, age(n.CreationTimestamp.Time))
+		return fmt.Sprintf("%s\t%s\t%s\t%s\t%s",
+			n.Name, nodeStatus(n), n.Status.Address, nodePorts(n.Status), age(n.CreationTimestamp.Time))
 	}
 	return table(ctx, c, "/v1/nodes", "NAME\tSTATUS\tADDRESS\tPORTS\tAGE", row, false, out)
+}
+
+// nodePorts shows a node's ranges of host ports: the default one, then the
+// others by name.
+func nodePorts(s scrimv1.NodeStatus) string {
+	ports := fmt.Sprintf("%d-%d", s.PortRange.Min, s.PortRange.Max)
+	for _, name := range slices.Sorted(maps.Keys(s.PortRanges)) {
+		r := s.PortRanges[name]
+		ports += fmt.Sprintf(",%s=%d-%d", name, r.Min, r.Max)
+	}
+	return ports
 }
 
 // nodeStatus shows whether a node is connected and whether it takes new

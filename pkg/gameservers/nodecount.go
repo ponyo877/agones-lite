@@ -72,6 +72,17 @@ func CountOnNodes(servers store.Typed[*agonesv1.GameServer]) map[string]NodeCoun
 	return counts
 }
 
+// CountWithoutNode counts the Ready and Allocated GameServers that are on
+// no node. Only a development GameServer is ever one of them: any other is
+// placed before it can be Ready.
+func CountWithoutNode(servers store.Typed[*agonesv1.GameServer]) (NodeCount, bool) {
+	count := NodeCount{
+		Ready:     int64(len(OnNodeIn(servers, "", agonesv1.GameServerStateReady))),
+		Allocated: int64(len(OnNodeIn(servers, "", agonesv1.GameServerStateAllocated))),
+	}
+	return count, count != NodeCount{}
+}
+
 // OnNodeIn returns the GameServers on a node that are in a state. Like
 // View it does not copy: read them, never change them.
 func OnNodeIn(servers store.Typed[*agonesv1.GameServer], node string, state agonesv1.GameServerState) []*agonesv1.GameServer {

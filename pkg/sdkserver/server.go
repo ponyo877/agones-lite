@@ -87,7 +87,7 @@ func (s *Server) Run(ctx context.Context, grpcPort, httpPort int) error {
 	if err != nil {
 		return err
 	}
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(logCall), grpc.StreamInterceptor(logStream))
 	sdk.RegisterSDKServer(grpcServer, s)
 	sdkbeta.RegisterSDKServer(grpcServer, beta{server: s})
 	sdkalpha.RegisterSDKServer(grpcServer, alpha{})

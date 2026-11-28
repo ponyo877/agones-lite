@@ -116,9 +116,6 @@ func gameServerPortSchema(p agonesv1.GameServerPort, at *field.Path) field.Error
 		portNumber(p.ContainerPort, at.Child("containerPort")),
 		portNumber(p.HostPort, at.Child("hostPort")),
 		staticHostPort(p, at.Child("hostPort")),
-		// The schema takes any name. Upstream then looks the name up among
-		// the port ranges of its installation; here a node has one range.
-		oneOf(p.Range, at.Child("range"), agonesv1.DefaultPortRange),
 	)
 }
 

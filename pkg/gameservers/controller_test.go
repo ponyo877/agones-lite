@@ -52,11 +52,14 @@ func (f fixture) addNode() {
 }
 
 // addServer creates the GameServer the way the API does: defaults first.
-func (f fixture) addServer() {
+func (f fixture) addServer(change ...func(*agonesv1.GameServer)) {
 	f.t.Helper()
 	gs := &agonesv1.GameServer{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "gs"}}
 	gs.Spec.Ports = []agonesv1.GameServerPort{{Name: "game", ContainerPort: 7654}}
 	gs.Spec.Template.Spec.Containers = []corev1.Container{{Name: "game", Image: "example/game"}}
+	for _, fn := range change {
+		fn(gs)
+	}
 	gs.ApplyDefaults()
 	_, err := f.servers.Create(gs)
 	require.NoError(f.t, err)
@@ -184,6 +187,54 @@ func TestWaitsForANodeWithRoom(t *testing.T) {
 	f.addNode()
 	f.sync()
 	assert.Equal(t, "node-1", f.server().Status.NodeName)
+}
+
+// A GameServer whose port names a range no node has is told which range it
+// waits for, and goes to the first node that has it.
+func TestWaitsForANodeWithTheRangeItsPortNames(t *testing.T) {
+	f := newFixture(t)
+	latest := f.history()
+	f.addNode()
+	f.addServer(func(gs *agonesv1.GameServer) { gs.Spec.Ports[0].Range = "game" })
+
+	f.sync()
+	assert.Empty(t, f.server().Status.NodeName)
+	assert.Equal(t, `no node has the port range "game"; waiting for one`, latest())
+
+	_, err := f.nodes.Create(&scrimv1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "node-2"},
+		Status: scrimv1.NodeStatus{
+			Phase:      scrimv1.NodeReady,
+			PortRange:  scrimv1.PortRange{Min: 7000, Max: 8000},
+			PortRanges: map[string]scrimv1.PortRange{"game": {Min: 5000, Max: 5000}},
+		},
+	})
+	require.NoError(t, err)
+	f.sync()
+	assert.Equal(t, "node-2", f.server().Status.NodeName)
+	assert.Equal(t, int32(5000), f.server().Spec.Ports[0].HostPort)
+}
+
+// A development GameServer is registered Ready, as admission does it, and
+// then left alone: it is not placed, though a node has room, and once
+// deleted it is gone at once, since nothing was run for it.
+func TestADevelopmentGameServerIsNotPlacedAndGoesWhenDeleted(t *testing.T) {
+	f := newFixture(t)
+	f.addNode()
+	f.addServer(func(gs *agonesv1.GameServer) {
+		gs.Annotations = map[string]string{agonesv1.DevAddressAnnotation: "192.0.2.1"}
+		gs.Spec.Ports[0].PortPolicy, gs.Spec.Ports[0].HostPort = agonesv1.Static, 7654
+		Register(gs, "192.0.2.1")
+	})
+
+	f.sync()
+	assert.Equal(t, agonesv1.GameServerStateReady, f.server().Status.State)
+	assert.Empty(t, f.server().Status.NodeName)
+
+	require.NoError(t, f.Delete("default", "gs"))
+	f.sync()
+	_, ok := f.servers.Get("default", "gs")
+	assert.False(t, ok)
 }
 
 func TestShutdownRemovesTheGameServer(t *testing.T) {

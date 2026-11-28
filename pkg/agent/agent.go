@@ -77,6 +77,7 @@ type Config struct {
 	// Address is where players reach game servers on this node.
 	Address        string
 	PortRange      scrimv1.PortRange
+	PortRanges     map[string]scrimv1.PortRange
 	MaxGameServers int32
 	Capacity       scrimv1.Resources
 
@@ -155,6 +156,7 @@ func (a *Agent) node() *scrimv1.Node {
 		Capacity:       a.cfg.Capacity,
 		MaxGameServers: a.cfg.MaxGameServers,
 		PortRange:      a.cfg.PortRange,
+		PortRanges:     a.cfg.PortRanges,
 		Version:        version.Version,
 	}
 	return node

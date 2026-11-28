@@ -13,6 +13,11 @@ import (
 
 var ports7000to7002 = scrimv1.PortRange{Min: 7000, Max: 7002}
 
+// only is a node's ranges when it has just the default one.
+func only(r scrimv1.PortRange) map[string]scrimv1.PortRange {
+	return map[string]scrimv1.PortRange{agonesv1.DefaultPortRange: r}
+}
+
 func server(ports ...agonesv1.GameServerPort) *agonesv1.GameServer {
 	return &agonesv1.GameServer{Spec: agonesv1.GameServerSpec{Ports: ports}}
 }
@@ -79,7 +84,7 @@ func TestAllocate(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			assert.Equal(t, tc.ok, Allocate(tc.gs, ports7000to7002, tc.used))
+			assert.Equal(t, tc.ok, Allocate(tc.gs, only(ports7000to7002), tc.used))
 			var host, contain []int32
 			for _, p := range tc.gs.Spec.Ports {
 				host = append(host, p.HostPort)
@@ -94,7 +99,7 @@ func TestAllocate(t *testing.T) {
 func TestTCPUDPBecomesTwoPortsOnOneHostPort(t *testing.T) {
 	gs := server(port(agonesv1.Dynamic, agonesv1.ProtocolTCPUDP))
 
-	assert.True(t, Allocate(gs, ports7000to7002, nil))
+	assert.True(t, Allocate(gs, only(ports7000to7002), nil))
 
 	assert.Len(t, gs.Spec.Ports, 2)
 	tcp, udp := gs.Spec.Ports[0], gs.Spec.Ports[1]
@@ -108,8 +113,8 @@ func TestTCPUDPBecomesTwoPortsOnOneHostPort(t *testing.T) {
 func TestUsedCountsATCPUDPPortOnce(t *testing.T) {
 	a := server(port(agonesv1.Dynamic, agonesv1.ProtocolTCPUDP))
 	b := server(port(agonesv1.Dynamic, corev1.ProtocolUDP), port(agonesv1.None, corev1.ProtocolUDP))
-	assert.True(t, Allocate(a, ports7000to7002, nil))
-	assert.True(t, Allocate(b, ports7000to7002, Used([]*agonesv1.GameServer{a})))
+	assert.True(t, Allocate(a, only(ports7000to7002), nil))
+	assert.True(t, Allocate(b, only(ports7000to7002), Used([]*agonesv1.GameServer{a})))
 
 	assert.Equal(t, map[int32]bool{7000: true, 7001: true}, Used([]*agonesv1.GameServer{a, b}))
 	// Removing a frees exactly its own port.
@@ -124,9 +129,41 @@ func TestARangeThatEndsWhereInt32DoesHasNoPortsBeyondIt(t *testing.T) {
 	dynamic := port(agonesv1.Dynamic, corev1.ProtocolUDP)
 
 	two := server(dynamic, dynamic)
-	assert.True(t, Allocate(two, lastTwo, nil))
+	assert.True(t, Allocate(two, only(lastTwo), nil))
 	assert.Equal(t, []int32{math.MaxInt32 - 1, math.MaxInt32}, []int32{two.Spec.Ports[0].HostPort, two.Spec.Ports[1].HostPort})
 
 	three := server(dynamic, dynamic, dynamic)
-	assert.False(t, Allocate(three, lastTwo, nil), "the range has two ports")
+	assert.False(t, Allocate(three, only(lastTwo), nil), "the range has two ports")
+}
+
+// Each port takes its host port from the range it names, as with upstream's
+// additional port ranges.
+func TestAPortTakesItsHostPortFromTheRangeItNames(t *testing.T) {
+	game := port(agonesv1.Dynamic, corev1.ProtocolUDP)
+	game.Range = "game"
+	query := port(agonesv1.Passthrough, corev1.ProtocolTCP)
+	query.Range = "query"
+	gs := server(port(agonesv1.Dynamic, corev1.ProtocolUDP), game, query, game)
+	ranges := map[string]scrimv1.PortRange{
+		agonesv1.DefaultPortRange: ports7000to7002,
+		"game":                    {Min: 5000, Max: 5009},
+		"query":                   {Min: 6000, Max: 6009},
+	}
+
+	assert.True(t, Allocate(gs, ranges, map[int32]bool{5000: true}))
+
+	assert.Equal(t, []int32{7000, 5001, 6000, 5002}, hostPorts(gs))
+	assert.Equal(t, int32(6000), gs.Spec.Ports[2].ContainerPort, "Passthrough")
+	assert.Equal(t, map[string]int32{"default": 7000, "game": 5002, "query": 6000}, Highest(gs))
+}
+
+func TestAPortThatNamesARangeTheNodeHasNotIsNotGivenOne(t *testing.T) {
+	game := port(agonesv1.Dynamic, corev1.ProtocolUDP)
+	game.Range = "game"
+	gs := server(port(agonesv1.Dynamic, corev1.ProtocolUDP), game)
+	before := gs.DeepCopy()
+
+	assert.False(t, Allocate(gs, only(ports7000to7002), nil))
+	assert.Equal(t, before, gs)
+	assert.Equal(t, []string{"default", "game"}, Named(gs))
 }
