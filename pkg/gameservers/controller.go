@@ -260,11 +260,12 @@ func (c *Controller) placeWaiting() error {
 
 // waitingForANode returns those of the GameServers without a node that
 // are to be placed, by how long they have waited, and by name where that
-// does not tell them apart.
+// does not tell them apart. A development GameServer is never placed: its
+// game runs on a developer's machine.
 func waitingForANode(unplaced []*agonesv1.GameServer) []*agonesv1.GameServer {
 	var waiting []*agonesv1.GameServer
 	for _, gs := range unplaced {
-		if decide(gs, false) == Placed {
+		if _, development := Development(gs); !development && decide(gs, false) == Placed {
 			waiting = append(waiting, gs)
 		}
 	}

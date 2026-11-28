@@ -36,6 +36,7 @@ import (
 	"github.com/ponyo877/scrim/pkg/agent"
 	scrimv1 "github.com/ponyo877/scrim/pkg/apis/scrim/v1"
 	"github.com/ponyo877/scrim/pkg/events"
+	"github.com/ponyo877/scrim/pkg/gameservers"
 	"github.com/ponyo877/scrim/pkg/podspec"
 	"github.com/ponyo877/scrim/pkg/store"
 )
@@ -222,10 +223,17 @@ func (s *Server) hasLog(req agent.LogRequest) error {
 		return store.ErrNotFound
 	case req.Container != "" && !hasContainer(gs, req.Container):
 		return fmt.Errorf("container %q: %w", req.Container, store.ErrNotFound)
+	case isDevelopment(gs):
+		return fmt.Errorf("a development game server runs on the developer's machine, not under scrim: %w", agent.ErrNoLog)
 	case gs.Status.NodeName == "":
 		return notYet{errors.New("the game server is not on a node yet, so it has no log")}
 	}
 	return nil
+}
+
+func isDevelopment(gs *agonesv1.GameServer) bool {
+	_, development := gameservers.Development(gs)
+	return development
 }
 
 // hasContainer reports whether gs runs a container of that name: one of

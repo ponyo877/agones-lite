@@ -83,8 +83,15 @@ refused with its path and `not supported by scrim`.
 - **Static ports** must give their `hostPort`. Two Static ports on the same
   host port and protocol are refused when the manifest is applied; on
   Kubernetes it is the Pod that fails later.
-- **Development GameServers** (the `agones.dev/dev-address` annotation) are
-  refused. scrim would run them in a container like any other.
+- **Development GameServers** (the `agones.dev/dev-address` annotation)
+  are registered as in Agones: nothing is run, and the GameServer is Ready
+  at the address of the annotation, on its Static ports, to be allocated
+  like any other. Unlike Agones, it is Ready as soon as it is created,
+  without passing through Creating, and its `status.nodeName` stays empty,
+  since no machine runs it. A Fleet whose template has the annotation is
+  refused. There is no out-of-cluster SDK server: the game on the
+  developer's machine talks to the Agones SDK server in local mode
+  (`--local`).
 - **FleetAutoscaler.** The Buffer, Counter, List, Webhook, Schedule and Chain
   policies work. Wasm does not. A Webhook needs a `url` (there are no
   Kubernetes Services to name), and it must be an http or https URL. A

@@ -261,7 +261,9 @@ func (s *Service) find(gsa *allocationv1.GameServerAllocation) (*agonesv1.GameSe
 
 // open returns how full each node is that players can be sent to. A node
 // that is cordoned, cut off or gone is not in it, and neither is one
-// without a Ready or Allocated GameServer.
+// without a Ready or Allocated GameServer. The development GameServers,
+// whose games run on developers' machines, are on no node, and are
+// counted under the empty name.
 func (s *Service) open() map[string]gameservers.NodeCount {
 	all := gameservers.CountOnNodes(s.servers)
 	counts := map[string]gameservers.NodeCount{}
@@ -269,6 +271,9 @@ func (s *Service) open() map[string]gameservers.NodeCount {
 		if count, counted := all[node.Name]; counted && node.Schedulable() {
 			counts[node.Name] = count
 		}
+	}
+	if count, counted := gameservers.CountWithoutNode(s.servers); counted {
+		counts[""] = count
 	}
 	return counts
 }

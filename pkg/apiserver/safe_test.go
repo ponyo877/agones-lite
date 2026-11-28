@@ -65,6 +65,9 @@ func safe(t *testing.T, api *Server, obj store.Object) {
 func gameServersMadeOf(obj store.Object) []*agonesv1.GameServer {
 	switch obj := obj.(type) {
 	case *agonesv1.GameServer:
+		if _, development := obj.GetDevAddress(); development {
+			return nil // nothing is run for it: the game is on a developer's machine
+		}
 		gs := obj.DeepCopy()
 		gs.Name = storedName(gs)
 		return []*agonesv1.GameServer{gs}

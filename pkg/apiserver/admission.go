@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	"github.com/ponyo877/scrim/pkg/agones"
+	"github.com/ponyo877/scrim/pkg/gameservers"
 	"github.com/ponyo877/scrim/pkg/podspec"
 )
 
@@ -32,10 +33,17 @@ func admitGameServer(gs *agonesv1.GameServer) (warnings []string, errs field.Err
 	// run again when what was admitted is applied again.
 	gs.Finalizers = withoutRepeats(gs.Finalizers)
 	errs = slices.Concat(
-		notForDevelopment(gs.Annotations, field.NewPath("metadata", "annotations")),
 		gameServerSpecSchema(&gs.Spec, spec),
 		gs.Validate(agones.NoHooks{}),
 	)
+	if address, development := gameservers.Development(gs); development {
+		// Nothing is run for it, so its Pod definition is not looked at:
+		// upstream's validation skips it as well.
+		if len(errs) == 0 {
+			gameservers.Register(gs, address)
+		}
+		return warnings, errs
+	}
 	ignored, unsupported := podspec.Check(&gs.Spec, spec)
 	return append(warnings, ignored...), append(errs, unsupported...)
 }
@@ -60,16 +68,15 @@ func admitFleet(fleet *agonesv1.Fleet) (warnings []string, errs field.ErrorList)
 	return append(warnings, ignored...), append(errs, unsupported...)
 }
 
-// notForDevelopment refuses the annotation that makes a GameServer one for
-// local development. Upstream registers such a GameServer without running
-// anything, the game being a process on the developer's machine, and skips
-// most of its validation for it. Here it would be run in a container like
-// any other, unchecked.
+// notForDevelopment refuses a Fleet that would make development
+// GameServers. Each of them stands for one game on one developer's
+// machine, at the address and ports its manifest gives, so a Fleet of them
+// would have every replica stand for the same game.
 func notForDevelopment(annotations map[string]string, at *field.Path) field.ErrorList {
 	if _, development := annotations[agonesv1.DevAddressAnnotation]; !development {
 		return nil
 	}
-	return field.ErrorList{field.Forbidden(at.Key(agonesv1.DevAddressAnnotation), "development GameServers are not supported by scrim")}
+	return field.ErrorList{field.Forbidden(at.Key(agonesv1.DevAddressAnnotation), "a development GameServer is created by itself, not by a Fleet")}
 }
 
 // withoutRepeats keeps the first of every value, in order.

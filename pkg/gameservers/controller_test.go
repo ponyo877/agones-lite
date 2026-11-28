@@ -215,6 +215,28 @@ func TestWaitsForANodeWithTheRangeItsPortNames(t *testing.T) {
 	assert.Equal(t, int32(5000), f.server().Spec.Ports[0].HostPort)
 }
 
+// A development GameServer is registered Ready, as admission does it, and
+// then left alone: it is not placed, though a node has room, and once
+// deleted it is gone at once, since nothing was run for it.
+func TestADevelopmentGameServerIsNotPlacedAndGoesWhenDeleted(t *testing.T) {
+	f := newFixture(t)
+	f.addNode()
+	f.addServer(func(gs *agonesv1.GameServer) {
+		gs.Annotations = map[string]string{agonesv1.DevAddressAnnotation: "192.0.2.1"}
+		gs.Spec.Ports[0].PortPolicy, gs.Spec.Ports[0].HostPort = agonesv1.Static, 7654
+		Register(gs, "192.0.2.1")
+	})
+
+	f.sync()
+	assert.Equal(t, agonesv1.GameServerStateReady, f.server().Status.State)
+	assert.Empty(t, f.server().Status.NodeName)
+
+	require.NoError(t, f.Delete("default", "gs"))
+	f.sync()
+	_, ok := f.servers.Get("default", "gs")
+	assert.False(t, ok)
+}
+
 func TestShutdownRemovesTheGameServer(t *testing.T) {
 	f := newFixture(t)
 	f.addNode()
