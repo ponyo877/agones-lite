@@ -1,8 +1,12 @@
 name: release
 
 # Pushing a tag such as v1.0.0 builds the binaries, attaches them to a GitHub
-# release, and pushes the sidecar image with the same tag. What came out is
-# then tried the way the README says.
+# release, and pushes the sidecar image with the same tag. Each binary comes
+# with a software bill of materials, all of them with their checksums, and
+# GitHub keeps a signed record that this workflow built them from the
+# tagged commit. What came out is then tried the way the README says,
+# after the record is checked, and built again elsewhere to see that the
+# same bytes come out.
 #
 # Only what CI has checked is released: the tag must be on a commit of main
 # on which the workflow "ci" passed.
@@ -21,6 +25,10 @@ permissions:
   contents: write
   packages: write
   checks: read
+  # The signed records of where each file and the image were built.
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 
 defaults:
   run:
@@ -54,8 +62,28 @@ jobs:
       - name: Build the binaries
         run: make dist VERSION="$VERSION"
 
+      # Each binary has its own: the modules linked in differ by platform.
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        id: syft
+      - name: A bill of materials for each binary
+        run: |
+          for binary in dist/scrim-*; do
+            "$SYFT" scan "file:$binary" --output "spdx-json=$binary.spdx.json"
+          done
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+      - name: Their checksums
+        working-directory: dist
+        run: sha256sum scrim-* > checksums.txt
+      - name: A signed record of where they were built
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            dist/scrim-*
+            dist/checksums.txt
+
       - name: Attach them to the release
-        run: gh release create "$VERSION" dist/scrim-* --generate-notes
+        run: gh release create "$VERSION" dist/scrim-* dist/checksums.txt --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -66,17 +94,61 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
+      # The image carries a bill of materials and the build's provenance of
+      # its own, where image tools look for them.
       - name: Push the sidecar image for both architectures
+        id: image
         run: |
           docker buildx build --platform linux/amd64,linux/arm64 --push \
+            --sbom=true --provenance=mode=max --metadata-file image.json \
             --tag "ghcr.io/${GITHUB_REPOSITORY}-sidecar:${VERSION}" \
             --file build/sidecar/Dockerfile.release dist
+          echo "digest=$(jq -r '."containerimage.digest"' image.json)" >> "$GITHUB_OUTPUT"
+      - name: A signed record of where the image was built
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}-sidecar
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
 
   # The release, as someone who has just found it gets it: the binary from
   # the release page, and the sidecar image pulled without logging in, on a
   # machine that has seen neither. The build above was checked by CI; that
   # what was published is that build, and can be fetched, is checked here.
+  # Releases before v0.3.0 have neither checksums nor signed records, and
+  # fail here when they are tried again.
   quick-start:
+    needs: release
+    if: ${{ !cancelled() && (needs.release.result == 'success' || needs.release.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The binary of the release, checked as the README says
+        run: |
+          release="https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION"
+          curl -fsSLO "$release/scrim-linux-amd64" -O "$release/checksums.txt"
+          sha256sum --check --ignore-missing checksums.txt
+          gh attestation verify scrim-linux-amd64 --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+          gh attestation verify "oci://ghcr.io/$GITHUB_REPOSITORY-sidecar:$VERSION" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+          mv scrim-linux-amd64 scrim
+          chmod +x scrim
+          test "$(./scrim version)" = "scrim $VERSION"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: The quick start of the README
+        run: build/ci/quickstart.sh ./scrim
+
+  # The tagged commit, built again on another machine, gives the bytes that
+  # checksums.txt has: a release is a build that anyone can make and
+  # compare. Releases before v0.3.0 were not built with -trimpath, and fail
+  # here when they are tried again.
+  rebuild:
     needs: release
     if: ${{ !cancelled() && (needs.release.result == 'success' || needs.release.result == 'skipped') }}
     runs-on: ubuntu-24.04
@@ -85,10 +157,14 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: The binary of the release
+        with:
+          ref: ${{ env.VERSION }}
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: The same bytes as the release
         run: |
-          curl -fsSLo scrim "https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/scrim-linux-amd64"
-          chmod +x scrim
-          test "$(./scrim version)" = "scrim $VERSION"
-      - name: The quick start of the README
-        run: build/ci/quickstart.sh ./scrim
+          make dist VERSION="$VERSION"
+          cd dist
+          curl -fsSLO "https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/checksums.txt"
+          grep -v '\.spdx\.json$' checksums.txt | sha256sum --check
