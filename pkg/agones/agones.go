@@ -7,6 +7,7 @@
 package agones
 
 import (
+	"agones.dev/agones/pkg"
 	"agones.dev/agones/pkg/apis"
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
 	"agones.dev/agones/pkg/util/runtime"
@@ -14,11 +15,19 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
-// Setup fixes the feature gates to the Agones v1.62.0 defaults.
+// Version is the release of Agones that scrim is compatible with: the
+// version of the module in go.mod.
+const Version = "1.62.0"
+
+// Setup makes the Agones code behave as in that release.
 //
-// Upstream treats every gate as off until ParseFeatures runs, so this must be
-// called once before any Agones type is defaulted or validated.
+// Upstream treats every feature gate as off until ParseFeatures runs, so this
+// must be called once before any Agones type is defaulted or validated.
+// Defaulting also writes pkg.Version into the agones.dev/sdk-version
+// annotation of GameServers and Fleets. Upstream's builds set it with
+// -ldflags; left alone, it says "dev".
 func Setup() error {
+	pkg.Version = Version
 	return runtime.ParseFeatures("")
 }
 
