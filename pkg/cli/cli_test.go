@@ -344,3 +344,23 @@ func TestBufferAsksForARateAndAStartupTimeThatMakeSense(t *testing.T) {
 		assert.ErrorContains(t, runBuffer(context.Background(), args, io.Discard), "usage: scrim buffer", "%v", args)
 	}
 }
+
+// As with kubectl: KEY=VALUE sets, KEY- removes, and a value may hold "="
+// or end in "-".
+func TestLabelAndAnnotateTurnTheirWordsIntoAMergePatch(t *testing.T) {
+	body, err := metadataPatch("labels", []string{"mode=ranked", "old-", "query=a=b", "tail=x-"})
+
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"metadata": {"labels": {"mode": "ranked", "old": null, "query": "a=b", "tail": "x-"}}}`, string(body))
+
+	for _, word := range []string{"mode", "-", ""} {
+		_, err := metadataPatch("labels", []string{word})
+		assert.Error(t, err, "%q", word)
+	}
+}
+
+func TestOnlyAGameServerIsLabeledThisWay(t *testing.T) {
+	err := Main(context.Background(), []string{"label", "fleet", "simple", "mode=ranked"}, io.Discard)
+
+	assert.ErrorContains(t, err, "apply the manifest of a Fleet again")
+}

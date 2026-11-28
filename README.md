@@ -355,8 +355,9 @@ place and tested, but nothing has run in production yet.
 - **Development:** macOS with Colima.
 - **Known limits** are listed in the design document. The ones to know
   first: there is one control plane and it is not redundant, though game
-  servers and their sessions keep running while it is down; and a
-  `GameServer` can be created and deleted, but not updated in place.
+  servers and their sessions keep running while it is down; and of a
+  `GameServer` that exists, only the labels and annotations can be
+  changed (`scrim label`, `scrim annotate`).
 
 ## Documentation
 

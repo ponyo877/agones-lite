@@ -1375,6 +1375,7 @@ drain 中のノードを cordon すると、drain は止まり、新規の配置
 | `PUT /v1/namespaces/{ns}/{resource}/{name}` | 作成または更新。`resourceVersion` があれば一致を確かめる |
 | `DELETE /v1/namespaces/{ns}/{resource}/{name}` | 削除 |
 | `PUT /v1/namespaces/{ns}/fleets/{name}/scale` | Fleet の台数だけを変える |
+| `PATCH /v1/namespaces/{ns}/gameservers/{name}` | GameServer のラベルと注釈だけを変える。本文は JSON Merge Patch（RFC 7386）で、値を書いたキーを設定し、null のキーを消す |
 | `GET /v1/namespaces/{ns}/gameservers/{name}/logs` | コンテナのログ。`follow`、`tail`、`container` を指定できる |
 | `GET /v1/namespaces/{ns}/events` | イベント履歴。`kind` と `name` で対象を選ぶ |
 | `GET /v1/nodes`、`GET /v1/nodes/{name}` | ノードの一覧と取得 |
@@ -1387,10 +1388,16 @@ drain 中のノードを cordon すると、drain は止まり、新規の配置
 
 | 種類 | 作成と削除 | 更新 |
 |---|---|---|
-| GameServer | できる | できない |
+| GameServer | できる | ラベルと注釈だけ（`PATCH`） |
 | GameServerSet | できない（Fleet の制御が作る） | できない |
 | Fleet | できる | できる |
 | FleetAutoscaler | できる | できる |
+
+GameServer の spec は、コンテナを作った元なので変えない。
+status は制御が書く。
+ラベルと注釈は、本家の利用者が `kubectl label` と `kubectl annotate` で変えるものなので、その 2 つと同じ働きの `PATCH` を用意した。
+書いていないキーは残すので、ゲームサーバが SDK で付けたラベルと注釈も残る。
+`scrim/` で始まる注釈は、scrim がゲームサーバの要求と割り当てを記録するのに使っているので、変えられない。
 
 未対応の項目を無視した場合は、応答の `Warning` ヘッダに警告を載せる。
 CLI はそれを表示する。
@@ -1481,6 +1488,8 @@ scrim get KIND [NAME] -o json|yaml  API が持つままの形で表示する (-w
 scrim describe KIND NAME            1 件の内容とイベント履歴を表示する
 scrim delete KIND NAME              削除する
 scrim scale fleet NAME --replicas N Fleet の台数を変える
+scrim label gs NAME KEY=VALUE KEY-  GameServer のラベルを設定し、消す
+scrim annotate gs NAME KEY=VALUE    GameServer の注釈を設定し、消す (KEY- で消す)
 scrim logs GAMESERVER               コンテナのログを表示する (-c, -f, --tail)
 scrim allocate --fleet NAME         Allocation を 1 回試す (-f で要求を指定)
 scrim buffer --rate N --startup D   Buffer ポリシーの bufferSize を求める
@@ -2072,7 +2081,7 @@ sidecar とエージェントの間は Unix ソケットなので、開けるも
 設計のうち、次の部分はまだ入っていない。
 
 - Node の変更は購読できない。`get nodes -w` は使えない。
-- GameServer の更新。作成と削除だけができる。
+- GameServer は、ラベルと注釈しか変えられない。spec を変えるには、作り直す。
 - エージェントは Docker のイベントを購読していない。2 秒ごとの確認と、担当の変更通知で動く。
 - コンテナの作成に失敗すると、原因を問わず GameServer を Error にする。イメージの取得に一時的に失敗した場合の再試行はしない。
 - ホストのポートを別のプロセスが使っていても、ポートの割り当ては気付かない。その番号を配られた GameServer は Error になり、作り直しでも同じ番号が配られる。原因はイベント履歴に出る。ゲームサーバ用のポート範囲は、ほかの用途と重ならないように決める必要がある。

@@ -89,9 +89,13 @@ refused with its path and `not supported by scrim`.
 
 ### After a manifest is applied
 
-- A **GameServer** cannot be changed in place: applying it again answers
-  that it already exists. Its labels and annotations can still be set by
-  the game server, through the SDK, and by an allocation.
+- Of a **GameServer**, only the labels and annotations can be changed:
+  `scrim label` and `scrim annotate` work as `kubectl label` and `kubectl
+  annotate` do, and the API takes a JSON merge patch of them. The keys that
+  are not named stay, those the game server set through the SDK among them.
+  The annotations under `scrim/` are scrim's and cannot be changed.
+  Applying a GameServer that exists again answers that it already exists:
+  its spec is what its containers were made from.
 - A **Fleet** or a **FleetAutoscaler** applied again is replaced by the
   manifest, and keeps its status. `scrim scale fleet` changes the size of a
   Fleet.
@@ -137,7 +141,7 @@ with it.
 
 | | Agones | scrim |
 |---|---|---|
-| Tools | `kubectl`, Helm | the `scrim` CLI: `apply`, `get` (also `-w`, `-o json\|yaml`), `describe`, `delete`, `scale`, `logs`, `allocate`, `node`, `token` |
+| Tools | `kubectl`, Helm | the `scrim` CLI: `apply`, `get` (also `-w`, `-o json\|yaml`), `describe`, `delete`, `scale`, `label`, `annotate`, `logs`, `allocate`, `node`, `token` |
 | The API | the Kubernetes API | a REST API of its own under `/v1`; `kubectl` and client-go do not work with it |
 | Namespaces | Kubernetes Namespaces | any valid name; there is nothing to create first |
 | Events | Kubernetes Events | an event history of its own, kept for a day, shown by `scrim describe` |
@@ -189,5 +193,6 @@ bookkeeping. Nothing should depend on them.
    request asked again after a timeout can be given a second game server.
 4. **Images from a private registry** need `imagePullSecrets`.
 5. **Day-to-day operation** moves to `kubectl`: `scrim scale fleet` becomes
-   `kubectl scale fleet`, `scrim describe` becomes `kubectl describe`, and
-   `scrim logs` becomes `kubectl logs`.
+   `kubectl scale fleet`, `scrim label` and `scrim annotate` become
+   `kubectl label` and `kubectl annotate`, `scrim describe` becomes
+   `kubectl describe`, and `scrim logs` becomes `kubectl logs`.

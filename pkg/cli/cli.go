@@ -1,8 +1,8 @@
 // Package cli is the scrim command line: one binary that is the
 // control plane ("server"), the agent for further nodes ("agent"), and the
 // tool to talk to them ("apply", "get", "describe", "delete", "scale",
-// "allocate", "node", "token"). "buffer" talks to nobody: it works out a
-// number.
+// "label", "annotate", "allocate", "node", "token"). "buffer" talks to
+// nobody: it works out a number.
 //
 // Each command is one function in its own file. They share nothing but the
 // small HTTP client in client.go.
@@ -33,6 +33,8 @@ var commands = map[string]command{
 	"logs":     runLogs,
 	"delete":   runDelete,
 	"scale":    runScale,
+	"label":    runLabel,
+	"annotate": runAnnotate,
 	"allocate": runAllocate,
 	"buffer":   runBuffer,
 	"version":  runVersion,

@@ -124,6 +124,7 @@ func (s *Server) Handler() http.Handler {
 	s.scalers.mount(mux, "fleetautoscalers")
 	mux.HandleFunc("PUT /v1/namespaces/{namespace}/fleets/{name}/scale", s.scaleFleet)
 	mux.HandleFunc("GET /v1/namespaces/{namespace}/gameservers/{name}/logs", s.gameServerLogs)
+	mux.HandleFunc("PATCH /v1/namespaces/{namespace}/gameservers/{name}", s.relabel)
 	all := http.NewServeMux()
 	all.HandleFunc("GET /healthz", s.health)
 	all.Handle("/", answerWhenSaved(mux, s.saved))
