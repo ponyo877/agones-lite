@@ -51,7 +51,7 @@ jobs:
       - name: The workflows are well-formed
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
       - name: The scripts are well-formed
-        run: shellcheck build/ci/*.sh
+        run: shellcheck build/ci/*.sh build/conformance/*.sh
 
   # Everything that is released builds, for every platform it is released
   # for. The release workflow runs the same two commands, on a tag.
@@ -87,6 +87,51 @@ jobs:
         run: make build sidecar-image
       - name: The quick start of the README
         run: build/ci/quickstart.sh bin/scrim
+
+  # The conformance clients that Agones runs for each of its SDKs, run
+  # unchanged as game servers on scrim, with real containers. They are
+  # built from third_party/agones, and the cache keeps what was built: the
+  # client for C++ needs gRPC built from source, which took 30 minutes the
+  # first time.
+  agones-sdks:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { client: go, image: go }
+          - { client: rest, image: rest }
+          - { client: python, image: python }
+          - { client: csharp, image: csharp }
+          - { client: node, image: node }
+          - { client: rust, image: rust }
+          - { client: rust-async, image: rust }
+          - { client: cpp, image: cpp }
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: The binary and the sidecar image of this commit
+        run: make build sidecar-image
+      - name: The version of Agones the clients come from
+        id: agones
+        run: echo "version=$(awk '$1 == "agones.dev/agones" { print $2 }' go.mod)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: The client
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: build/conformance/${{ matrix.image }}.Dockerfile
+          tags: scrim-agones-sdk-${{ matrix.image }}:${{ steps.agones.outputs.version }}
+          load: true
+          cache-from: type=gha,scope=agones-sdk-${{ matrix.image }}
+          cache-to: type=gha,scope=agones-sdk-${{ matrix.image }},mode=max
+      - name: The client, as a game server on scrim
+        run: build/ci/agones-sdks.sh bin/scrim ${{ matrix.client }}
 
   # Every test, on the three kinds of machine scrim runs on, with the
   # race detector and in an order drawn anew each time. On Linux nothing a
@@ -286,7 +331,7 @@ jobs:
   # and fails when one failed, was cancelled or did not run.
   ci:
     if: always()
-    needs: [lint, build, quick-start, test, coverage, properties, fuzz, load, generated, proofs, models, vulnerabilities, pinned]
+    needs: [lint, build, quick-start, agones-sdks, test, coverage, properties, fuzz, load, generated, proofs, models, vulnerabilities, pinned]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

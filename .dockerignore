@@ -1,0 +1,12 @@
+# Only Agones' conformance clients (build/conformance) are built from the
+# root of the repository, and they take nothing else from it.
+*
+!build/conformance/rest.sh
+!third_party/agones/go.mod
+!third_party/agones/go.sum
+!third_party/agones/vendor
+!third_party/agones/pkg
+!third_party/agones/sdks
+!third_party/agones/test/sdk
+**/node_modules
+**/target

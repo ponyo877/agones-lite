@@ -249,6 +249,74 @@ func TestFollowFailsWhenTheConnectionBreaks(t *testing.T) {
 	assert.NotErrorIs(t, err, errWatchClosed)
 }
 
+func TestGetFindsWhereTheAPIKeepsWhatItWasAskedFor(t *testing.T) {
+	for args, want := range map[string]string{
+		"gs":                     "/v1/namespaces/team/gameservers",
+		"fleet simple":           "/v1/namespaces/team/fleets/simple",
+		"nodes":                  "/v1/nodes",
+		"node tokyo-1":           "/v1/nodes/tokyo-1",
+		"fleetautoscalers small": "/v1/namespaces/team/fleetautoscalers/small",
+	} {
+		path, err := resourcePath(strings.Fields(args), "team")
+		require.NoError(t, err, args)
+		assert.Equal(t, want, path, args)
+	}
+	_, err := resourcePath([]string{"pods"}, "team")
+	assert.EqualError(t, err, `unknown kind "pods"`)
+}
+
+// A program that reads "get -o" gets the object as the API has it, and
+// can choose the format it reads more easily.
+func TestGetPrintsAnObjectAsTheAPIHasIt(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"metadata": {"name": "a", "labels": {"x": "1"}}}`)
+	}))
+	defer api.Close()
+	c := client{base: api.URL, http: api.Client()}
+
+	for format, want := range map[string]string{
+		"json": "{\n  \"metadata\": {\n    \"name\": \"a\",\n    \"labels\": {\n      \"x\": \"1\"\n    }\n  }\n}\n",
+		"yaml": "metadata:\n  labels:\n    x: \"1\"\n  name: a\n",
+	} {
+		out := &strings.Builder{}
+		require.NoError(t, printObjects(context.Background(), c, "/v1/fleets/a", format, false, out), format)
+		assert.Equal(t, want, out.String(), format)
+	}
+}
+
+// A watch in JSON is one line for every object and every change, which a
+// program can read line by line. The sign that the list is complete stays:
+// a program that waits for it before it changes something misses nothing.
+func TestGetWatchPrintsOneLineOfJSONForEveryChange(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "true", r.URL.Query().Get("watch"))
+		watched(w)
+		<-r.Context().Done()
+	}))
+	defer api.Close()
+	ctx, stop := context.WithCancel(context.Background())
+	out := &printed{last: `{"type":"Deleted"`, complete: stop}
+
+	err := printObjects(ctx, client{base: api.URL, http: api.Client()}, "/v1/fleets", "json", true, out)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		`{"type":"Added","object":{"metadata": {"name": "a"}}}`,
+		`{"type":"Added","object":{"metadata": {"name": "a-much-longer-name"}}}`,
+		`{"type":"Synced","object":{}}`,
+		`{"type":"Deleted","object":{"metadata": {"name": "a"}}}`,
+		"",
+	}, strings.Split(out.String(), "\n"))
+}
+
+func TestGetSaysWhichFormatsThereAre(t *testing.T) {
+	c := client{base: "http://127.0.0.1:1", http: http.DefaultClient} // never reached
+	assert.EqualError(t, printObjects(context.Background(), c, "/v1/fleets", "wide", false, io.Discard),
+		`unknown output format "wide": json or yaml`)
+	assert.EqualError(t, printObjects(context.Background(), c, "/v1/fleets", "yaml", true, io.Discard),
+		"-w prints one line of JSON per change: use it with -o json")
+}
+
 func TestBufferSaysHowManyToKeepReadyAndWhy(t *testing.T) {
 	var out strings.Builder
 

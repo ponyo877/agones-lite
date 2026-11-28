@@ -249,8 +249,11 @@ manifest means here what it means there.
 | Health checks, `Reserve`, graceful shutdown | `initContainers`, and volumes from `configMap` or `secret` |
 | Packed and Distributed scheduling | Adding and removing the VMs themselves |
 
-The sample images of the C++, Node.js, Rust and Unity SDKs run unchanged,
-and so do the Agones conformance clients for Python and C#.
+The sample images of the C++, Node.js, Rust and Unity SDKs run unchanged.
+So do the conformance clients that Agones runs for each of its SDKs: Go,
+REST and WebSocket, Python, C#, Node.js, Rust and C++. CI builds them from
+the Agones source, unchanged, and runs each as a scrim game server until it
+shuts itself down.
 [docs/planning.md](docs/planning.md) has the full list of what is in and
 what is out, and why.
 
@@ -325,7 +328,8 @@ Nothing reaches `main` without passing
 [CI](.github/workflows/ci.yml): the linters, the tests under the race
 detector on Linux amd64, Linux arm64 and macOS, a thousand tries of every
 property, the fuzz targets, the load test, the proofs, the models, a scan
-for known vulnerabilities, and the quick start above with real containers. A release
+for known vulnerabilities, the Agones conformance clients of every SDK, and
+the quick start above with real containers. A release
 is tried the same way once it is out, with the binary and the sidecar
 image that were published.
 
